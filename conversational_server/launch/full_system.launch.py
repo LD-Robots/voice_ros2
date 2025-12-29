@@ -101,4 +101,12 @@ def generate_launch_description():
             name='barge_in_node',
             output='screen',
         ),
+        
+        # Wake Word (detectare "Hey robot")
+        Node(
+            package='conversational_client',
+            executable='wake_word_node',
+            name='wake_word_node',
+            output='screen',
+        ),
     ])
