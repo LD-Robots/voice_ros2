@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ASR Node - Speech to Text using Faster Whisper.
+ASR Node - Speech to Text using Faster Whisper (Standalone).
 
 Subscribes to: 
   - /audio_raw (Audio) - audio frames
@@ -16,13 +16,15 @@ from std_msgs.msg import Bool
 import numpy as np
 import tempfile
 import wave
-import sys
 import os
 
-# Adaugă path-ul către proiectul existent
-sys.path.insert(0, os.path.expanduser('~/Conversational_Robot/Conversational_Bot'))
-
-from src.asr.engine_faster import ASREngine
+# Faster Whisper pentru ASR
+try:
+    from faster_whisper import WhisperModel
+    WHISPER_AVAILABLE = True
+except ImportError:
+    WHISPER_AVAILABLE = False
+    print("⚠️ faster-whisper not installed. Run: pip install faster-whisper")
 
 
 class ASRNode(Node):
@@ -34,20 +36,26 @@ class ASRNode(Node):
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('compute_type', 'int8')
         self.declare_parameter('min_audio_length', 0.5)  # Minimum seconds to transcribe
+        self.declare_parameter('language', '')  # Empty = auto-detect
         
         model_size = self.get_parameter('model_size').value
         device = self.get_parameter('device').value
         compute_type = self.get_parameter('compute_type').value
         self.min_audio_length = self.get_parameter('min_audio_length').value
+        self.language = self.get_parameter('language').value or None
         
-        # Inițializează ASR engine
-        self.get_logger().info(f'Initializing ASR: model={model_size}, device={device}')
-        self.engine = ASREngine(
-            model_size=model_size,
+        if not WHISPER_AVAILABLE:
+            self.get_logger().error('faster-whisper not installed!')
+            raise RuntimeError('faster-whisper not available')
+        
+        # Inițializează Whisper model
+        self.get_logger().info(f'Loading Whisper model: {model_size} on {device}...')
+        self.model = WhisperModel(
+            model_size,
             device=device,
-            compute_type=compute_type,
-            logger=self.get_logger(),
+            compute_type=compute_type
         )
+        self.get_logger().info('✅ Whisper model loaded!')
         
         # Buffer pentru audio
         self.audio_buffer = []
@@ -135,12 +143,19 @@ class ASRNode(Node):
                 wav.writeframes(audio_data.tobytes())
         
         try:
-            # Transcrie
-            result = self.engine.transcribe(temp_path)
+            # Transcrie cu Faster Whisper
+            segments, info = self.model.transcribe(
+                temp_path,
+                language=self.language,
+                beam_size=5,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=300)
+            )
             
-            text = result.get('text', '').strip()
-            lang = result.get('lang', 'en')
-            confidence = float(result.get('language_probability', 0.0))
+            # Combină segmentele
+            text = " ".join(seg.text.strip() for seg in segments).strip()
+            lang = info.language
+            confidence = info.language_probability
             
             if text:
                 self.get_logger().info(f'🧏 [{lang}] {text}')
@@ -149,7 +164,7 @@ class ASRNode(Node):
                 out = Transcription()
                 out.text = text
                 out.language = lang
-                out.confidence = confidence
+                out.confidence = float(confidence)
                 self.transcription_pub.publish(out)
             else:
                 self.get_logger().warn('Empty transcription, skipping')
@@ -165,14 +180,15 @@ class ASRNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = ASRNode()
     
     try:
+        node = ASRNode()
         rclpy.spin(node)
+    except RuntimeError as e:
+        print(f'Failed to start ASR node: {e}')
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
         rclpy.shutdown()
 
 

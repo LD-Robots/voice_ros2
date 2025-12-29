@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM Node - Language Model processing using Groq/Ollama.
+LLM Node - Language Model processing using Groq API (Standalone).
 
 Subscribes to: /transcription (Transcription)
 Publishes to: /llm_response (Transcription)
@@ -8,13 +8,15 @@ Publishes to: /llm_response (Transcription)
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Transcription
-import sys
 import os
 
-# Adaugă path-ul către proiectul existent
-sys.path.insert(0, os.path.expanduser('~/Conversational_Robot/Conversational_Bot'))
-
-from src.llm.engine import LLMLocal
+# Groq pentru LLM
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    print("⚠️ groq not installed. Run: pip install groq")
 
 
 class LLMNode(Node):
@@ -22,7 +24,6 @@ class LLMNode(Node):
         super().__init__('llm_node')
         
         # Parametri configurabili
-        self.declare_parameter('provider', 'groq')
         self.declare_parameter('model', 'llama-3.1-8b-instant')
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
@@ -31,26 +32,24 @@ class LLMNode(Node):
             'Keep responses concise, natural, and helpful. '
             'Respond in the same language the user speaks.')
         
-        provider = self.get_parameter('provider').value
-        model = self.get_parameter('model').value
-        max_tokens = self.get_parameter('max_tokens').value
-        temperature = self.get_parameter('temperature').value
-        system_prompt = self.get_parameter('system_prompt').value
+        self.model = self.get_parameter('model').value
+        self.max_tokens = self.get_parameter('max_tokens').value
+        self.temperature = self.get_parameter('temperature').value
+        self.system_prompt = self.get_parameter('system_prompt').value
         
-        # Configurare LLM
-        cfg = {
-            'provider': provider,
-            'model': model,
-            'max_tokens': max_tokens,
-            'temperature': temperature,
-            'system_prompt': system_prompt,
-            'history_enabled': True,
-            'max_history_turns': 5,
-        }
+        # Verifică API key
+        self.api_key = os.environ.get('GROQ_API_KEY')
+        if not self.api_key:
+            self.get_logger().error('GROQ_API_KEY environment variable not set!')
+            raise RuntimeError('GROQ_API_KEY not set')
         
-        # Inițializează LLM engine
-        self.get_logger().info(f'Initializing LLM: provider={provider}, model={model}')
-        self.engine = LLMLocal(cfg, logger=self.get_logger())
+        if not GROQ_AVAILABLE:
+            self.get_logger().error('groq package not installed!')
+            raise RuntimeError('groq not available')
+        
+        # Inițializează client Groq
+        self.client = Groq(api_key=self.api_key)
+        self.get_logger().info(f'✅ Groq client initialized with model: {self.model}')
         
         # Istoricul conversației
         self.conversation_history = []
@@ -90,16 +89,20 @@ class LLMNode(Node):
                 'content': user_text
             })
             
-            # Generează răspuns folosind streaming pentru Groq
-            response_text = ""
-            for chunk in self.engine.generate_stream(
-                user_text, 
-                lang_hint=user_lang, 
-                history=self.conversation_history[:-1]  # Exclude mesajul curent
-            ):
-                response_text += chunk
+            # Construiește mesajele pentru API
+            messages = [
+                {'role': 'system', 'content': self.system_prompt}
+            ] + self.conversation_history
             
-            response_text = response_text.strip()
+            # Apel Groq API
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+            )
+            
+            response_text = response.choices[0].message.content.strip()
             
             if response_text:
                 # Adaugă răspunsul în istoric
@@ -134,14 +137,15 @@ class LLMNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = LLMNode()
     
     try:
+        node = LLMNode()
         rclpy.spin(node)
+    except RuntimeError as e:
+        print(f'Failed to start LLM node: {e}')
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
         rclpy.shutdown()
 
 
