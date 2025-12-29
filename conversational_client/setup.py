@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'audio_capture_node = conversational_client.audio_capture_node:main',
+            'audio_playback_node = conversational_client.audio_playback_node:main',
         ],
     },
 )
