@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'asr_node = conversational_server.asr_node:main',
+            'llm_node = conversational_server.llm_node:main',
         ],
     },
 )
