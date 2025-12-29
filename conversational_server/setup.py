@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'asr_node = conversational_server.asr_node:main',
             'llm_node = conversational_server.llm_node:main',
+            'tts_node = conversational_server.tts_node:main',
         ],
     },
 )
