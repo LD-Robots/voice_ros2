@@ -14,7 +14,7 @@ import os
 # Adaugă path-ul către proiectul existent
 sys.path.insert(0, os.path.expanduser('~/Conversational_Robot/Conversational_Bot'))
 
-from src.llm.groq_client import GroqClient
+from src.llm.engine import LLMLocal
 
 
 class LLMNode(Node):
@@ -22,6 +22,7 @@ class LLMNode(Node):
         super().__init__('llm_node')
         
         # Parametri configurabili
+        self.declare_parameter('provider', 'groq')
         self.declare_parameter('model', 'llama-3.1-8b-instant')
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
@@ -30,18 +31,26 @@ class LLMNode(Node):
             'Keep responses concise, natural, and helpful. '
             'Respond in the same language the user speaks.')
         
+        provider = self.get_parameter('provider').value
         model = self.get_parameter('model').value
         max_tokens = self.get_parameter('max_tokens').value
         temperature = self.get_parameter('temperature').value
-        self.system_prompt = self.get_parameter('system_prompt').value
+        system_prompt = self.get_parameter('system_prompt').value
         
-        # Inițializează LLM client
-        self.get_logger().info(f'Initializing LLM: model={model}')
-        self.client = GroqClient(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        # Configurare LLM
+        cfg = {
+            'provider': provider,
+            'model': model,
+            'max_tokens': max_tokens,
+            'temperature': temperature,
+            'system_prompt': system_prompt,
+            'history_enabled': True,
+            'max_history_turns': 5,
+        }
+        
+        # Inițializează LLM engine
+        self.get_logger().info(f'Initializing LLM: provider={provider}, model={model}')
+        self.engine = LLMLocal(cfg, logger=self.get_logger())
         
         # Istoricul conversației
         self.conversation_history = []
@@ -81,12 +90,16 @@ class LLMNode(Node):
                 'content': user_text
             })
             
-            # Generează răspuns
-            messages = [
-                {'role': 'system', 'content': self.system_prompt}
-            ] + self.conversation_history
+            # Generează răspuns folosind streaming pentru Groq
+            response_text = ""
+            for chunk in self.engine.generate_stream(
+                user_text, 
+                lang_hint=user_lang, 
+                history=self.conversation_history[:-1]  # Exclude mesajul curent
+            ):
+                response_text += chunk
             
-            response_text = self.client.generate(messages)
+            response_text = response_text.strip()
             
             if response_text:
                 # Adaugă răspunsul în istoric
