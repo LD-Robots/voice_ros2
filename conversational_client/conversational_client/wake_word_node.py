@@ -94,17 +94,24 @@ class WakeWordNode(Node):
         self.oww_model = None
         if OPENWAKEWORD_AVAILABLE:
             try:
-                # Încarcă modelul pre-antrenat
-                self.oww_model = OWWModel(
-                    wakeword_models=[self.wake_phrase],
-                    inference_framework='onnx'
-                )
+                # Încarcă modelul pre-antrenat (compatibil cu mai multe versiuni API)
+                try:
+                    # API nou (versiuni >= 0.5)
+                    self.oww_model = OWWModel(
+                        wakeword_models=[self.wake_phrase],
+                        inference_framework='onnx'
+                    )
+                except TypeError:
+                    # API vechi (versiuni < 0.5) - fără wakeword_models
+                    self.oww_model = OWWModel(inference_framework='onnx')
+                
                 self.get_logger().info(
                     f'🔔 Wake Word Node started - listening for "{self.wake_phrase}" '
                     f'(threshold={self.threshold})'
                 )
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to load OpenWakeWord: {e}')
+                self.get_logger().warn('⚠️ Running in dummy mode (no wake word detection)')
                 self.oww_model = None
         else:
             self.get_logger().warn('⚠️ OpenWakeWord not available - using dummy mode')
