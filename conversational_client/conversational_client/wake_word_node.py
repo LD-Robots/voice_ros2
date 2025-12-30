@@ -119,29 +119,38 @@ class WakeWordNode(Node):
         # Convertește la numpy array
         audio = np.array(msg.data, dtype=np.int16)
         
-        if self.oww_model is not None:
-            # ─────────────────────────────────────────────────────
-            # PROCESARE CU OPENWAKEWORD
-            # ─────────────────────────────────────────────────────
-            # OpenWakeWord așteaptă audio normalizat float32
-            audio_float = audio.astype(np.float32) / 32768.0
+        # Adaugă la buffer
+        self.audio_buffer.extend(audio.tolist())
+        
+        # OpenWakeWord cere minimum 400 samples (25ms la 16kHz)
+        MIN_SAMPLES = 400
+        
+        if len(self.audio_buffer) >= MIN_SAMPLES:
+            # Ia primele MIN_SAMPLES din buffer
+            audio_chunk = np.array(self.audio_buffer[:MIN_SAMPLES], dtype=np.int16)
+            # Păstrează restul în buffer
+            self.audio_buffer = self.audio_buffer[MIN_SAMPLES:]
             
-            # Procesează chunk-ul
-            prediction = self.oww_model.predict(audio_float)
-            
-            # Verifică scorul pentru wake phrase
-            scores = prediction.get(self.wake_phrase, {})
-            score = max(scores.values()) if scores else 0.0
-            
-            if score >= self.threshold and not self.session_active:
-                self._activate_session(score)
-        else:
-            # ─────────────────────────────────────────────────────
-            # DUMMY MODE - simulăm detecție la fiecare 10 secunde (pentru test)
-            # ─────────────────────────────────────────────────────
-            self.audio_buffer.append(audio)
-            # În mod real, aici ai pune logica de detecție
-            pass
+            if self.oww_model is not None:
+                try:
+                    # OpenWakeWord așteaptă audio normalizat float32
+                    audio_float = audio_chunk.astype(np.float32) / 32768.0
+                    
+                    # Procesează chunk-ul
+                    prediction = self.oww_model.predict(audio_float)
+                    
+                    # Verifică scorurile pentru toate modelele încărcate
+                    for model_name, scores in prediction.items():
+                        if isinstance(scores, dict):
+                            score = max(scores.values()) if scores else 0.0
+                        else:
+                            score = float(scores) if scores else 0.0
+                        
+                        if score >= self.threshold and not self.session_active:
+                            self._activate_session(score)
+                            break
+                except Exception as e:
+                    self.get_logger().error(f'OpenWakeWord prediction error: {e}')
     
     # ═══════════════════════════════════════════════════════════════════
     # ACTIVARE SESIUNE

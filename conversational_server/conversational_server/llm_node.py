@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-LLM Node - Language Model processing using Groq API (Standalone).
+LLM Node - Language Model processing using Groq API with STREAMING.
 
 Subscribes to: /transcription (Transcription)
-Publishes to: /llm_response (Transcription)
+Publishes to: 
+  - /llm_stream (TextChunk) - streaming chunks
+  - /llm_response (Transcription) - complete response (for compatibility)
 """
 import rclpy
 from rclpy.node import Node
-from conversational_interfaces.msg import Transcription
+from conversational_interfaces.msg import Transcription, TextChunk
 import os
+import re
+import uuid
+import threading
 
 # Groq pentru LLM
 try:
@@ -17,6 +22,9 @@ try:
 except ImportError:
     GROQ_AVAILABLE = False
     print("⚠️ groq not installed. Run: pip install groq")
+
+# Regex pentru a detecta sfârșitul unei propoziții
+SENTENCE_END = re.compile(r'[.!?;:]\s*$')
 
 
 class LLMNode(Node):
@@ -27,6 +35,7 @@ class LLMNode(Node):
         self.declare_parameter('model', 'llama-3.1-8b-instant')
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
+        self.declare_parameter('min_chunk_chars', 40)  # Min caractere per chunk
         self.declare_parameter('system_prompt', 
             'You are a friendly conversational robot assistant. '
             'Keep responses concise, natural, and helpful. '
@@ -35,6 +44,7 @@ class LLMNode(Node):
         self.model = self.get_parameter('model').value
         self.max_tokens = self.get_parameter('max_tokens').value
         self.temperature = self.get_parameter('temperature').value
+        self.min_chunk_chars = self.get_parameter('min_chunk_chars').value
         self.system_prompt = self.get_parameter('system_prompt').value
         
         # Verifică API key
@@ -62,17 +72,24 @@ class LLMNode(Node):
             10
         )
         
-        # Publisher pentru răspunsul LLM
+        # Publisher pentru streaming chunks
+        self.stream_pub = self.create_publisher(
+            TextChunk,
+            '/llm_stream',
+            10
+        )
+        
+        # Publisher pentru răspunsul complet (compatibilitate)
         self.response_pub = self.create_publisher(
             Transcription,
             '/llm_response',
             10
         )
         
-        self.get_logger().info('LLM Node started! Listening on /transcription')
+        self.get_logger().info('LLM Node started with STREAMING! Listening on /transcription')
     
     def transcription_callback(self, msg: Transcription):
-        """Procesează transcrierea și publică răspunsul LLM."""
+        """Procesează transcrierea și publică răspunsul LLM în streaming."""
         user_text = msg.text.strip()
         user_lang = msg.language
         
@@ -81,6 +98,18 @@ class LLMNode(Node):
             return
         
         self.get_logger().info(f'💬 User [{user_lang}]: {user_text}')
+        
+        # Procesează în thread separat pentru a nu bloca ROS2
+        thread = threading.Thread(
+            target=self._process_streaming,
+            args=(user_text, user_lang),
+            daemon=True
+        )
+        thread.start()
+    
+    def _process_streaming(self, user_text: str, user_lang: str):
+        """Procesează răspunsul LLM cu streaming."""
+        session_id = str(uuid.uuid4())[:8]
         
         try:
             # Adaugă mesajul utilizatorului în istoric
@@ -94,40 +123,75 @@ class LLMNode(Node):
                 {'role': 'system', 'content': self.system_prompt}
             ] + self.conversation_history
             
-            # Apel Groq API
-            response = self.client.chat.completions.create(
+            # Apel Groq API cu STREAMING
+            stream = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
+                stream=True  # STREAMING!
             )
             
-            response_text = response.choices[0].message.content.strip()
+            # Buffer pentru acumulare tokeni
+            buffer = ""
+            full_response = ""
+            chunk_count = 0
             
-            if response_text:
-                # Adaugă răspunsul în istoric
+            for chunk in stream:
+                if chunk.choices[0].delta.content:
+                    token = chunk.choices[0].delta.content
+                    buffer += token
+                    full_response += token
+                    
+                    # Publică chunk când avem o propoziție completă sau suficiente caractere
+                    if (SENTENCE_END.search(buffer) and len(buffer) >= self.min_chunk_chars) or \
+                       len(buffer) >= self.min_chunk_chars * 2:
+                        self._publish_chunk(buffer.strip(), user_lang, False, session_id)
+                        chunk_count += 1
+                        buffer = ""
+            
+            # Publică ultimul chunk (is_final=True)
+            if buffer.strip():
+                self._publish_chunk(buffer.strip(), user_lang, True, session_id)
+                chunk_count += 1
+            else:
+                # Trimite un chunk gol cu is_final=True pentru a semnala sfârșitul
+                self._publish_chunk("", user_lang, True, session_id)
+            
+            # Actualizează istoricul
+            if full_response:
                 self.conversation_history.append({
                     'role': 'assistant',
-                    'content': response_text
+                    'content': full_response
                 })
                 
-                # Limitează istoricul la ultimele 10 mesaje
+                # Limitează istoricul
                 if len(self.conversation_history) > 10:
                     self.conversation_history = self.conversation_history[-10:]
                 
-                self.get_logger().info(f'🤖 Bot: {response_text}')
+                self.get_logger().info(f'🤖 Bot ({chunk_count} chunks): {full_response[:80]}...')
                 
-                # Publică răspunsul
+                # Publică și răspunsul complet pentru compatibilitate
                 out = Transcription()
-                out.text = response_text
-                out.language = user_lang  # Păstrează limba utilizatorului
+                out.text = full_response
+                out.language = user_lang
                 out.confidence = 1.0
                 self.response_pub.publish(out)
-            else:
-                self.get_logger().warn('Empty LLM response')
-                
+            
         except Exception as e:
-            self.get_logger().error(f'LLM error: {e}')
+            self.get_logger().error(f'LLM streaming error: {e}')
+    
+    def _publish_chunk(self, text: str, language: str, is_final: bool, session_id: str):
+        """Publică un chunk de text."""
+        chunk = TextChunk()
+        chunk.text = text
+        chunk.language = language
+        chunk.is_final = is_final
+        chunk.session_id = session_id
+        self.stream_pub.publish(chunk)
+        
+        if text:
+            self.get_logger().debug(f'📤 Chunk: "{text[:30]}..." (final={is_final})')
     
     def clear_history(self):
         """Șterge istoricul conversației."""
