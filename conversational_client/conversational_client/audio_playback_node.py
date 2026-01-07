@@ -125,6 +125,24 @@ class AudioPlaybackNode(Node):
         Args:
             msg: Mesajul Audio primit (conține sample_rate, channels, data)
         """
+        # Verifică dacă sample_rate s-a schimbat - trebuie să recreem stream-ul
+        if msg.sample_rate != self.sample_rate and PYAUDIO_AVAILABLE:
+            self.sample_rate = msg.sample_rate
+            self.get_logger().info(f'🔄 Sample rate changed to {self.sample_rate}Hz, recreating stream...')
+            try:
+                if self.stream is not None:
+                    self.stream.stop_stream()
+                    self.stream.close()
+                self.stream = self.audio.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=self.sample_rate,
+                    output=True,
+                    frames_per_buffer=1024
+                )
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to recreate stream: {e}')
+        
         # Convertim lista de int16 la numpy array
         audio_data = np.array(msg.data, dtype=np.int16)
         
@@ -134,7 +152,7 @@ class AudioPlaybackNode(Node):
         
         # Log (doar din când în când, să nu inunde)
         if len(self.audio_buffer) == 1:
-            self.get_logger().info(f'🎵 Received audio, starting playback...')
+            self.get_logger().info(f'🎵 Received audio ({self.sample_rate}Hz), starting playback...')
     
     # ═══════════════════════════════════════════════════════════════════
     # PLAYBACK LOOP - rulează continuu în thread separat
