@@ -129,6 +129,17 @@ class BargeInNode(Node):
         )
         
         # ─────────────────────────────────────────────────────────
+        # SUBSCRIBER - primim starea de speaking de la audio_playback_node
+        # ─────────────────────────────────────────────────────────
+        self.is_robot_speaking = False
+        self.speaking_sub = self.create_subscription(
+            Bool,
+            '/is_speaking',
+            self._speaking_callback,
+            10
+        )
+        
+        # ─────────────────────────────────────────────────────────
         # PUBLISHER - trimitem comandă de stop
         # ─────────────────────────────────────────────────────────
         self.stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
@@ -176,10 +187,18 @@ class BargeInNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACK AUDIO
     # ═══════════════════════════════════════════════════════════════════
+    def _speaking_callback(self, msg: Bool):
+        """Update speaking state from audio_playback_node."""
+        self.is_robot_speaking = msg.data
+    
     def audio_callback(self, msg: Audio):
         """Procesează fiecare chunk de audio pentru detectare stop keyword."""
         
         if self.session is None:
+            return
+        
+        # Detectează stop keyword doar când robotul vorbește!
+        if not self.is_robot_speaking:
             return
         
         # Convertește la numpy array și normalizează la float32
