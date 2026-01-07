@@ -62,7 +62,6 @@ class AudioPlaybackNode(Node):
         # ─────────────────────────────────────────────────────────
         self.audio_buffer = deque(maxlen=100)  # Max 100 chunks (~2 secunde)
         self.is_playing = False
-        self._stream_lock = threading.Lock()  # Lock pentru thread-safety la stop
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - ascultăm pe topic-ul /audio_out
@@ -175,48 +174,24 @@ class AudioPlaybackNode(Node):
         import time
         
         while self.running:
-            with self._stream_lock:
-                if self.audio_buffer and self.stream is not None:
-                    # Ia primul chunk din buffer
-                    chunk = self.audio_buffer.popleft()
-                    # Redă-l pe speaker
-                    try:
-                        self.stream.write(chunk.tobytes())
-                    except Exception:
-                        pass  # Stream s-ar putea să fi fost oprit
-                else:
-                    # Buffer gol - așteptăm puțin
-                    self.is_playing = False
-            time.sleep(0.001)  # 1ms pauză pentru a permite lock-ul
+            if self.audio_buffer and self.stream is not None:
+                # Ia primul chunk din buffer
+                chunk = self.audio_buffer.popleft()
+                # Redă-l pe speaker
+                self.stream.write(chunk.tobytes())
+            else:
+                # Buffer gol - așteptăm puțin
+                self.is_playing = False
+                time.sleep(0.01)  # 10ms pauză
     
     # ═══════════════════════════════════════════════════════════════════
     # STOP PLAYBACK - oprește playback când user vorbește peste (barge-in)
     # ═══════════════════════════════════════════════════════════════════
     def stop_playback(self):
-        """Oprește playback-ul curent IMEDIAT (pentru barge-in)."""
-        # 1. Golește buffer-ul
+        """Oprește playback-ul curent (pentru barge-in)."""
         self.audio_buffer.clear()
         self.is_playing = False
-        
-        # 2. Oprește stream-ul imediat (abort - nu așteaptă să termine chunk-ul curent)
-        with self._stream_lock:
-            if self.stream is not None and PYAUDIO_AVAILABLE:
-                try:
-                    self.stream.stop_stream()
-                    self.stream.close()
-                    
-                    # 3. Recreează stream-ul pentru viitoare redări
-                    self.stream = self.audio.open(
-                        format=pyaudio.paInt16,
-                        channels=self.channels,
-                        rate=self.sample_rate,
-                        output=True,
-                        frames_per_buffer=1024
-                    )
-                except Exception as e:
-                    self.get_logger().error(f'❌ Error stopping stream: {e}')
-        
-        self.get_logger().info('⏹️ Playback stopped immediately')
+        self.get_logger().info('⏹️ Playback stopped')
     
     def stop_callback(self, msg: Bool):
         """Callback pentru comanda de stop (de la barge_in_node)."""

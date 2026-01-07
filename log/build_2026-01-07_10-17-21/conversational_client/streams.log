@@ -1,0 +1,63 @@
+[0.435s] Invoking command in '/home/delia/voice_ros2/conversational_client': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/delia/voice_ros2/build/conversational_client/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/conversational_client build --build-base /home/delia/voice_ros2/build/conversational_client/build install --record /home/delia/voice_ros2/build/conversational_client/install.log --single-version-externally-managed install_data
+[0.583s] running egg_info
+[0.584s] creating ../build/conversational_client/conversational_client.egg-info
+[0.593s] writing ../build/conversational_client/conversational_client.egg-info/PKG-INFO
+[0.593s] writing dependency_links to ../build/conversational_client/conversational_client.egg-info/dependency_links.txt
+[0.593s] writing entry points to ../build/conversational_client/conversational_client.egg-info/entry_points.txt
+[0.593s] writing requirements to ../build/conversational_client/conversational_client.egg-info/requires.txt
+[0.593s] writing top-level names to ../build/conversational_client/conversational_client.egg-info/top_level.txt
+[0.593s] writing manifest file '../build/conversational_client/conversational_client.egg-info/SOURCES.txt'
+[0.613s] reading manifest file '../build/conversational_client/conversational_client.egg-info/SOURCES.txt'
+[0.614s] writing manifest file '../build/conversational_client/conversational_client.egg-info/SOURCES.txt'
+[0.614s] running build
+[0.614s] running build_py
+[0.614s] creating /home/delia/voice_ros2/build/conversational_client/build
+[0.614s] creating /home/delia/voice_ros2/build/conversational_client/build/lib
+[0.614s] creating /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client
+[0.614s] copying conversational_client/audio_playback_node.py -> /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client
+[0.614s] copying conversational_client/audio_capture_node.py -> /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client
+[0.614s] copying conversational_client/audio_segment_node.py -> /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client
+[0.614s] copying conversational_client/vad_node.py -> /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client
+[0.614s] copying conversational_client/wake_word_node.py -> /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client
+[0.615s] copying conversational_client/barge_in_node.py -> /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client
+[0.615s] copying conversational_client/__init__.py -> /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client
+[0.615s] running install
+[0.618s] running install_lib
+[0.628s] creating /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client
+[0.628s] copying /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client/audio_playback_node.py -> /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client
+[0.628s] copying /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client/audio_capture_node.py -> /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client
+[0.628s] copying /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client/audio_segment_node.py -> /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client
+[0.628s] copying /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client/vad_node.py -> /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client
+[0.628s] copying /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client/wake_word_node.py -> /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client
+[0.628s] copying /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client/barge_in_node.py -> /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client
+[0.628s] copying /home/delia/voice_ros2/build/conversational_client/build/lib/conversational_client/__init__.py -> /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client
+[0.629s] byte-compiling /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client/audio_playback_node.py to audio_playback_node.cpython-312.pyc
+[0.629s] byte-compiling /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client/audio_capture_node.py to audio_capture_node.cpython-312.pyc
+[0.630s] byte-compiling /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client/audio_segment_node.py to audio_segment_node.cpython-312.pyc
+[0.631s] byte-compiling /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client/vad_node.py to vad_node.cpython-312.pyc
+[0.631s] byte-compiling /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client/wake_word_node.py to wake_word_node.cpython-312.pyc
+[0.632s] byte-compiling /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client/barge_in_node.py to barge_in_node.cpython-312.pyc
+[0.633s] byte-compiling /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client/__init__.py to __init__.cpython-312.pyc
+[0.633s] running install_data
+[0.633s] creating /home/delia/voice_ros2/install/conversational_client/share/ament_index
+[0.633s] creating /home/delia/voice_ros2/install/conversational_client/share/ament_index/resource_index
+[0.633s] creating /home/delia/voice_ros2/install/conversational_client/share/ament_index/resource_index/packages
+[0.633s] copying resource/conversational_client -> /home/delia/voice_ros2/install/conversational_client/share/ament_index/resource_index/packages
+[0.634s] copying package.xml -> /home/delia/voice_ros2/install/conversational_client/share/conversational_client
+[0.634s] creating /home/delia/voice_ros2/install/conversational_client/share/conversational_client/launch
+[0.634s] copying launch/client_pipeline.launch.py -> /home/delia/voice_ros2/install/conversational_client/share/conversational_client/launch
+[0.634s] creating /home/delia/voice_ros2/install/conversational_client/share/conversational_client/models
+[0.634s] copying models/goodbye_robot.onnx -> /home/delia/voice_ros2/install/conversational_client/share/conversational_client/models
+[0.634s] copying models/stop_robot.onnx -> /home/delia/voice_ros2/install/conversational_client/share/conversational_client/models
+[0.634s] copying models/hello_robot.onnx -> /home/delia/voice_ros2/install/conversational_client/share/conversational_client/models
+[0.634s] running install_egg_info
+[0.645s] Copying ../build/conversational_client/conversational_client.egg-info to /home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client-0.0.0-py3.12.egg-info
+[0.645s] running install_scripts
+[0.713s] Installing audio_capture_node script to /home/delia/voice_ros2/install/conversational_client/lib/conversational_client
+[0.713s] Installing audio_playback_node script to /home/delia/voice_ros2/install/conversational_client/lib/conversational_client
+[0.713s] Installing audio_segment_node script to /home/delia/voice_ros2/install/conversational_client/lib/conversational_client
+[0.714s] Installing barge_in_node script to /home/delia/voice_ros2/install/conversational_client/lib/conversational_client
+[0.714s] Installing vad_node script to /home/delia/voice_ros2/install/conversational_client/lib/conversational_client
+[0.714s] Installing wake_word_node script to /home/delia/voice_ros2/install/conversational_client/lib/conversational_client
+[0.714s] writing list of installed files to '/home/delia/voice_ros2/build/conversational_client/install.log'
+[0.729s] Invoked command in '/home/delia/voice_ros2/conversational_client' returned '0': DEBUGINFOD_URLS=https://debuginfod.ubuntu.com PYTHONPATH=/home/delia/voice_ros2/build/conversational_client/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/delia/voice_ros2/install/conversational_client/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/conversational_client build --build-base /home/delia/voice_ros2/build/conversational_client/build install --record /home/delia/voice_ros2/build/conversational_client/install.log --single-version-externally-managed install_data
