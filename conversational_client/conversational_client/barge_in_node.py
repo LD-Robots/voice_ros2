@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 barge_in_node.py
-Detectează când utilizatorul vorbește peste robot și oprește TTS.
+Detectează cuvântul "stop" și oprește TTS-ul.
 
 EXPLICAȚIE:
-- Ascultă pe /voice_activity (de la vad_node)
-- Când user vorbește ȘI robotul redă audio, trimite comandă stop
-- Publică pe /barge_in pentru a opri playback-ul
+- Ascultă audio pe /audio_raw (de la audio_capture_node)
+- Folosește modelul ONNX stop_keyword.onnx pentru a detecta "stop"
+- Când detectează "stop", publică pe /stop_playback pentru a opri audio_playback_node
 
-Barge-in = când user întrerupe robotul vorbind peste el.
+Barge-in funcționează DOAR când user-ul zice "stop", nu când vorbește pur și simplu.
 """
 
 # ═══════════════════════════════════════════════════════════════════
@@ -17,8 +17,47 @@ Barge-in = când user întrerupe robotul vorbind peste el.
 
 import rclpy
 from rclpy.node import Node
+from conversational_interfaces.msg import Audio
 from std_msgs.msg import Bool
-import time
+import numpy as np
+import os
+import math
+from dataclasses import dataclass
+from typing import Optional, Tuple
+
+# Pentru a găsi path-ul pachetului ROS2
+from ament_index_python.packages import get_package_share_directory
+
+# ONNX Runtime pentru inferență
+try:
+    import onnxruntime as ort
+    ONNX_AVAILABLE = True
+except ImportError:
+    ONNX_AVAILABLE = False
+    ort = None
+    print("⚠️ onnxruntime not installed. Run: pip install onnxruntime")
+
+# Torch/Torchaudio pentru Mel Spectrogram
+try:
+    import torch
+    import torchaudio
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    torchaudio = None
+    print("⚠️ torch/torchaudio not installed. Run: pip install torch torchaudio")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DATACLASS PENTRU REZULTAT
+# ═══════════════════════════════════════════════════════════════════
+
+@dataclass
+class StopDetectionResult:
+    """Rezultatul detectării cuvântului stop."""
+    probability: float
+    logits: Tuple[float, float]  # (other, stop)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -27,123 +66,239 @@ import time
 
 class BargeInNode(Node):
     """
-    Nod ROS2 pentru barge-in detection.
+    Nod ROS2 pentru stop keyword detection.
     
     Funcționare:
-    1. Urmărește dacă robotul redă audio (via /playback_active)
-    2. Urmărește dacă user vorbește (via /voice_activity)
-    3. Dacă ambele sunt True → publică pe /barge_in pentru a opri TTS
+    1. Primește audio pe /audio_raw (de la audio_capture_node)
+    2. Procesează cu modelul ONNX stop_keyword.onnx (Mel Spectrogram)
+    3. Când detectează "stop", publică True pe /stop_playback
     """
     
     def __init__(self):
         super().__init__('barge_in_node')
         
         # ─────────────────────────────────────────────────────────
+        # PATH CĂTRE MODEL - din pachetul ROS2
+        # ─────────────────────────────────────────────────────────
+        pkg_share = get_package_share_directory('conversational_client')
+        default_model_path = os.path.join(pkg_share, 'models', 'stop_robot.onnx')
+        
+        # ─────────────────────────────────────────────────────────
         # PARAMETRI
         # ─────────────────────────────────────────────────────────
-        self.declare_parameter('min_voice_duration_ms', 300)  # Cât de mult să vorbească
-        self.declare_parameter('cooldown_ms', 500)  # Cooldown între barge-in events
+        self.declare_parameter('sample_rate', 16000)
+        self.declare_parameter('model_path', default_model_path)
+        self.declare_parameter('logit_margin', 2.5)      # Diferență minimă între logits
+        self.declare_parameter('prob_threshold', 0.96)   # Probabilitate minimă pentru "stop"
+        self.declare_parameter('hits_required', 2)       # Detecții consecutive necesare
+        self.declare_parameter('debug', False)
         
-        self.min_voice_duration = self.get_parameter('min_voice_duration_ms').value / 1000.0
-        self.cooldown = self.get_parameter('cooldown_ms').value / 1000.0
+        self.sample_rate = self.get_parameter('sample_rate').value
+        self.model_path = self.get_parameter('model_path').value
+        self.logit_margin = self.get_parameter('logit_margin').value
+        self.prob_threshold = self.get_parameter('prob_threshold').value
+        self.hits_required = self.get_parameter('hits_required').value
+        self.debug = self.get_parameter('debug').value
+        
+        # Modelul așteaptă input [1, 16, 96]
+        # Cu hop_length=160 și 96 frames: 96 * 160 = 15360 samples (~0.96s la 16kHz)
+        self.n_mels = 16
+        self.hop_length = 160
+        self.n_frames = 96
+        self.frame = self.hop_length * self.n_frames  # 15360 samples
+        # Hop = jumătate din frame pentru overlap
+        self.hop = self.frame // 2
         
         # ─────────────────────────────────────────────────────────
-        # STARE
+        # BUFFER AUDIO
         # ─────────────────────────────────────────────────────────
-        self.is_robot_speaking = False   # Robotul redă audio?
-        self.is_user_speaking = False    # User-ul vorbește?
-        self.voice_start_time = None     # Când a început user să vorbească
-        self.last_barge_in_time = 0      # Ultimul barge-in (pentru cooldown)
+        self._buf = np.zeros(self.frame, dtype=np.float32)
+        self._buf_filled = False
+        self._filled = 0
+        self._stride = 0
+        self._consecutive_hits = 0
         
         # ─────────────────────────────────────────────────────────
-        # SUBSCRIBERS
+        # SUBSCRIBER - primim audio de la microfon
         # ─────────────────────────────────────────────────────────
-        
-        # Starea vocii user-ului (de la vad_node)
-        self.voice_sub = self.create_subscription(
-            Bool,
-            '/voice_activity',
-            self.voice_callback,
+        self.audio_sub = self.create_subscription(
+            Audio,
+            '/audio_raw',
+            self.audio_callback,
             10
         )
         
-        # Starea playback-ului robotului (de la audio_playback_node)
-        self.playback_sub = self.create_subscription(
-            Bool,
-            '/playback_active',
-            self.playback_callback,
-            10
-        )
+        # ─────────────────────────────────────────────────────────
+        # PUBLISHER - trimitem comandă de stop
+        # ─────────────────────────────────────────────────────────
+        self.stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
         
         # ─────────────────────────────────────────────────────────
-        # PUBLISHER
+        # INIȚIALIZARE MODEL ONNX
         # ─────────────────────────────────────────────────────────
-        self.barge_in_pub = self.create_publisher(Bool, '/barge_in', 10)
+        self.session = None
+        self._mel = None
+        self._db = None
         
-        self.get_logger().info(
-            f'🛑 Barge-in Node started '
-            f'(min_voice={self.min_voice_duration*1000:.0f}ms, '
-            f'cooldown={self.cooldown*1000:.0f}ms)'
-        )
+        if ONNX_AVAILABLE and TORCH_AVAILABLE:
+            try:
+                if not os.path.exists(self.model_path):
+                    self.get_logger().error(f'❌ Model not found: {self.model_path}')
+                else:
+                    # Configurare ONNX Runtime
+                    so = ort.SessionOptions()
+                    so.intra_op_num_threads = 1
+                    self.session = ort.InferenceSession(self.model_path, so)
+                    self.input_name = self.session.get_inputs()[0].name
+                    
+                    # Transformări audio pentru Mel Spectrogram
+                    # Modelul așteaptă [1, 16, 96] - 16 mel bins, 96 time frames
+                    self._mel = torchaudio.transforms.MelSpectrogram(
+                        sample_rate=self.sample_rate,
+                        n_mels=self.n_mels,
+                        hop_length=self.hop_length,
+                        n_fft=400,  # 25ms window
+                        win_length=400
+                    )
+                    self._db = torchaudio.transforms.AmplitudeToDB()
+                    
+                    self.get_logger().info(
+                        f'🛑 Barge-in Node started - Stop Keyword Detection active\n'
+                        f'   Model: {os.path.basename(self.model_path)}\n'
+                        f'   Threshold: {self.prob_threshold}, Hits required: {self.hits_required}'
+                    )
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to load model: {e}')
+                self.session = None
+        else:
+            self.get_logger().warn('⚠️ ONNX/Torch not available - running in dummy mode')
     
     # ═══════════════════════════════════════════════════════════════════
-    # CALLBACKS
+    # CALLBACK AUDIO
     # ═══════════════════════════════════════════════════════════════════
-    
-    def voice_callback(self, msg: Bool):
-        """Callback când starea vocii user-ului se schimbă."""
+    def audio_callback(self, msg: Audio):
+        """Procesează fiecare chunk de audio pentru detectare stop keyword."""
         
-        was_speaking = self.is_user_speaking
-        self.is_user_speaking = msg.data
-        
-        if msg.data and not was_speaking:
-            # User tocmai a început să vorbească
-            self.voice_start_time = time.time()
-            self._check_barge_in()
-        elif not msg.data:
-            # User a oprit
-            self.voice_start_time = None
-    
-    def playback_callback(self, msg: Bool):
-        """Callback când starea playback-ului se schimbă."""
-        self.is_robot_speaking = msg.data
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # LOGICA BARGE-IN
-    # ═══════════════════════════════════════════════════════════════════
-    
-    def _check_barge_in(self):
-        """Verifică dacă trebuie să oprim robotul."""
-        
-        now = time.time()
-        
-        # Cooldown - nu permite barge-in prea frecvent
-        if now - self.last_barge_in_time < self.cooldown:
+        if self.session is None:
             return
         
-        # Condiții pentru barge-in:
-        # 1. Robotul redă audio
-        # 2. User-ul vorbește
-        # 3. User-ul a vorbit suficient de mult (nu doar un "um")
+        # Convertește la numpy array și normalizează la float32
+        pcm_i16 = np.array(msg.data, dtype=np.int16)
+        chunk = pcm_i16.astype(np.float32) / 32768.0
         
-        if self.is_robot_speaking and self.is_user_speaking:
-            if self.voice_start_time is not None:
-                voice_duration = now - self.voice_start_time
-                
-                if voice_duration >= self.min_voice_duration:
-                    self._trigger_barge_in()
+        # Adaugă chunk-ul în buffer
+        need = len(chunk)
+        if need >= self.frame:
+            self._buf[:] = chunk[-self.frame:]
+            self._filled = self.frame
+            self._buf_filled = True
+        else:
+            self._buf = np.roll(self._buf, -need)
+            self._buf[-need:] = chunk
+            self._filled = min(self.frame, self._filled + need)
+            self._buf_filled = self._filled >= self.frame
+        
+        # Procesează la fiecare hop
+        self._stride += len(chunk)
+        while self._stride >= self.hop:
+            self._stride -= self.hop
+            if not self._buf_filled:
+                continue
+            
+            result = self._run_detector(self._buf)
+            if result:
+                self._trigger_stop(result)
+                break
     
-    def _trigger_barge_in(self):
-        """Declanșează barge-in - oprește TTS."""
+    # ═══════════════════════════════════════════════════════════════════
+    # DETECTARE STOP KEYWORD
+    # ═══════════════════════════════════════════════════════════════════
+    def _run_detector(self, chunk: np.ndarray) -> Optional[StopDetectionResult]:
+        """Rulează modelul ONNX pe chunk-ul audio."""
         
-        self.last_barge_in_time = time.time()
+        # Extrage features (Mel Spectrogram)
+        feats = self._featurize(chunk)
         
-        self.get_logger().info('🛑 BARGE-IN detected! Stopping robot speech.')
+        # Inferență ONNX - modelul returnează un scalar [1, 1]
+        output = self.session.run(None, {self.input_name: feats})[0]
         
-        # Publică pe /barge_in
+        # Modelul returnează probabilitatea pentru "stop" direct
+        p_stop = float(output[0][0])
+        
+        # Verifică dacă e hit bazat pe threshold
+        raw_hit = p_stop >= self.prob_threshold
+        
+        if raw_hit:
+            self._consecutive_hits += 1
+        else:
+            self._consecutive_hits = 0
+        
+        if self.debug:
+            self.get_logger().info(
+                f'[STOP-KWS] p_stop={p_stop:.3f} hits={self._consecutive_hits}/{self.hits_required}'
+            )
+        
+        # Returnează rezultat doar dacă avem suficiente hit-uri consecutive
+        if self._consecutive_hits >= self.hits_required:
+            self._consecutive_hits = 0
+            return StopDetectionResult(probability=p_stop, logits=(1-p_stop, p_stop))
+        
+        return None
+    
+    def _featurize(self, chunk: np.ndarray) -> np.ndarray:
+        """Convertește audio la Mel Spectrogram normalizat [1, 16, 96]."""
+        # Input: chunk cu self.frame samples
+        t = torch.from_numpy(chunk[np.newaxis, :]).float()
+        mel = self._mel(t)  # Output: [1, n_mels, n_frames]
+        mel_db = self._db(mel)
+        
+        # Normalizare
+        mel_db = (mel_db - mel_db.mean()) / (mel_db.std() + 1e-9)
+        
+        # Asigură-te că avem exact 96 frames (padding sau truncare)
+        n_frames = mel_db.shape[-1]
+        if n_frames < self.n_frames:
+            # Padding cu zerouri
+            pad = torch.zeros(1, self.n_mels, self.n_frames - n_frames)
+            mel_db = torch.cat([mel_db, pad], dim=-1)
+        elif n_frames > self.n_frames:
+            # Truncare
+            mel_db = mel_db[:, :, :self.n_frames]
+        
+        # Output: [1, 16, 96] - exact ce așteaptă modelul
+        feats = mel_db.numpy().astype(np.float32)
+        return feats
+    
+    @staticmethod
+    def _softmax2(a: float, b: float) -> Tuple[float, float]:
+        """Softmax pentru 2 valori."""
+        m = max(a, b)
+        ea = math.exp(a - m)
+        eb = math.exp(b - m)
+        s = ea + eb
+        if s == 0.0:
+            return 0.5, 0.5
+        return ea / s, eb / s
+    
+    # ═══════════════════════════════════════════════════════════════════
+    # TRIGGER STOP
+    # ═══════════════════════════════════════════════════════════════════
+    def _trigger_stop(self, result: StopDetectionResult):
+        """Declanșează stop când detectăm keyword-ul."""
+        
+        self.get_logger().info(
+            f'🛑 STOP detected! Probability: {result.probability:.2f} - Stopping playback'
+        )
+        
+        # Publică pe /stop_playback
         msg = Bool()
         msg.data = True
-        self.barge_in_pub.publish(msg)
+        self.stop_pub.publish(msg)
+        
+        # Reset buffer
+        self._buf[:] = 0.0
+        self._buf_filled = False
+        self._filled = 0
 
 
 # ═══════════════════════════════════════════════════════════════════

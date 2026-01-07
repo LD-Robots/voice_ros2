@@ -86,6 +86,14 @@ def generate_launch_description():
             output='screen',
         ),
         
+        # Audio Segment (bufferează audio și trimite segment complet)
+        Node(
+            package='conversational_client',
+            executable='audio_segment_node',
+            name='audio_segment_node',
+            output='screen',
+        ),
+        
         # Audio Playback (difuzor)
         Node(
             package='conversational_client',
@@ -94,7 +102,7 @@ def generate_launch_description():
             output='screen',
         ),
         
-        # Barge-in (întrerupe TTS când vorbește userul)
+        # Barge-in (detectare "stop" keyword)
         Node(
             package='conversational_client',
             executable='barge_in_node',
@@ -102,7 +110,7 @@ def generate_launch_description():
             output='screen',
         ),
         
-        # Wake Word (detectare "Hey robot")
+        # Wake Word (detectare "hello robot")
         Node(
             package='conversational_client',
             executable='wake_word_node',

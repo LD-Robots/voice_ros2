@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
 """
-ASR Node - Speech to Text using Faster Whisper (Standalone).
+ASR Node - Speech to Text using Faster Whisper.
 
-Subscribes to: 
-  - /audio_raw (Audio) - audio frames
-  - /voice_activity (Bool) - VAD status
+Subscribes to: /audio_segment (Audio) - complete audio segments from client
 Publishes to: /transcription (Transcription)
 
-Buffers audio while user is speaking, then transcribes when speech ends.
+Primește segmente audio complete de la client și le transcrie cu Faster Whisper.
 """
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio, Transcription
-from std_msgs.msg import Bool
 import numpy as np
 import tempfile
 import wave
@@ -57,26 +54,13 @@ class ASRNode(Node):
         )
         self.get_logger().info('✅ Whisper model loaded!')
         
-        # Buffer pentru audio
-        self.audio_buffer = []
-        self.sample_rate = 16000
-        self.channels = 1
-        self.is_speaking = False
-        self.was_speaking = False
-        
-        # Subscriber pentru audio
-        self.audio_sub = self.create_subscription(
+        # ─────────────────────────────────────────────────────────
+        # SUBSCRIBER - primește segmente audio complete de la client
+        # ─────────────────────────────────────────────────────────
+        self.segment_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
-            self.audio_callback,
-            10
-        )
-        
-        # Subscriber pentru VAD
-        self.vad_sub = self.create_subscription(
-            Bool,
-            '/voice_activity',
-            self.vad_callback,
+            '/audio_segment',
+            self.segment_callback,
             10
         )
         
@@ -87,59 +71,38 @@ class ASRNode(Node):
             10
         )
         
-        self.get_logger().info('ASR Node started! Listening on /audio_raw and /voice_activity')
+        self.get_logger().info('🧏 ASR Node started! Listening on /audio_segment')
     
-    def vad_callback(self, msg: Bool):
-        """Primește statusul VAD (vorbește/nu vorbește)."""
-        self.was_speaking = self.is_speaking
-        self.is_speaking = msg.data
+    def segment_callback(self, msg: Audio):
+        """Procesează un segment audio complet."""
         
-        # Când userul termină de vorbit, transcrie
-        if self.was_speaking and not self.is_speaking:
-            self.get_logger().info(f'🔚 Speech ended, processing {len(self.audio_buffer)} frames...')
-            self._process_buffer()
-    
-    def audio_callback(self, msg: Audio):
-        """Bufferează audio în timpul vorbirii."""
-        self.sample_rate = msg.sample_rate
-        self.channels = msg.channels
-        
-        # Bufferează audio când userul vorbește (sau puțin înainte)
-        if self.is_speaking:
-            self.audio_buffer.extend(msg.data)
-        else:
-            # Păstrează ultimele 0.5 secunde pentru context
-            max_pre_buffer = int(self.sample_rate * 0.5)
-            self.audio_buffer.extend(msg.data)
-            if len(self.audio_buffer) > max_pre_buffer:
-                self.audio_buffer = self.audio_buffer[-max_pre_buffer:]
-    
-    def _process_buffer(self):
-        """Procesează audio-ul bufferat și publică transcrierea."""
-        if not self.audio_buffer:
-            self.get_logger().warn('Empty audio buffer, skipping')
-            self.audio_buffer = []
+        if not msg.data:
+            self.get_logger().warn('Empty audio segment, skipping')
             return
+        
+        sample_rate = msg.sample_rate
+        channels = msg.channels
+        audio_length = len(msg.data) / sample_rate
         
         # Verifică lungimea minimă
-        audio_length = len(self.audio_buffer) / self.sample_rate
         if audio_length < self.min_audio_length:
-            self.get_logger().warn(f'Audio too short ({audio_length:.2f}s < {self.min_audio_length}s), skipping')
-            self.audio_buffer = []
+            self.get_logger().warn(
+                f'Audio too short ({audio_length:.2f}s < {self.min_audio_length}s), skipping'
+            )
             return
         
-        self.get_logger().info(f'🎤 Processing {audio_length:.2f}s of audio...')
+        self.get_logger().info(f'📥 Received audio segment: {audio_length:.2f}s')
         
         # Convertește în numpy array
-        audio_data = np.array(self.audio_buffer, dtype=np.int16)
+        audio_data = np.array(msg.data, dtype=np.int16)
         
         # Salvează temporar ca WAV
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
             temp_path = f.name
             with wave.open(f.name, 'wb') as wav:
-                wav.setnchannels(self.channels)
+                wav.setnchannels(channels)
                 wav.setsampwidth(2)  # 16-bit = 2 bytes
-                wav.setframerate(self.sample_rate)
+                wav.setframerate(sample_rate)
                 wav.writeframes(audio_data.tobytes())
         
         try:
@@ -158,7 +121,7 @@ class ASRNode(Node):
             confidence = info.language_probability
             
             if text:
-                self.get_logger().info(f'🧏 [{lang}] {text}')
+                self.get_logger().info(f'🧏 [{lang}] "{text}"')
                 
                 # Publică rezultat
                 out = Transcription()
@@ -175,7 +138,6 @@ class ASRNode(Node):
             # Cleanup
             if os.path.exists(temp_path):
                 os.remove(temp_path)
-            self.audio_buffer = []
 
 
 def main(args=None):

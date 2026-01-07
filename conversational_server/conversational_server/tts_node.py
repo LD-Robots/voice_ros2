@@ -11,6 +11,7 @@ from conversational_interfaces.msg import Transcription, Audio
 import asyncio
 import tempfile
 import os
+import re
 import numpy as np
 
 # Edge TTS pentru sinteză vocală
@@ -78,6 +79,15 @@ class TTSNode(Node):
             return self.voice_ro
         return self.voice_en
     
+    def _clean_text(self, text: str) -> str:
+        """Elimină tag-urile [INTENT:...] și [MOTOR:...] din text înainte de sinteză."""
+        # Elimină [INTENT:xxx] și [MOTOR:xxx:yyy]
+        cleaned = re.sub(r'\[INTENT:[^\]]+\]', '', text)
+        cleaned = re.sub(r'\[MOTOR:[^\]]+\]', '', cleaned)
+        # Curăță spații multiple și trim
+        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        return cleaned
+    
     async def _synthesize_async(self, text: str, voice: str) -> bytes:
         """Sintetizează text în audio folosind Edge TTS."""
         communicate = edge_tts.Communicate(
@@ -126,11 +136,18 @@ class TTSNode(Node):
             self.get_logger().warn('Empty text received, skipping')
             return
         
-        self.get_logger().info(f'🔊 Synthesizing [{lang}]: {text[:50]}...')
+        # Elimină tag-urile [INTENT:...] și [MOTOR:...]
+        clean_text = self._clean_text(text)
+        
+        if not clean_text:
+            self.get_logger().warn('Text is empty after cleaning tags, skipping')
+            return
+        
+        self.get_logger().info(f'🔊 Synthesizing [{lang}]: {clean_text[:50]}...')
         
         try:
             voice = self._pick_voice(lang)
-            audio_data, sample_rate = self._synthesize(text, voice)
+            audio_data, sample_rate = self._synthesize(clean_text, voice)
             
             # Asigură-te că e mono
             if len(audio_data.shape) > 1:

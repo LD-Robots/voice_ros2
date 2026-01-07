@@ -13,6 +13,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
+        # Modelele ONNX pentru wake word detection
+        (os.path.join('share', package_name, 'models'), glob('models/*.onnx')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,6 +31,7 @@ setup(
         'console_scripts': [
             'audio_capture_node = conversational_client.audio_capture_node:main',
             'audio_playback_node = conversational_client.audio_playback_node:main',
+            'audio_segment_node = conversational_client.audio_segment_node:main',
             'wake_word_node = conversational_client.wake_word_node:main',
             'vad_node = conversational_client.vad_node:main',
             'barge_in_node = conversational_client.barge_in_node:main',

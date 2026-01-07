@@ -15,6 +15,7 @@ EXPLICAȚIE:
 import rclpy                              # Biblioteca principală ROS2 pentru Python
 from rclpy.node import Node               # Clasa de bază - toate nodurile moștenesc din ea
 from conversational_interfaces.msg import Audio  # Tipul de mesaj Audio pe care l-am definit
+from std_msgs.msg import Bool              # Pentru comenzi stop
 import numpy as np                         # Pentru lucrul cu array-uri de numere
 from collections import deque              # Coadă pentru buffer audio
 import threading                           # Pentru a rula playback-ul în paralel
@@ -101,6 +102,16 @@ class AudioPlaybackNode(Node):
         self.playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
         self.playback_thread.start()
         
+        # ─────────────────────────────────────────────────────────
+        # SUBSCRIBER PENTRU STOP - permite barge_in_node să oprească playback-ul
+        # ─────────────────────────────────────────────────────────
+        self.stop_sub = self.create_subscription(
+            Bool,
+            '/stop_playback',
+            self.stop_callback,
+            10
+        )
+        
         self.get_logger().info('🔊 Audio Playback Node started - waiting for audio on /audio_out')
     
     # ═══════════════════════════════════════════════════════════════════
@@ -154,6 +165,11 @@ class AudioPlaybackNode(Node):
         self.audio_buffer.clear()
         self.is_playing = False
         self.get_logger().info('⏹️ Playback stopped')
+    
+    def stop_callback(self, msg: Bool):
+        """Callback pentru comanda de stop (de la barge_in_node)."""
+        if msg.data:
+            self.stop_playback()
     
     # ═══════════════════════════════════════════════════════════════════
     # CLEANUP - la închiderea nodului

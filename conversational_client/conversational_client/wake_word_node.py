@@ -18,6 +18,11 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Audio
 from std_msgs.msg import Bool, String
 import numpy as np
+import os
+import time
+
+# Pentru a găsi path-ul pachetului ROS2
+from ament_index_python.packages import get_package_share_directory
 
 # Încercăm să importăm OpenWakeWord
 try:
@@ -46,21 +51,32 @@ class WakeWordNode(Node):
         super().__init__('wake_word_node')
         
         # ─────────────────────────────────────────────────────────
+        # PATH CĂTRE MODELE - din pachetul ROS2
+        # ─────────────────────────────────────────────────────────
+        pkg_share = get_package_share_directory('conversational_client')
+        default_model_path = os.path.join(pkg_share, 'models', 'hello_robot.onnx')
+        
+        # ─────────────────────────────────────────────────────────
         # PARAMETRI
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('threshold', 0.5)     # Prag de detecție (0.0 - 1.0)
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('wake_phrase', 'hey_jarvis')  # Modelul OpenWakeWord
+        self.declare_parameter('wake_phrase', 'hello_robot')  # Numele wake phrase-ului
+        # Path către modelul custom ONNX (default: din pachetul ROS2)
+        self.declare_parameter('model_path', default_model_path)
         
         self.threshold = self.get_parameter('threshold').value
         self.sample_rate = self.get_parameter('sample_rate').value
         self.wake_phrase = self.get_parameter('wake_phrase').value
+        self.model_path = self.get_parameter('model_path').value
         
         # ─────────────────────────────────────────────────────────
         # STARE
         # ─────────────────────────────────────────────────────────
         self.session_active = False  # True când sesiunea e activă
         self.audio_buffer = []       # Buffer pentru acumulare audio
+        self.last_detection_time = 0  # Timestamp ultima detecție
+        self.cooldown_seconds = 2.0   # Cooldown între detecții
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - primim audio de la microfon
@@ -94,10 +110,9 @@ class WakeWordNode(Node):
         self.oww_model = None
         if OPENWAKEWORD_AVAILABLE:
             try:
-                # Încarcă modelul pre-antrenat
+                # Încarcă modelul custom ONNX
                 self.oww_model = OWWModel(
-                    wakeword_models=[self.wake_phrase],
-                    inference_framework='onnx'
+                    wakeword_model_paths=[self.model_path],  # Path către hello_robot.onnx
                 )
                 self.get_logger().info(
                     f'🔔 Wake Word Node started - listening for "{self.wake_phrase}" '
@@ -120,21 +135,33 @@ class WakeWordNode(Node):
         audio = np.array(msg.data, dtype=np.int16)
         
         if self.oww_model is not None:
-            # ─────────────────────────────────────────────────────
+            # ─────────────────────────────────────────────────────────
             # PROCESARE CU OPENWAKEWORD
-            # ─────────────────────────────────────────────────────
-            # OpenWakeWord așteaptă audio normalizat float32
-            audio_float = audio.astype(np.float32) / 32768.0
+            # ─────────────────────────────────────────────────────────
+            # Acumulează audio în buffer (OWW cere minim 400 samples)
+            self.audio_buffer.append(audio)
+            total_samples = sum(len(x) for x in self.audio_buffer)
             
-            # Procesează chunk-ul
-            prediction = self.oww_model.predict(audio_float)
-            
-            # Verifică scorul pentru wake phrase
-            scores = prediction.get(self.wake_phrase, {})
-            score = max(scores.values()) if scores else 0.0
-            
-            if score >= self.threshold and not self.session_active:
-                self._activate_session(score)
+            # Procesează doar când avem suficiente samples (1280 = 80ms la 16kHz)
+            if total_samples >= 1280:
+                # Concatenează buffer-ul
+                audio_concat = np.concatenate(self.audio_buffer)
+                self.audio_buffer = []  # Reset buffer
+                
+                # OpenWakeWord așteaptă audio normalizat float32
+                audio_float = audio_concat.astype(np.float32) / 32768.0
+                
+                # Procesează chunk-ul
+                prediction = self.oww_model.predict(audio_float)
+                
+                # Verifică scorul pentru wake phrase (OWW folosește numele fișierului ca key)
+                score = prediction.get(self.wake_phrase, 0.0)
+                
+                if score >= self.threshold and not self.session_active:
+                    # Verifică cooldown pentru a evita activări repetate
+                    if time.time() - self.last_detection_time > self.cooldown_seconds:
+                        self._activate_session(score)
+                        self.last_detection_time = time.time()
         else:
             # ─────────────────────────────────────────────────────
             # DUMMY MODE - simulăm detecție la fiecare 10 secunde (pentru test)
