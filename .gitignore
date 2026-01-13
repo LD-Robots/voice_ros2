@@ -1,0 +1,22 @@
+# ROS2 build artifacts (NU în repo!)
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Temp files
+*.swp
+*~
+*.mp3
+
+# Large models (download separately)
+*.onnx

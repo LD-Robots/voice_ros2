@@ -96,6 +96,11 @@ class ASRNode(Node):
         # Convertește în numpy array
         audio_data = np.array(msg.data, dtype=np.int16)
         
+        # DEBUG: arată amplitudinea audio
+        audio_max = int(np.max(np.abs(audio_data)))
+        audio_rms = int(np.sqrt(np.mean(audio_data.astype(np.float32)**2)))
+        self.get_logger().info(f'🎵 Audio stats: max={audio_max}, rms={audio_rms}, samples={len(audio_data)}')
+        
         # Salvează temporar ca WAV
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
             temp_path = f.name
@@ -105,14 +110,19 @@ class ASRNode(Node):
                 wav.setframerate(sample_rate)
                 wav.writeframes(audio_data.tobytes())
         
+        # DEBUG: salvează o copie pentru inspecție
+        import shutil
+        debug_path = '/tmp/asr_debug_last.wav'
+        shutil.copy(temp_path, debug_path)
+        self.get_logger().info(f'💾 Debug WAV saved: {debug_path}')
+        
         try:
-            # Transcrie cu Faster Whisper
+            # Transcrie cu Faster Whisper (fără VAD filter pentru debug)
             segments, info = self.model.transcribe(
                 temp_path,
                 language=self.language,
                 beam_size=5,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=300)
+                vad_filter=False,  # Dezactivat temporar pentru debug
             )
             
             # Combină segmentele

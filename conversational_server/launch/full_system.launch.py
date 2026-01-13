@@ -39,6 +39,7 @@ def generate_launch_description():
                 'model_size': LaunchConfiguration('asr_model_size'),
                 'device': 'cpu',
                 'compute_type': 'int8',
+                'language': 'en',  # Forțează engleză
             }]
         ),
         
@@ -76,6 +77,9 @@ def generate_launch_description():
             executable='audio_capture_node',
             name='audio_capture_node',
             output='screen',
+            parameters=[{
+                # Folosește device default - auto-detect cu resampling
+            }]
         ),
         
         # VAD (Voice Activity Detection)
@@ -111,10 +115,14 @@ def generate_launch_description():
         ),
         
         # Wake Word (detectare "hello robot")
+        # TEMPORARY: threshold foarte mic pentru bypass până rezolvăm modelul
         Node(
             package='conversational_client',
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
+            parameters=[{
+                'threshold': 0.0005,  # Foarte mic - orice sunet activează
+            }]
         ),
     ])
