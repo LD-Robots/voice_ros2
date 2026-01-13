@@ -20,3 +20,4 @@ __pycache__/
 
 # Large models (download separately)
 *.onnx
+conversational_server/models/
