@@ -112,7 +112,7 @@ class WakeWordNode(Node):
             try:
                 # Încarcă modelul custom ONNX
                 self.oww_model = OWWModel(
-                    wakeword_model_paths=[self.model_path],  # Path către hello_robot.onnx
+                    wakeword_model_paths=[self.model_path],
                 )
                 self.get_logger().info(
                     f'🔔 Wake Word Node started - listening for "{self.wake_phrase}" '
@@ -148,14 +148,29 @@ class WakeWordNode(Node):
                 audio_concat = np.concatenate(self.audio_buffer)
                 self.audio_buffer = []  # Reset buffer
                 
-                # OpenWakeWord așteaptă audio normalizat float32
-                audio_float = audio_concat.astype(np.float32) / 32768.0
+                # OpenWakeWord așteaptă audio int16 (NU normalizat!)
+                # Trimitem direct array-ul int16
+                prediction = self.oww_model.predict(audio_concat)
                 
-                # Procesează chunk-ul
-                prediction = self.oww_model.predict(audio_float)
+                # DEBUG: arată TOATE predicțiile (doar la fiecare 50 de apeluri)
+                if not hasattr(self, '_debug_counter'):
+                    self._debug_counter = 0
+                    self.get_logger().info(f'🔍 DEBUG: Prediction keys = {list(prediction.keys())}')
+                self._debug_counter += 1
                 
-                # Verifică scorul pentru wake phrase (OWW folosește numele fișierului ca key)
+                # Arată scorul și AMPLITUDINEA audio la fiecare 100 de predicții
                 score = prediction.get(self.wake_phrase, 0.0)
+                if self._debug_counter % 100 == 0:
+                    audio_max = int(np.max(np.abs(audio_concat)))
+                    audio_rms = int(np.sqrt(np.mean(audio_concat.astype(np.float32)**2)))
+                    self.get_logger().info(
+                        f'📊 #{self._debug_counter}: {self.wake_phrase}={score:.4f} | '
+                        f'audio: max={audio_max}, rms={audio_rms}'
+                    )
+                
+                # Arată scorul când e mai mare de 0.01
+                if score > 0.01:
+                    self.get_logger().info(f'🎯 {self.wake_phrase} = {score:.3f}')
                 
                 if score >= self.threshold and not self.session_active:
                     # Verifică cooldown pentru a evita activări repetate

@@ -58,6 +58,7 @@ class AudioCaptureNode(Node):
         self.declare_parameter('sample_rate', 16000)  # Frecvența: 16000 samples/secundă
         self.declare_parameter('channels', 1)          # Canale: 1 = mono, 2 = stereo
         self.declare_parameter('chunk_ms', 20)         # Mărime chunk: 20 milisecunde
+        self.declare_parameter('device_index', -1)     # -1 = default, altfel index specific
         
         # ─────────────────────────────────────────────────────────
         # Citește valorile parametrilor declarați
@@ -65,6 +66,7 @@ class AudioCaptureNode(Node):
         self.sample_rate = self.get_parameter('sample_rate').value  # 16000
         self.channels = self.get_parameter('channels').value         # 1
         chunk_ms = self.get_parameter('chunk_ms').value               # 20
+        device_index = self.get_parameter('device_index').value       # -1 = default
         
         # ─────────────────────────────────────────────────────────
         # CALCUL: Câte samples are un chunk?
@@ -91,17 +93,38 @@ class AudioCaptureNode(Node):
         if PYAUDIO_AVAILABLE:
             try:
                 self.audio = pyaudio.PyAudio()  # Creează obiectul PyAudio
-                self.stream = self.audio.open(
-                    format=pyaudio.paInt16,      # Format: 16-bit integer (standard)
-                    channels=self.channels,       # Mono sau stereo
-                    rate=self.sample_rate,        # 16000 Hz
-                    input=True,                   # INPUT = citim de la microfon
-                    frames_per_buffer=self.chunk_size  # Câte samples citim odată
-                )
+                
+                # Dacă device_index e -1, găsește automat un USB mic sau folosește default
+                if device_index == -1:
+                    # Încearcă să găsească un microfon USB
+                    for i in range(self.audio.get_device_count()):
+                        info = self.audio.get_device_info_by_index(i)
+                        if info['maxInputChannels'] > 0:  # E input device
+                            name = info['name'].lower()
+                            if 'usb' in name or 'me6s' in name:
+                                device_index = i
+                                self.get_logger().info(f'🎤 Found USB mic: {info["name"]} (index={i})')
+                                break
+                
+                # Deschide microfonul
+                open_params = {
+                    'format': pyaudio.paInt16,
+                    'channels': self.channels,
+                    'rate': self.sample_rate,
+                    'input': True,
+                    'frames_per_buffer': self.chunk_size,
+                }
+                if device_index >= 0:
+                    open_params['input_device_index'] = device_index
+                    
+                self.stream = self.audio.open(**open_params)
+                
                 # Log de confirmare
+                actual_device = device_index if device_index >= 0 else 'default'
                 self.get_logger().info(
                     f'🎤 Audio Capture started: {self.sample_rate}Hz, '
-                    f'{self.channels}ch, chunk={self.chunk_size} samples ({chunk_ms}ms)'
+                    f'{self.channels}ch, chunk={self.chunk_size} samples ({chunk_ms}ms), '
+                    f'device={actual_device}'
                 )
             except Exception as e:
                 # Eroare la deschiderea microfonului

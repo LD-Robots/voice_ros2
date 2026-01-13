@@ -25,13 +25,21 @@ import queue
 from concurrent.futures import ThreadPoolExecutor, Future
 from collections import OrderedDict
 
-# Edge TTS pentru sinteză vocală
+# Edge TTS pentru sinteză vocală (ONLINE)
 try:
     import edge_tts
     EDGE_TTS_AVAILABLE = True
 except ImportError:
     EDGE_TTS_AVAILABLE = False
     print("⚠️ edge-tts not installed. Run: pip install edge-tts")
+
+# Piper TTS pentru sinteză vocală (OFFLINE)
+try:
+    from piper import PiperVoice
+    PIPER_AVAILABLE = True
+except ImportError:
+    PIPER_AVAILABLE = False
+    print("⚠️ piper-tts not installed. Run: pip install piper-tts")
 
 # Soundfile pentru citirea audio
 try:
@@ -40,6 +48,64 @@ try:
 except ImportError:
     SOUNDFILE_AVAILABLE = False
     print("⚠️ soundfile not installed. Run: pip install soundfile")
+
+# Path-uri pentru modele Piper (relative la pachet)
+from ament_index_python.packages import get_package_share_directory
+import wave
+import io
+
+
+# ═════════════════════════════════════════════════════════════════
+# FRAZE COMUNE PENTRU CACHE - instant playback!
+# ═════════════════════════════════════════════════════════════════
+COMMON_PHRASES = {
+    # Română
+    'ro': [
+        'Bună!',
+        'Salut!',
+        'La revedere!',
+        'Pa!',
+        'Nu înțeleg.',
+        'Poți repeta?',
+        'Înțeleg.',
+        'Sigur!',
+        'Desigur!',
+        'Așteaptă puțin.',
+        'O secundă.',
+        'Gata!',
+        'Perfect!',
+        'Mulțumesc!',
+        'Cu plăcere!',
+        'Da.',
+        'Nu.',
+        'Ok.',
+        'Bine.',
+        'Super!',
+    ],
+    # Engleză
+    'en': [
+        'Hello!',
+        'Hi!',
+        'Goodbye!',
+        'Bye!',
+        "I don't understand.",
+        'Can you repeat?',
+        'I understand.',
+        'Sure!',
+        'Of course!',
+        'Just a moment.',
+        'One second.',
+        'Done!',
+        'Perfect!',
+        'Thank you!',
+        "You're welcome!",
+        'Yes.',
+        'No.',
+        'Ok.',
+        'Alright.',
+        'Great!',
+    ]
+}
 
 
 class TTSNode(Node):
@@ -59,15 +125,54 @@ class TTSNode(Node):
         self.pitch = self.get_parameter('pitch').value
         self.prefetch_count = self.get_parameter('prefetch_count').value
         
-        if not EDGE_TTS_AVAILABLE:
-            self.get_logger().error('edge-tts not installed!')
-            raise RuntimeError('edge-tts not available')
+        if not EDGE_TTS_AVAILABLE and not PIPER_AVAILABLE:
+            self.get_logger().error('No TTS backend available! Install edge-tts or piper-tts')
+            raise RuntimeError('No TTS backend available')
         
         if not SOUNDFILE_AVAILABLE:
             self.get_logger().error('soundfile not installed!')
             raise RuntimeError('soundfile not available')
         
-        self.get_logger().info(f'✅ TTS initialized: EN={self.voice_en}, RO={self.voice_ro}')
+        # ═══════════════════════════════════════════════════════════
+        # PIPER TTS SETUP (OFFLINE FALLBACK)
+        # ═══════════════════════════════════════════════════════════
+        self.piper_voices = {}
+        if PIPER_AVAILABLE:
+            try:
+                pkg_share = get_package_share_directory('conversational_server')
+                piper_dir = os.path.join(pkg_share, 'models', 'piper')
+                
+                # Încarcă modelele Piper dacă există
+                en_model = os.path.join(piper_dir, 'en_US-amy-medium.onnx')
+                ro_model = os.path.join(piper_dir, 'ro_RO-mihai-medium.onnx')
+                
+                if os.path.exists(en_model):
+                    self.piper_voices['en'] = PiperVoice.load(en_model)
+                    self.get_logger().info(f'✅ Piper EN voice loaded: {en_model}')
+                
+                if os.path.exists(ro_model):
+                    self.piper_voices['ro'] = PiperVoice.load(ro_model)
+                    self.get_logger().info(f'✅ Piper RO voice loaded: {ro_model}')
+                    
+            except Exception as e:
+                self.get_logger().warning(f'⚠️ Failed to load Piper voices: {e}')
+        
+        # Prefer Edge TTS (calitate mai bună), Piper ca fallback
+        self.use_edge_tts = EDGE_TTS_AVAILABLE
+        
+        backend = "Edge TTS (online)" if self.use_edge_tts else "Piper (offline)"
+        self.get_logger().info(f'✅ TTS initialized: EN={self.voice_en}, RO={self.voice_ro}, Backend={backend}')
+        
+        # ═══════════════════════════════════════════════════════════
+        # CACHE SYSTEM - pentru fraze comune
+        # ═══════════════════════════════════════════════════════════
+        self.audio_cache = {}  # (text, voice) -> (audio_data, sample_rate)
+        self.cache_hits = 0
+        self.cache_misses = 0
+        
+        # Încărcarea cache-ului la pornire (în background)
+        self._preload_thread = threading.Thread(target=self._preload_cache, daemon=True)
+        self._preload_thread.start()
         
         # ═══════════════════════════════════════════════════════════════
         # DOUBLE BUFFER SYSTEM
@@ -80,7 +185,7 @@ class TTSNode(Node):
         self.audio_queue = queue.Queue()
         
         # Thread pool pentru sinteză paralelă
-        self.executor = ThreadPoolExecutor(max_workers=self.prefetch_count)
+        self._thread_pool = ThreadPoolExecutor(max_workers=self.prefetch_count)
         
         # Tracking pentru ordine
         self.pending_futures = OrderedDict()  # sequence_id -> Future
@@ -202,7 +307,7 @@ class TTSNode(Node):
                 if text:
                     voice = self._pick_voice(lang)
                     # Trimite la ThreadPool
-                    future = self.executor.submit(self._synthesize_chunk, seq, text, voice)
+                    future = self._thread_pool.submit(self._synthesize_chunk, seq, text, voice)
                     self.pending_futures[seq] = future
                     self.get_logger().debug(f'🔄 Dispatched chunk {seq} for synthesis')
                 
@@ -216,13 +321,28 @@ class TTSNode(Node):
                 self.get_logger().error(f'Dispatch error: {e}')
     
     def _synthesize_chunk(self, seq: int, text: str, voice: str):
-        """Sintetizează un chunk (rulează în ThreadPool)."""
+        """Sintetizează un chunk (rulează în ThreadPool) - folosește cache dacă există."""
         try:
+            # Verifică cache-ul mai întâi!
+            cache_key = (text.strip(), voice)
+            if cache_key in self.audio_cache:
+                audio_data, sample_rate = self.audio_cache[cache_key]
+                self.cache_hits += 1
+                self.get_logger().info(f'⚡ CACHE HIT [{seq}]: "{text[:20]}..." (instant!)')
+                self.audio_queue.put((seq, audio_data.copy(), sample_rate, False))
+                return
+            
+            # Cache miss - sintetizează
+            self.cache_misses += 1
             audio_data, sample_rate = self._synthesize(text, voice)
             
             # Asigură-te că e mono
             if len(audio_data.shape) > 1:
                 audio_data = audio_data[:, 0]
+            
+            # Salvează în cache pentru data viitoare (doar fraze scurte)
+            if len(text) < 100:  # Cache doar texte scurte
+                self.audio_cache[cache_key] = (audio_data.copy(), sample_rate)
             
             # Pune în queue de audio
             self.audio_queue.put((seq, audio_data, sample_rate, False))
@@ -312,7 +432,30 @@ class TTSNode(Node):
         return audio_data
     
     def _synthesize(self, text: str, voice: str):
-        """Wrapper sincron pentru sinteză."""
+        """Sintetizează text - încearcă Edge TTS, fallback pe Piper."""
+        
+        # Determină limba pentru Piper fallback
+        lang = 'ro' if 'ro' in voice.lower() else 'en'
+        
+        # Încearcă Edge TTS mai întâi (dacă e disponibil)
+        if self.use_edge_tts and EDGE_TTS_AVAILABLE:
+            try:
+                return self._synthesize_edge_tts(text, voice)
+            except Exception as e:
+                self.get_logger().warning(f'⚠️ Edge TTS failed: {e}, trying Piper...')
+        
+        # Fallback pe Piper
+        if PIPER_AVAILABLE and lang in self.piper_voices:
+            try:
+                return self._synthesize_piper(text, lang)
+            except Exception as e:
+                self.get_logger().error(f'❌ Piper TTS also failed: {e}')
+                raise
+        
+        raise RuntimeError(f'No TTS backend available for language: {lang}')
+    
+    def _synthesize_edge_tts(self, text: str, voice: str):
+        """Sintetizează cu Edge TTS (online)."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -332,11 +475,71 @@ class TTSNode(Node):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
     
+    def _synthesize_piper(self, text: str, lang: str):
+        """Sintetizează cu Piper TTS (offline)."""
+        piper_voice = self.piper_voices[lang]
+        
+        # Sintetizează în memorie
+        audio_buffer = io.BytesIO()
+        
+        with wave.open(audio_buffer, 'wb') as wav_file:
+            piper_voice.synthesize(text, wav_file)
+        
+        # Citește din buffer
+        audio_buffer.seek(0)
+        audio_data, sample_rate = sf.read(audio_buffer, dtype='int16')
+        
+        self.get_logger().debug(f'🔊 Piper synthesized: {len(audio_data)} samples at {sample_rate}Hz')
+        return audio_data, sample_rate
+    
     def destroy_node(self):
-        """Cleanup la închidere."""
+        """Cleanup la închidere - afișează statistici cache."""
         self.running = False
-        self.executor.shutdown(wait=False)
+        self._thread_pool.shutdown(wait=False)
+        
+        # Statistici cache
+        total = self.cache_hits + self.cache_misses
+        if total > 0:
+            hit_rate = (self.cache_hits / total) * 100
+            self.get_logger().info(
+                f'📊 Cache stats: {self.cache_hits} hits, {self.cache_misses} misses '
+                f'({hit_rate:.1f}% hit rate)'
+            )
+        
         super().destroy_node()
+    
+    # ═══════════════════════════════════════════════════════════════════
+    # PRELOAD CACHE - încarcă frazele comune la pornire
+    # ═══════════════════════════════════════════════════════════════════
+    
+    def _preload_cache(self):
+        """Pre-încarcă frazele comune în cache (rulează în background la start)."""
+        import time
+        time.sleep(2)  # Așteaptă să se inițializeze nodul
+        
+        self.get_logger().info('🔄 Pre-loading common phrases cache...')
+        
+        count = 0
+        for lang, phrases in COMMON_PHRASES.items():
+            voice = self.voice_ro if lang == 'ro' else self.voice_en
+            
+            for phrase in phrases:
+                try:
+                    cache_key = (phrase.strip(), voice)
+                    if cache_key not in self.audio_cache:
+                        audio_data, sample_rate = self._synthesize(phrase, voice)
+                        
+                        if len(audio_data.shape) > 1:
+                            audio_data = audio_data[:, 0]
+                        
+                        self.audio_cache[cache_key] = (audio_data.copy(), sample_rate)
+                        count += 1
+                        self.get_logger().debug(f'⚡ Cached: "{phrase}"')
+                        
+                except Exception as e:
+                    self.get_logger().warning(f'Failed to cache "{phrase}": {e}')
+        
+        self.get_logger().info(f'✅ Cache preloaded: {count} phrases ready for instant playback!')
 
 
 def main(args=None):

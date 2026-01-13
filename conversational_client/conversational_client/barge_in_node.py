@@ -90,7 +90,7 @@ class BargeInNode(Node):
         self.declare_parameter('model_path', default_model_path)
         self.declare_parameter('logit_margin', 2.5)      # Diferență minimă între logits
         self.declare_parameter('prob_threshold', 0.96)   # Probabilitate minimă pentru "stop"
-        self.declare_parameter('hits_required', 2)       # Detecții consecutive necesare
+        self.declare_parameter('hits_required', 1)       # Detecții consecutive necesare
         self.declare_parameter('debug', False)
         
         self.sample_rate = self.get_parameter('sample_rate').value
@@ -173,11 +173,7 @@ class BargeInNode(Node):
                     )
                     self._db = torchaudio.transforms.AmplitudeToDB()
                     
-                    self.get_logger().info(
-                        f'🛑 Barge-in Node started - Stop Keyword Detection active\n'
-                        f'   Model: {os.path.basename(self.model_path)}\n'
-                        f'   Threshold: {self.prob_threshold}, Hits required: {self.hits_required}'
-                    )
+                    self.get_logger().info('🛑 Barge-in Node started - Stop Keyword Detection active')
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to load model: {e}')
                 self.session = None

@@ -67,6 +67,7 @@ class VADNode(Node):
         self.silence_frames = 0           # Câte frame-uri consecutive fără voce
         self.min_speech_frames = 3        # Câte frame-uri pentru a confirma voce
         self.min_silence_frames = 10      # Câte frame-uri pentru a confirma tăcere
+        self.is_robot_speaking = False    # True când robotul vorbește (TTS playback)
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER
@@ -75,6 +76,14 @@ class VADNode(Node):
             Audio,
             '/audio_raw',
             self.audio_callback,
+            10
+        )
+        
+        # Starea TTS - când robotul vorbește, ignorăm VAD
+        self.robot_speaking_sub = self.create_subscription(
+            Bool,
+            '/is_speaking',
+            self.robot_speaking_callback,
             10
         )
         
@@ -104,8 +113,17 @@ class VADNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACK AUDIO
     # ═══════════════════════════════════════════════════════════════════
+    
+    def robot_speaking_callback(self, msg: Bool):
+        """Callback pentru starea TTS playback."""
+        self.is_robot_speaking = msg.data
+    
     def audio_callback(self, msg: Audio):
         """Analizează fiecare chunk de audio pentru activitate vocală."""
+        
+        # Nu procesa VAD când robotul vorbește (previne false positives)
+        if self.is_robot_speaking:
+            return
         
         audio = np.array(msg.data, dtype=np.int16)
         

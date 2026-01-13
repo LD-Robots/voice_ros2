@@ -68,6 +68,7 @@ class AudioSegmentNode(Node):
         self.is_speaking = False        # True când VAD detectează voce
         self.was_speaking = False       # Starea anterioară
         self.session_active = False     # True când sesiunea e activă (după wake word)
+        self.is_robot_speaking = False  # True când robotul vorbește (TTS playback)
         self.channels = 1
         
         # ─────────────────────────────────────────────────────────
@@ -98,17 +99,20 @@ class AudioSegmentNode(Node):
             10
         )
         
+        # Starea TTS - când robotul vorbește, ignorăm input-ul
+        self.robot_speaking_sub = self.create_subscription(
+            Bool,
+            '/is_speaking',
+            self.robot_speaking_callback,
+            10
+        )
+        
         # ─────────────────────────────────────────────────────────
         # PUBLISHER - trimite segmente complete la server
         # ─────────────────────────────────────────────────────────
         self.segment_pub = self.create_publisher(Audio, '/audio_segment', 10)
         
-        self.get_logger().info(
-            f'📦 Audio Segment Node started\n'
-            f'   Min segment: {self.min_segment_seconds}s\n'
-            f'   Max segment: {self.max_segment_seconds}s\n'
-            f'   Pre-buffer: {self.pre_buffer_seconds}s'
-        )
+        self.get_logger().info('📦 Audio Segment Node started')
     
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACKS
@@ -125,13 +129,27 @@ class AudioSegmentNode(Node):
             self.pre_buffer = []
             self.get_logger().info('🔴 Session ended - buffers cleared')
     
+    def robot_speaking_callback(self, msg: Bool):
+        """Callback pentru starea TTS playback."""
+        was_speaking = self.is_robot_speaking
+        self.is_robot_speaking = msg.data
+        
+        if msg.data and not was_speaking:
+            self.get_logger().info('🔇 Robot speaking - muting input')
+        elif not msg.data and was_speaking:
+            self.get_logger().info('🔊 Robot stopped - listening again')
+    
     def vad_callback(self, msg: Bool):
         """Callback pentru starea VAD (voice activity)."""
         self.was_speaking = self.is_speaking
         self.is_speaking = msg.data
         
-        # Nu procesa dacă sesiunea nu e activă (așteaptă wake word)
+        # Nu procesa dacă sesiunea nu e activă sau dacă robotul vorbește
         if not self.session_active:
+            self.get_logger().info(f'⏸️ VAD ignored - session not active', throttle_duration_sec=5.0)
+            return
+        if self.is_robot_speaking:
+            self.get_logger().info(f'⏸️ VAD ignored - robot speaking', throttle_duration_sec=5.0)
             return
         
         # Când user-ul începe să vorbească, adaugă pre-buffer
@@ -149,7 +167,8 @@ class AudioSegmentNode(Node):
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
-        if self.session_active:
+        # Nu buffera audio când robotul vorbește (previne feedback loop)
+        if self.session_active and not self.is_robot_speaking:
             if self.is_speaking:
                 # User vorbește - adaugă în buffer principal
                 self.audio_buffer.extend(msg.data)
