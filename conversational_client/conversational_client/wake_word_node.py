@@ -110,13 +110,14 @@ class WakeWordNode(Node):
         self.oww_model = None
         if OPENWAKEWORD_AVAILABLE:
             try:
-                # Încarcă modelul custom ONNX
+                # OpenWakeWord 0.6.0 API - folosește wakeword_models și inference_framework
                 self.oww_model = OWWModel(
-                    wakeword_model_paths=[self.model_path],
+                    wakeword_models=[self.model_path],
+                    inference_framework='onnx'
                 )
                 self.get_logger().info(
                     f'🔔 Wake Word Node started - listening for "{self.wake_phrase}" '
-                    f'(threshold={self.threshold})'
+                    f'(threshold={self.threshold}, OpenWakeWord 0.6.0)'
                 )
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to load OpenWakeWord: {e}')
