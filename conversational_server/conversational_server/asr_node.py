@@ -2,6 +2,11 @@
 """
 ASR Node - Speech to Text using Faster Whisper (Standalone).
 
+FEATURES (sincronizat cu Conversational_Robot Python):
+  - Warmup la start pentru încărcare completă model
+  - Detecție RO/EN cu alegere best score
+  - Fallback fără VAD pentru erori
+
 Subscribes to: 
   - /audio_raw (Audio) - audio frames
   - /voice_activity (Bool) - VAD status
@@ -17,6 +22,8 @@ import numpy as np
 import tempfile
 import wave
 import os
+import time
+import soundfile as sf
 
 # Faster Whisper pentru ASR
 try:
@@ -36,13 +43,19 @@ class ASRNode(Node):
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('compute_type', 'int8')
         self.declare_parameter('min_audio_length', 0.5)  # Minimum seconds to transcribe
-        self.declare_parameter('language', '')  # Empty = auto-detect
+        self.declare_parameter('language', '')  # Empty = auto-detect, 'ro_en' = detect best
+        self.declare_parameter('beam_size', 5)
+        self.declare_parameter('vad_min_silence_ms', 300)
+        self.declare_parameter('warmup_enabled', True)
         
         model_size = self.get_parameter('model_size').value
         device = self.get_parameter('device').value
         compute_type = self.get_parameter('compute_type').value
         self.min_audio_length = self.get_parameter('min_audio_length').value
         self.language = self.get_parameter('language').value or None
+        self.beam_size = self.get_parameter('beam_size').value
+        self.vad_min_silence_ms = self.get_parameter('vad_min_silence_ms').value
+        self.warmup_enabled = self.get_parameter('warmup_enabled').value
         
         if not WHISPER_AVAILABLE:
             self.get_logger().error('faster-whisper not installed!')
@@ -56,6 +69,10 @@ class ASRNode(Node):
             compute_type=compute_type
         )
         self.get_logger().info('✅ Whisper model loaded!')
+        
+        # Warmup la start
+        self._warmed_up = False
+        self._ensure_warm()
         
         # Buffer pentru audio
         self.audio_buffer = []
@@ -88,6 +105,86 @@ class ASRNode(Node):
         )
         
         self.get_logger().info('ASR Node started! Listening on /audio_raw and /voice_activity')
+    
+    def _ensure_warm(self):
+        """Încarcă complet modelul prin transcriere dummy."""
+        if not self.warmup_enabled or self._warmed_up:
+            return
+        try:
+            self.get_logger().info("🔥 ASR warm-up start...")
+            start = time.perf_counter()
+            
+            # Creează fișier audio scurt (0.5s tăcere)
+            fd, temp_path = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+            try:
+                silence = np.zeros(8000, dtype=np.float32)  # 0.5s @ 16kHz
+                sf.write(temp_path, silence, 16000)
+                
+                # Transcriere dummy
+                self.model.transcribe(temp_path, language="en", beam_size=1)
+            finally:
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+            
+            elapsed = time.perf_counter() - start
+            self._warmed_up = True
+            self.get_logger().info(f"✅ ASR warm-up gata ({elapsed:.2f}s)")
+        except Exception as e:
+            self.get_logger().warning(f"ASR warm-up eșuat: {e}")
+    
+    def _run_once(self, wav_path: str, language, use_vad: bool):
+        """
+        Returnează: (text, lang_out, lang_prob, score)
+        score = medie(avg_logprob pe segmente) + 0.01 * len(text)
+        """
+        segments, info = self.model.transcribe(
+            str(wav_path),
+            language=language,
+            beam_size=self.beam_size,
+            temperature=0.0,
+            vad_filter=use_vad,
+            vad_parameters={"min_silence_duration_ms": self.vad_min_silence_ms} if use_vad else None,
+            no_speech_threshold=0.6,
+            log_prob_threshold=-0.5,
+            condition_on_previous_text=False,
+        )
+        segs = list(segments)
+        text = "".join(s.text for s in segs).strip()
+        
+        # scor simplu și robust
+        if segs:
+            vals = [getattr(s, "avg_logprob", -5.0) if getattr(s, "avg_logprob", None) is not None else -5.0 for s in segs]
+            avg_lp = sum(vals) / len(vals)
+        else:
+            avg_lp = -9.0
+        score = avg_lp + 0.01 * len(text)
+        out_lang = info.language or (language or "en")
+        prob = float(getattr(info, "language_probability", 0.0) or 0.0)
+        return text, out_lang, prob, score
+    
+    def _transcribe_ro_en(self, wav_path: str):
+        """
+        Transcriere strict EN/RO -> alegem cea mai bună.
+        Rulăm EN & RO cu VAD intern; dacă dă eroare, retry fără VAD.
+        """
+        def safe(lang):
+            try:
+                return self._run_once(wav_path, lang, use_vad=True)
+            except ValueError as e:
+                if "max() iterable argument is empty" in str(e):
+                    return self._run_once(wav_path, lang, use_vad=False)
+                raise
+        
+        en_text, _, _, en_score = safe("en")
+        ro_text, _, _, ro_score = safe("ro")
+        
+        if (ro_score > en_score) and ro_text:
+            return {"text": ro_text, "lang": "ro", "language_probability": 1.0}
+        else:
+            return {"text": en_text, "lang": "en", "language_probability": 1.0}
     
     def vad_callback(self, msg: Bool):
         """Primește statusul VAD (vorbește/nu vorbește)."""
@@ -143,19 +240,23 @@ class ASRNode(Node):
                 wav.writeframes(audio_data.tobytes())
         
         try:
-            # Transcrie cu Faster Whisper
-            segments, info = self.model.transcribe(
-                temp_path,
-                language=self.language,
-                beam_size=5,
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=300)
-            )
-            
-            # Combină segmentele
-            text = " ".join(seg.text.strip() for seg in segments).strip()
-            lang = info.language
-            confidence = info.language_probability
+            # Folosește detecție RO/EN dacă setat
+            if self.language == 'ro_en':
+                result = self._transcribe_ro_en(temp_path)
+                text = result["text"]
+                lang = result["lang"]
+                confidence = result["language_probability"]
+            else:
+                # Transcrie cu Faster Whisper - cu fallback fără VAD
+                try:
+                    text, lang, confidence, _ = self._run_once(temp_path, self.language, use_vad=True)
+                except ValueError as e:
+                    if "max() iterable argument is empty" in str(e):
+                        self.get_logger().warn("VAD error, retrying without VAD filter...")
+                        fallback_lang = self.language or "en"
+                        text, lang, confidence, _ = self._run_once(temp_path, fallback_lang, use_vad=False)
+                    else:
+                        raise
             
             if text:
                 self.get_logger().info(f'🧏 [{lang}] {text}')

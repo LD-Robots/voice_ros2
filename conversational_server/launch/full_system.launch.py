@@ -39,6 +39,8 @@ def generate_launch_description():
                 'model_size': LaunchConfiguration('asr_model_size'),
                 'device': 'cpu',
                 'compute_type': 'int8',
+                'language': 'ro_en',  # Enable Romanian/English detection
+                'initial_prompt': 'A bilingual conversation in Romanian and English. O conversație bilingvă.',
             }]
         ),
         
@@ -63,8 +65,8 @@ def generate_launch_description():
             name='tts_node',
             output='screen',
             parameters=[{
-                'voice_en': 'en-GB-SoniaNeural',
-                'voice_ro': 'ro-RO-EmilNeural',
+                'voice_en': 'en-IE-EmilyNeural',
+                'voice_ro': 'ro-RO-AlinaNeural',
             }]
         ),
         
@@ -108,5 +110,17 @@ def generate_launch_description():
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
+        ),
+        
+        # Stop Keyword (detectare "stop" în timpul TTS)
+        Node(
+            package='conversational_client',
+            executable='stop_keyword_node',
+            name='stop_keyword_node',
+            output='screen',
+            parameters=[{
+                'model_path': '/home/valee/voice_ros2/voices/stop_keyword.onnx',
+                'enabled': True,
+            }]
         ),
     ])

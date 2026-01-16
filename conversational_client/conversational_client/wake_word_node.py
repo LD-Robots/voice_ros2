@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
-wake_word_node.py
-Detectează cuvântul de trezire "hello robot" și activează sesiunea.
+wake_word_node.py - Multi-Keyword Wake Word Detection
+
+FEATURES (sincronizat cu Conversational_Robot Python):
+  - Suport pentru MULTIPLE modele ONNX (wake + stop)
+  - `kind` field: 'wake' sau 'stop' pentru fiecare keyword
+  - Detecție goodbye/stop pentru a opri sesiunea
+  - Cooldown per keyword
 
 EXPLICAȚIE:
 - Acest nod ASCULTĂ pe topic /audio_raw (audio de la microfon)
 - Când detectează "hello robot", PUBLICĂ pe /wake_detected
-- Serverul sau alte noduri pot apoi să știe că sesiunea e activă
+- Când detectează "goodbye robot" sau "stop", PUBLICĂ pe /end_session
+- Serverul sau alte noduri pot apoi să știe că sesiunea e activă/inactivă
 """
 
 # ═══════════════════════════════════════════════════════════════════
@@ -18,6 +24,9 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Audio
 from std_msgs.msg import Bool, String
 import numpy as np
+import time
+import os
+from pathlib import Path
 
 # Încercăm să importăm OpenWakeWord
 try:
@@ -34,12 +43,13 @@ except ImportError:
 
 class WakeWordNode(Node):
     """
-    Nod ROS2 care detectează wake word "hello robot".
+    Nod ROS2 care detectează multiple wake/stop words.
     
     Funcționare:
     1. Primește audio pe /audio_raw (de la audio_capture_node)
-    2. Procesează cu OpenWakeWord
-    3. Când detectează "hello robot", publică True pe /wake_detected
+    2. Procesează cu OpenWakeWord (multiple modele ONNX)
+    3. Când detectează "wake" keyword, publică True pe /wake_detected
+    4. Când detectează "stop" keyword, publică True pe /end_session
     """
     
     def __init__(self):
@@ -48,13 +58,63 @@ class WakeWordNode(Node):
         # ─────────────────────────────────────────────────────────
         # PARAMETRI
         # ─────────────────────────────────────────────────────────
-        self.declare_parameter('threshold', 0.5)     # Prag de detecție (0.0 - 1.0)
+        self.declare_parameter('threshold', 0.5)     # Prag default de detecție
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('wake_phrase', 'hey_jarvis')  # Modelul OpenWakeWord
+        self.declare_parameter('cooldown_ms', 1500)  # Cooldown între detecții
+        
+        # Modele custom ONNX - pot fi setate din launch/YAML
+        # Format: "path1:kind1,path2:kind2" (ex: "/path/hello.onnx:wake,/path/goodbye.onnx:stop")
+        self.declare_parameter('custom_models', '')
+        
+        # Threshold-uri individuale per model (JSON-like format)
+        # Format: "label1:threshold1,label2:threshold2"
+        self.declare_parameter('model_thresholds', '')
         
         self.threshold = self.get_parameter('threshold').value
         self.sample_rate = self.get_parameter('sample_rate').value
-        self.wake_phrase = self.get_parameter('wake_phrase').value
+        self.cooldown_ms = self.get_parameter('cooldown_ms').value
+        custom_models_str = self.get_parameter('custom_models').value
+        model_thresholds_str = self.get_parameter('model_thresholds').value
+        
+        # ─────────────────────────────────────────────────────────
+        # PARSE CUSTOM MODELS
+        # ─────────────────────────────────────────────────────────
+        self.keywords = {}  # label -> {path, kind, threshold, last_hit}
+        
+        # Parse custom model paths
+        if custom_models_str:
+            for entry in custom_models_str.split(','):
+                entry = entry.strip()
+                if ':' in entry:
+                    parts = entry.rsplit(':', 1)
+                    path_str = parts[0]
+                    kind = parts[1].lower() if len(parts) > 1 else 'wake'
+                    path = Path(path_str).expanduser()
+                    if path.exists():
+                        label = path.stem
+                        self.keywords[label] = {
+                            'path': str(path),
+                            'kind': kind,
+                            'threshold': self.threshold,
+                            'last_hit': 0.0
+                        }
+                        self.get_logger().info(f'  ✓ Loaded model: {label} (kind={kind})')
+                    else:
+                        self.get_logger().warn(f'  ✗ Model not found: {path}')
+        
+        # Parse individual thresholds
+        if model_thresholds_str:
+            for entry in model_thresholds_str.split(','):
+                entry = entry.strip()
+                if ':' in entry:
+                    parts = entry.split(':')
+                    if len(parts) == 2:
+                        label, thr = parts
+                        if label in self.keywords:
+                            try:
+                                self.keywords[label]['threshold'] = float(thr)
+                            except ValueError:
+                                pass
         
         # ─────────────────────────────────────────────────────────
         # STARE
@@ -73,18 +133,23 @@ class WakeWordNode(Node):
         )
         
         # ─────────────────────────────────────────────────────────
-        # PUBLISHERS - publicăm când detectăm wake word
+        # PUBLISHERS
         # ─────────────────────────────────────────────────────────
         self.wake_pub = self.create_publisher(Bool, '/wake_detected', 10)
         self.session_pub = self.create_publisher(Bool, '/session_active', 10)
+        self.end_session_pub = self.create_publisher(Bool, '/end_session', 10)
+        self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        
+        # Publisher pentru comenzi TTS (cache playback)
+        self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
         
         # ─────────────────────────────────────────────────────────
-        # SUBSCRIBER pentru oprirea sesiunii (goodbye robot)
+        # SUBSCRIBER pentru oprirea sesiunii externă
         # ─────────────────────────────────────────────────────────
-        self.end_session_sub = self.create_subscription(
+        self.external_end_sub = self.create_subscription(
             Bool,
-            '/end_session',
-            self.end_session_callback,
+            '/end_session_external',
+            self.external_end_session_callback,
             10
         )
         
@@ -94,14 +159,19 @@ class WakeWordNode(Node):
         self.oww_model = None
         if OPENWAKEWORD_AVAILABLE:
             try:
-                # OpenWakeWord 0.4.0 API - folosește modelele built-in
-                # Nu trebuie să specificăm path, va descărca automat modelele
-                self.oww_model = OWWModel()
+                model_paths = [kw['path'] for kw in self.keywords.values()] if self.keywords else None
                 
-                self.get_logger().info(
-                    f'🔔 Wake Word Node started - OpenWakeWord loaded '
-                    f'(threshold={self.threshold})'
-                )
+                if model_paths:
+                    # Load custom models
+                    self.oww_model = OWWModel(wakeword_models=model_paths)
+                    self.get_logger().info(f'🔔 Wake Word Node started with {len(model_paths)} custom models')
+                else:
+                    # Use default built-in models
+                    self.oww_model = OWWModel()
+                    self.get_logger().info('🔔 Wake Word Node started with default models')
+                
+                self.get_logger().info(f'   threshold={self.threshold}, cooldown={self.cooldown_ms}ms')
+                
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to load OpenWakeWord: {e}')
                 self.get_logger().warn('⚠️ Running in dummy mode (no wake word detection)')
@@ -114,7 +184,7 @@ class WakeWordNode(Node):
     # CALLBACK AUDIO - procesează fiecare chunk de audio
     # ═══════════════════════════════════════════════════════════════════
     def audio_callback(self, msg: Audio):
-        """Procesează audio pentru detectare wake word."""
+        """Procesează audio pentru detectare wake/stop word."""
         
         # Convertește la numpy array
         audio = np.array(msg.data, dtype=np.int16)
@@ -139,28 +209,57 @@ class WakeWordNode(Node):
                     # Procesează chunk-ul
                     prediction = self.oww_model.predict(audio_float)
                     
-                    # Verifică scorurile pentru toate modelele încărcate
-                    for model_name, scores in prediction.items():
-                        if isinstance(scores, dict):
-                            score = max(scores.values()) if scores else 0.0
-                        else:
-                            score = float(scores) if scores else 0.0
-                        
-                        if score >= self.threshold and not self.session_active:
-                            self._activate_session(score)
-                            break
+                    # Verifică scorurile pentru toate modelele
+                    self._check_predictions(prediction)
+                    
                 except Exception as e:
                     self.get_logger().error(f'OpenWakeWord prediction error: {e}')
     
+    def _check_predictions(self, prediction: dict):
+        """Verifică predicțiile și declanșează acțiuni."""
+        now_ms = time.time() * 1000
+        
+        for model_name, scores in prediction.items():
+            if isinstance(scores, dict):
+                score = max(scores.values()) if scores else 0.0
+            else:
+                score = float(scores) if scores else 0.0
+            
+            # Găsește configurația pentru acest model (sau folosește default)
+            if model_name in self.keywords:
+                kw_cfg = self.keywords[model_name]
+                threshold = kw_cfg['threshold']
+                kind = kw_cfg['kind']
+                last_hit = kw_cfg.get('last_hit', 0.0)
+            else:
+                threshold = self.threshold
+                kind = 'wake'
+                last_hit = 0.0
+            
+            # Verifică threshold și cooldown
+            cooldown_passed = (now_ms - last_hit) > self.cooldown_ms
+            
+            if score >= threshold and cooldown_passed:
+                # Update last_hit
+                if model_name in self.keywords:
+                    self.keywords[model_name]['last_hit'] = now_ms
+                
+                self.get_logger().info(f'🔔 Detected "{model_name}" (kind={kind}, score={score:.2f})')
+                
+                if kind == 'stop':
+                    self._end_session(model_name, score)
+                else:  # wake
+                    if not self.session_active:
+                        self._activate_session(model_name, score)
+    
     # ═══════════════════════════════════════════════════════════════════
-    # ACTIVARE SESIUNE
+    # ACTIVARE SESIUNE (wake word)
     # ═══════════════════════════════════════════════════════════════════
-    def _activate_session(self, score: float):
+    def _activate_session(self, model_name: str, score: float):
         """Activează sesiunea când detectăm wake word."""
         self.session_active = True
         
-        self.get_logger().info(f'🔔 Wake word detected! Score: {score:.2f}')
-        self.get_logger().info('🟢 Session ACTIVE - robot is listening')
+        self.get_logger().info(f'🟢 Session ACTIVE via "{model_name}" (score={score:.2f})')
         
         # Publică pe /wake_detected
         wake_msg = Bool()
@@ -171,17 +270,46 @@ class WakeWordNode(Node):
         session_msg = Bool()
         session_msg.data = True
         self.session_pub.publish(session_msg)
+        
+        # Trimite comanda de acknowledgement la TTS
+        tts_cmd = String()
+        tts_cmd.data = 'ack_en'
+        self.tts_cmd_pub.publish(tts_cmd)
     
     # ═══════════════════════════════════════════════════════════════════
-    # OPRIRE SESIUNE
+    # OPRIRE SESIUNE (stop/goodbye word)
     # ═══════════════════════════════════════════════════════════════════
-    def end_session_callback(self, msg: Bool):
-        """Callback pentru oprirea sesiunii (ex: "goodbye robot")."""
+    def _end_session(self, model_name: str, score: float):
+        """Oprește sesiunea când detectăm stop/goodbye word."""
+        self.get_logger().info(f'🔴 Session ENDED via "{model_name}" (score={score:.2f})')
+        
+        # Oprește TTS imediat
+        stop_msg = Bool()
+        stop_msg.data = True
+        self.tts_stop_pub.publish(stop_msg)
+        
+        # Publică pe /end_session
+        self.end_session_pub.publish(stop_msg)
+        
+        if self.session_active:
+            self.session_active = False
+            
+            # Publică starea sesiunii
+            session_msg = Bool()
+            session_msg.data = False
+            self.session_pub.publish(session_msg)
+            
+            # Trimite goodbye la TTS
+            tts_cmd = String()
+            tts_cmd.data = 'goodbye_en'
+            self.tts_cmd_pub.publish(tts_cmd)
+    
+    def external_end_session_callback(self, msg: Bool):
+        """Callback pentru oprirea sesiunii din exterior."""
         if msg.data and self.session_active:
             self.session_active = False
-            self.get_logger().info('🔴 Session ENDED - waiting for wake word')
+            self.get_logger().info('🔴 Session ENDED externally')
             
-            # Publică starea
             session_msg = Bool()
             session_msg.data = False
             self.session_pub.publish(session_msg)
