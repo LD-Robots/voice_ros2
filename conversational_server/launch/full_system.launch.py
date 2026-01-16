@@ -122,7 +122,7 @@ def generate_launch_description():
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.0005,  # Foarte mic - orice sunet activează
+                'threshold': 0.5,  # Foarte mic - orice sunet activează
             }]
         ),
     ])
