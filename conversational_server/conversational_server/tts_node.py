@@ -1,31 +1,32 @@
 #!/usr/bin/env python3
 """
-TTS Node - Text to Speech using Edge TTS with DOUBLE BUFFERING.
+TTS Node - Text to Speech with MULTIPLE BACKENDS, STREAMING and DOUBLE BUFFER.
+
+BACKENDS:
+  - edge-tts (default) - Microsoft Edge TTS, requires internet
+  - pyttsx3 - Offline TTS fallback
+
+DOUBLE BUFFER: Sintetizează next chunk în paralel cu playback-ul curent.
 
 Subscribes to: 
   - /llm_stream (TextChunk) - streaming chunks (PREFERRED)
   - /llm_response (Transcription) - complete response (fallback)
+  - /tts_command (String) - comenzi pentru cache playback
 Publishes to: /audio_out (Audio)
-
-DOUBLE BUFFER ARCHITECTURE:
-- ThreadPoolExecutor synthesizes next chunk WHILE current chunk plays
-- Pre-synthesis queue ensures audio is ready before needed
-- Eliminates dead time between phrases
 """
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk, Audio
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 import asyncio
 import tempfile
 import os
 import numpy as np
 import threading
 import queue
-from concurrent.futures import ThreadPoolExecutor, Future
-from collections import OrderedDict
+import time
 
-# Edge TTS pentru sinteză vocală (ONLINE)
+# Edge TTS pentru sinteză vocală (online)
 try:
     import edge_tts
     EDGE_TTS_AVAILABLE = True
@@ -33,13 +34,13 @@ except ImportError:
     EDGE_TTS_AVAILABLE = False
     print("⚠️ edge-tts not installed. Run: pip install edge-tts")
 
-# Piper TTS pentru sinteză vocală (OFFLINE)
+# pyttsx3 pentru sinteză vocală (offline fallback)
 try:
-    from piper import PiperVoice
-    PIPER_AVAILABLE = True
+    import pyttsx3
+    PYTTSX3_AVAILABLE = True
 except ImportError:
-    PIPER_AVAILABLE = False
-    print("⚠️ piper-tts not installed. Run: pip install piper-tts")
+    PYTTSX3_AVAILABLE = False
+    print("⚠️ pyttsx3 not installed. Run: pip install pyttsx3")
 
 # Soundfile pentru citirea audio
 try:
@@ -49,156 +50,89 @@ except ImportError:
     SOUNDFILE_AVAILABLE = False
     print("⚠️ soundfile not installed. Run: pip install soundfile")
 
-# Path-uri pentru modele Piper (relative la pachet)
-from ament_index_python.packages import get_package_share_directory
-import wave
-import io
-
-
-# ═════════════════════════════════════════════════════════════════
-# FRAZE COMUNE PENTRU CACHE - instant playback!
-# ═════════════════════════════════════════════════════════════════
-COMMON_PHRASES = {
-    # Română
-    'ro': [
-        'Bună!',
-        'Salut!',
-        'La revedere!',
-        'Pa!',
-        'Nu înțeleg.',
-        'Poți repeta?',
-        'Înțeleg.',
-        'Sigur!',
-        'Desigur!',
-        'Așteaptă puțin.',
-        'O secundă.',
-        'Gata!',
-        'Perfect!',
-        'Mulțumesc!',
-        'Cu plăcere!',
-        'Da.',
-        'Nu.',
-        'Ok.',
-        'Bine.',
-        'Super!',
-    ],
-    # Engleză
-    'en': [
-        'Hello!',
-        'Hi!',
-        'Goodbye!',
-        'Bye!',
-        "I don't understand.",
-        'Can you repeat?',
-        'I understand.',
-        'Sure!',
-        'Of course!',
-        'Just a moment.',
-        'One second.',
-        'Done!',
-        'Perfect!',
-        'Thank you!',
-        "You're welcome!",
-        'Yes.',
-        'No.',
-        'Ok.',
-        'Alright.',
-        'Great!',
-    ]
-}
-
 
 class TTSNode(Node):
     def __init__(self):
         super().__init__('tts_node')
         
         # Parametri configurabili
+        self.declare_parameter('backend', 'edge')  # 'edge' sau 'pyttsx3'
         self.declare_parameter('voice_en', 'en-IE-EmilyNeural')
         self.declare_parameter('voice_ro', 'ro-RO-AlinaNeural')
         self.declare_parameter('rate', '+0%')
         self.declare_parameter('pitch', '+0Hz')
-        self.declare_parameter('prefetch_count', 2)  # Câte chunks să sintetizeze în avans
+        self.declare_parameter('buffer_size', 2)  # Double buffer (2 chunks ahead)
         
+        self.backend = self.get_parameter('backend').value
         self.voice_en = self.get_parameter('voice_en').value
         self.voice_ro = self.get_parameter('voice_ro').value
         self.rate = self.get_parameter('rate').value
         self.pitch = self.get_parameter('pitch').value
-        self.prefetch_count = self.get_parameter('prefetch_count').value
+        self.buffer_size = self.get_parameter('buffer_size').value
         
-        if not EDGE_TTS_AVAILABLE and not PIPER_AVAILABLE:
-            self.get_logger().error('No TTS backend available! Install edge-tts or piper-tts')
-            raise RuntimeError('No TTS backend available')
+        # Selectează backend-ul
+        if self.backend == 'edge':
+            if not EDGE_TTS_AVAILABLE:
+                self.get_logger().warn('edge-tts not available, falling back to pyttsx3')
+                self.backend = 'pyttsx3'
+            elif not SOUNDFILE_AVAILABLE:
+                self.get_logger().warn('soundfile not available for edge-tts, falling back to pyttsx3')
+                self.backend = 'pyttsx3'
         
-        if not SOUNDFILE_AVAILABLE:
-            self.get_logger().error('soundfile not installed!')
-            raise RuntimeError('soundfile not available')
+        if self.backend == 'pyttsx3':
+            if not PYTTSX3_AVAILABLE:
+                self.get_logger().error('No TTS backend available!')
+                raise RuntimeError('No TTS backend available')
+            # Inițializează pyttsx3
+            self.pyttsx3_engine = pyttsx3.init()
+            self.pyttsx3_engine.setProperty('rate', 170)
+            self.get_logger().info('✅ TTS initialized with pyttsx3 (offline)')
+        else:
+            # Edge TTS necesită soundfile pt MP3
+            if not SOUNDFILE_AVAILABLE:
+                self.get_logger().error('soundfile not installed - required for edge-tts!')
+                raise RuntimeError('soundfile not available')
+            self.get_logger().info(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
         
-        # ═══════════════════════════════════════════════════════════
-        # PIPER TTS SETUP (OFFLINE FALLBACK)
-        # ═══════════════════════════════════════════════════════════
-        self.piper_voices = {}
-        if PIPER_AVAILABLE:
-            try:
-                pkg_share = get_package_share_directory('conversational_server')
-                piper_dir = os.path.join(pkg_share, 'models', 'piper')
-                
-                # Încarcă modelele Piper dacă există
-                en_model = os.path.join(piper_dir, 'en_US-amy-medium.onnx')
-                ro_model = os.path.join(piper_dir, 'ro_RO-mihai-medium.onnx')
-                
-                if os.path.exists(en_model):
-                    self.piper_voices['en'] = PiperVoice.load(en_model)
-                    self.get_logger().info(f'✅ Piper EN voice loaded: {en_model}')
-                
-                if os.path.exists(ro_model):
-                    self.piper_voices['ro'] = PiperVoice.load(ro_model)
-                    self.get_logger().info(f'✅ Piper RO voice loaded: {ro_model}')
-                    
-            except Exception as e:
-                self.get_logger().warning(f'⚠️ Failed to load Piper voices: {e}')
+        # === WAV CACHE - fraze comune pre-generate ===
+        self.cache_dir = '/tmp/tts_cache'
+        os.makedirs(self.cache_dir, exist_ok=True)
         
-        # Prefer Edge TTS (calitate mai bună), Piper ca fallback
-        self.use_edge_tts = EDGE_TTS_AVAILABLE
+        # Fraze comune pentru cache
+        self.cache_phrases = {
+            'ack_en': ('Yes, I am listening.', 'en'),
+            'ack_ro': ('Da, te ascult.', 'ro'),
+            'filler_en': ('One moment please...', 'en'),
+            'filler_ro': ('Un moment...', 'ro'),
+            'goodbye_en': ('Goodbye! Have a great day!', 'en'),
+            'goodbye_ro': ('La revedere! O zi frumoasă!', 'ro'),
+            'error_en': ('Sorry, I encountered an error.', 'en'),
+            'error_ro': ('Scuze, am întâlnit o eroare.', 'ro'),
+        }
+        self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
-        backend = "Edge TTS (online)" if self.use_edge_tts else "Piper (offline)"
-        self.get_logger().info(f'✅ TTS initialized: EN={self.voice_en}, RO={self.voice_ro}, Backend={backend}')
+        # Pre-generează cache-ul în background
+        self.cache_thread = threading.Thread(target=self._precache, daemon=True, name="TTS-Cache")
+        self.cache_thread.start()
         
-        # ═══════════════════════════════════════════════════════════
-        # CACHE SYSTEM - pentru fraze comune
-        # ═══════════════════════════════════════════════════════════
-        self.audio_cache = {}  # (text, voice) -> (audio_data, sample_rate)
-        self.cache_hits = 0
-        self.cache_misses = 0
-        
-        # Încărcarea cache-ului la pornire (în background)
-        self._preload_thread = threading.Thread(target=self._preload_cache, daemon=True)
-        self._preload_thread.start()
-        
-        # ═══════════════════════════════════════════════════════════════
-        # DOUBLE BUFFER SYSTEM
-        # ═══════════════════════════════════════════════════════════════
-        
-        # Queue pentru chunks primite (text)
+        # === DOUBLE BUFFER QUEUES ===
+        # Queue pentru text chunks incoming
         self.text_queue = queue.Queue()
-        
-        # Queue pentru audio sintetizat (gata de redare)
-        self.audio_queue = queue.Queue()
-        
-        # Thread pool pentru sinteză paralelă
-        self._thread_pool = ThreadPoolExecutor(max_workers=self.prefetch_count)
-        
-        # Tracking pentru ordine
-        self.pending_futures = OrderedDict()  # sequence_id -> Future
-        self.next_sequence = 0
-        self.next_to_publish = 0
+        # Queue pentru audio pre-sintetizat (double buffer) - max 2 chunks pre-sintetizate
+        self.audio_queue = queue.Queue(maxsize=self.buffer_size)
         
         self.is_speaking = False
         self.current_session = None
-        self.running = True
+        self.stop_requested = False
         
-        # ═══════════════════════════════════════════════════════════════
-        # SUBSCRIBERS
-        # ═══════════════════════════════════════════════════════════════
+        # Subscriber pentru comenzi cache (ack, goodbye, etc)
+        from std_msgs.msg import String
+        self.command_sub = self.create_subscription(
+            String,
+            '/tts_command',
+            self.command_callback,
+            10
+        )
         
         # Subscriber pentru STREAMING chunks (PREFERRED)
         self.stream_sub = self.create_subscription(
@@ -216,191 +150,79 @@ class TTSNode(Node):
             10
         )
         
-        # ═══════════════════════════════════════════════════════════════
-        # PUBLISHERS
-        # ═══════════════════════════════════════════════════════════════
+        # Publisher pentru audio sintetizat
+        self.audio_pub = self.create_publisher(
+            Audio,
+            '/audio_out',
+            10
+        )
         
-        self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
-        self.speaking_pub = self.create_publisher(Bool, '/playback_active', 10)
+        # Publisher pentru status speaking
+        from std_msgs.msg import Bool
+        self.speaking_pub = self.create_publisher(
+            Bool,
+            '/tts_speaking',  # Renamed for clarity
+            10
+        )
         
-        # ═══════════════════════════════════════════════════════════════
-        # WORKER THREADS
-        # ═══════════════════════════════════════════════════════════════
+        # Subscriber pentru stop TTS
+        self.stop_sub = self.create_subscription(
+            Bool,
+            '/tts_stop',
+            self.stop_callback,
+            10
+        )
         
-        # Thread pentru dispatch sinteze
-        self.dispatch_thread = threading.Thread(target=self._dispatch_loop, daemon=True)
-        self.dispatch_thread.start()
+        # Timer pentru a publica starea is_speaking periodic
+        self.speaking_timer = self.create_timer(0.2, self._publish_speaking_status)
         
-        # Thread pentru publicare audio în ordine
-        self.publish_thread = threading.Thread(target=self._publish_loop, daemon=True)
-        self.publish_thread.start()
+        # === DOUBLE BUFFER THREADS ===
+        self.running = True
         
-        self.get_logger().info(f'🔊 TTS Node started with DOUBLE BUFFER (prefetch={self.prefetch_count})')
+        # Thread PRODUCER: citeste text chunks, sintetizează audio, pune în audio_queue
+        self.producer_thread = threading.Thread(target=self._producer_loop, daemon=True, name="TTS-Producer")
+        self.producer_thread.start()
+        
+        # Thread CONSUMER: citeste din audio_queue, publică pe /audio_out
+        self.consumer_thread = threading.Thread(target=self._consumer_loop, daemon=True, name="TTS-Consumer")
+        self.consumer_thread.start()
+        
+        self.get_logger().info('TTS Node started with DOUBLE BUFFER + CACHE! Listening on /llm_stream')
     
-    def _pick_voice(self, lang: str) -> str:
-        """Alege vocea în funcție de limbă."""
-        if lang.lower().startswith('ro'):
-            return self.voice_ro
-        return self.voice_en
+    def _publish_speaking_status(self):
+        """Publică periodic starea is_speaking pe /tts_speaking."""
+        from std_msgs.msg import Bool
+        msg = Bool()
+        msg.data = self.is_speaking
+        self.speaking_pub.publish(msg)
     
-    # ═══════════════════════════════════════════════════════════════════
-    # CALLBACKS
-    # ═══════════════════════════════════════════════════════════════════
+    def stop_callback(self, msg: Bool):
+        """Oprește TTS când primim True pe /tts_stop."""
+        if msg.data:
+            self.stop()
     
-    def stream_callback(self, msg: TextChunk):
-        """Procesează chunk-uri de text streaming."""
-        # Sesiune nouă - resetează
-        if self.current_session and msg.session_id != self.current_session:
-            self._reset_session()
-        
-        if not self.current_session:
-            self.current_session = msg.session_id
-            self.next_sequence = 0
-            self.next_to_publish = 0
-        
-        if msg.text.strip():
-            self.get_logger().info(f'📥 Stream chunk [{self.next_sequence}]: "{msg.text[:30]}..."')
-            self.text_queue.put((self.next_sequence, msg.text, msg.language, msg.is_final))
-            self.next_sequence += 1
-        elif msg.is_final:
-            self.text_queue.put((self.next_sequence, "", "", True))
-            self.next_sequence += 1
-    
-    def response_callback(self, msg: Transcription):
-        """Fallback pentru răspunsuri complete (non-streaming)."""
-        pass  # Dezactivat - folosim doar streaming
-    
-    def _reset_session(self):
-        """Resetează sesiunea curentă."""
-        self.current_session = None
-        self.next_sequence = 0
-        self.next_to_publish = 0
-        
-        # Golește queue-urile
-        while not self.text_queue.empty():
+    def _precache(self):
+        """Pre-generează audio pentru frazele comune."""
+        self.get_logger().info('🔄 Pre-generating cached phrases...')
+        for key, (text, lang) in self.cache_phrases.items():
             try:
-                self.text_queue.get_nowait()
-            except queue.Empty:
-                break
-        
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
-                break
-        
-        # Anulează futures în așteptare
-        for future in self.pending_futures.values():
-            future.cancel()
-        self.pending_futures.clear()
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # DISPATCH LOOP - Trimite chunks la ThreadPool pentru sinteză
-    # ═══════════════════════════════════════════════════════════════════
-    
-    def _dispatch_loop(self):
-        """Dispatch chunks pentru sinteză în paralel."""
-        while self.running:
-            try:
-                seq, text, lang, is_final = self.text_queue.get(timeout=0.1)
-                
-                if text:
-                    voice = self._pick_voice(lang)
-                    # Trimite la ThreadPool
-                    future = self._thread_pool.submit(self._synthesize_chunk, seq, text, voice)
-                    self.pending_futures[seq] = future
-                    self.get_logger().debug(f'🔄 Dispatched chunk {seq} for synthesis')
-                
-                if is_final and not text:
-                    # Marker de final
-                    self.audio_queue.put((seq, None, None, True))
-                    
-            except queue.Empty:
-                continue
+                voice = self._pick_voice(lang)
+                audio_data, sample_rate = self._synthesize(text, voice)
+                if len(audio_data.shape) > 1:
+                    audio_data = audio_data[:, 0]
+                self.audio_cache[key] = (audio_data, sample_rate)
+                self.get_logger().debug(f'  ✓ Cached: {key}')
             except Exception as e:
-                self.get_logger().error(f'Dispatch error: {e}')
+                self.get_logger().warn(f'  ✗ Failed to cache {key}: {e}')
+        self.get_logger().info(f'✅ Cached {len(self.audio_cache)} phrases')
     
-    def _synthesize_chunk(self, seq: int, text: str, voice: str):
-        """Sintetizează un chunk (rulează în ThreadPool) - folosește cache dacă există."""
-        try:
-            # Verifică cache-ul mai întâi!
-            cache_key = (text.strip(), voice)
-            if cache_key in self.audio_cache:
-                audio_data, sample_rate = self.audio_cache[cache_key]
-                self.cache_hits += 1
-                self.get_logger().info(f'⚡ CACHE HIT [{seq}]: "{text[:20]}..." (instant!)')
-                self.audio_queue.put((seq, audio_data.copy(), sample_rate, False))
-                return
-            
-            # Cache miss - sintetizează
-            self.cache_misses += 1
-            audio_data, sample_rate = self._synthesize(text, voice)
-            
-            # Asigură-te că e mono
-            if len(audio_data.shape) > 1:
-                audio_data = audio_data[:, 0]
-            
-            # Salvează în cache pentru data viitoare (doar fraze scurte)
-            if len(text) < 100:  # Cache doar texte scurte
-                self.audio_cache[cache_key] = (audio_data.copy(), sample_rate)
-            
-            # Pune în queue de audio
-            self.audio_queue.put((seq, audio_data, sample_rate, False))
-            self.get_logger().debug(f'✅ Chunk {seq} synthesized ({len(audio_data)} samples)')
-            
-        except Exception as e:
-            self.get_logger().error(f'Synthesis error for chunk {seq}: {e}')
-            # Pune un marker de eroare
-            self.audio_queue.put((seq, None, None, False))
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # PUBLISH LOOP - Publică audio ÎN ORDINE
-    # ═══════════════════════════════════════════════════════════════════
-    
-    def _publish_loop(self):
-        """Publică audio chunks în ordinea corectă."""
-        pending_audio = {}  # seq -> (audio_data, sample_rate)
+    def say_cached(self, key: str) -> bool:
+        """Redă o frază din cache. Returnează True dacă a reușit."""
+        if key not in self.audio_cache:
+            self.get_logger().warn(f'Cache miss: {key}')
+            return False
         
-        while self.running:
-            try:
-                seq, audio_data, sample_rate, is_final = self.audio_queue.get(timeout=0.1)
-                
-                if is_final and audio_data is None:
-                    # Așteaptă toate chunk-urile anterioare
-                    while self.next_to_publish < seq:
-                        if self.next_to_publish in pending_audio:
-                            ad, sr = pending_audio.pop(self.next_to_publish)
-                            if ad is not None:
-                                self._publish_audio(ad, sr)
-                            self.next_to_publish += 1
-                        else:
-                            break
-                    
-                    self.current_session = None
-                    self.get_logger().info('✅ Stream complete')
-                    continue
-                
-                # Stochează audio-ul
-                pending_audio[seq] = (audio_data, sample_rate)
-                
-                # Publică în ordine
-                while self.next_to_publish in pending_audio:
-                    ad, sr = pending_audio.pop(self.next_to_publish)
-                    if ad is not None:
-                        self._publish_audio(ad, sr)
-                    self.next_to_publish += 1
-                    
-            except queue.Empty:
-                continue
-            except Exception as e:
-                self.get_logger().error(f'Publish error: {e}')
-    
-    def _publish_audio(self, audio_data: np.ndarray, sample_rate: int):
-        """Publică un chunk de audio."""
-        # Marchează că vorbim
-        speaking_msg = Bool()
-        speaking_msg.data = True
-        self.speaking_pub.publish(speaking_msg)
+        audio_data, sample_rate = self.audio_cache[key]
         
         # Publică audio
         out = Audio()
@@ -409,11 +231,150 @@ class TTSNode(Node):
         out.channels = 1
         self.audio_pub.publish(out)
         
-        self.get_logger().info(f'📤 Published audio: {len(audio_data)/sample_rate:.2f}s')
+        self.get_logger().info(f'🎵 Playing cached: {key}')
+        return True
     
-    # ═══════════════════════════════════════════════════════════════════
-    # SYNTHESIS
-    # ═══════════════════════════════════════════════════════════════════
+    def command_callback(self, msg):
+        """Procesează comenzi pentru TTS (play cached phrases)."""
+        command = msg.data.strip()
+        
+        # Dacă e un key din cache, îl redă
+        if command in self.audio_cache or command in self.cache_phrases:
+            self.say_cached(command)
+        else:
+            self.get_logger().warn(f'Unknown TTS command: {command}')
+    
+    def _pick_voice(self, lang: str) -> str:
+        """Alege vocea - română sau engleză (default pentru orice altceva)."""
+        lang = lang.lower() if lang else 'en'
+        if lang.startswith('ro'):
+            return self.voice_ro
+        # Orice altă limbă -> engleză
+        return self.voice_en
+    
+    def stream_callback(self, msg: TextChunk):
+        """Procesează chunk-uri de text streaming."""
+        # Sesiune nouă - resetează
+        if self.current_session and msg.session_id != self.current_session:
+            if not msg.is_final:
+                self.current_session = msg.session_id
+                self.stop_requested = True  # Oprește ce e în curs
+                # Golim queue-urile
+                self._clear_queues()
+                self.stop_requested = False
+        
+        if not self.current_session:
+            self.current_session = msg.session_id
+        
+        if msg.text.strip():
+            self.get_logger().info(f'📥 Stream chunk: "{msg.text[:40]}..." (final={msg.is_final})')
+            self.text_queue.put((msg.text, msg.language, msg.is_final, msg.session_id))
+        elif msg.is_final:
+            # Mesaj gol cu is_final - semnalizează sfârșitul
+            self.text_queue.put(("", "", True, msg.session_id))
+    
+    def response_callback(self, msg: Transcription):
+        """Fallback pentru răspunsuri complete (non-streaming)."""
+        pass  # Dezactivat - folosim doar streaming
+    
+    def _clear_queues(self):
+        """Golește toate queue-urile."""
+        while not self.text_queue.empty():
+            try:
+                self.text_queue.get_nowait()
+            except queue.Empty:
+                break
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+    
+    def _producer_loop(self):
+        """
+        PRODUCER: Citește text din text_queue, sintetizează, pune în audio_queue.
+        Rulează în paralel - mereu încearcă să aibă 1-2 chunks pre-sintetizate.
+        """
+        while self.running:
+            try:
+                text, lang, is_final, session_id = self.text_queue.get(timeout=0.1)
+                
+                if self.stop_requested:
+                    continue
+                
+                if text:
+                    voice = self._pick_voice(lang)
+                    self.get_logger().info(f'🔧 Pre-synthesizing: "{text[:30]}..."')
+                    
+                    try:
+                        audio_data, sample_rate = self._synthesize(text, voice)
+                        
+                        # Asigură-te că e mono
+                        if len(audio_data.shape) > 1:
+                            audio_data = audio_data[:, 0]
+                        
+                        # Pune în audio_queue (va bloca dacă e plin = double buffer full)
+                        if not self.stop_requested:
+                            self.audio_queue.put((audio_data, sample_rate, is_final, session_id), timeout=5.0)
+                            self.get_logger().debug(f'📦 Buffered audio ({len(audio_data)} samples)')
+                    
+                    except Exception as e:
+                        self.get_logger().error(f'Synthesis error: {e}')
+                
+                elif is_final:
+                    # Semnalizează sfârșitul în audio_queue
+                    try:
+                        self.audio_queue.put((None, 0, True, session_id), timeout=1.0)
+                    except queue.Full:
+                        pass
+                    
+            except queue.Empty:
+                continue
+            except Exception as e:
+                self.get_logger().error(f'Producer error: {e}')
+    
+    def _consumer_loop(self):
+        """
+        CONSUMER: Citește audio din audio_queue, publică pe /audio_out.
+        """
+        from std_msgs.msg import Bool
+        
+        while self.running:
+            try:
+                audio_data, sample_rate, is_final, session_id = self.audio_queue.get(timeout=0.1)
+                
+                if self.stop_requested:
+                    continue
+                
+                if audio_data is not None:
+                    # Marchează că vorbim
+                    self.is_speaking = True
+                    speaking_msg = Bool()
+                    speaking_msg.data = True
+                    self.speaking_pub.publish(speaking_msg)
+                    
+                    # Publică audio
+                    out = Audio()
+                    out.data = audio_data.tolist()
+                    out.sample_rate = sample_rate
+                    out.channels = 1
+                    self.audio_pub.publish(out)
+                    
+                    self.get_logger().info(f'📤 Published {len(audio_data)} samples at {sample_rate}Hz')
+                    
+                    # Marchează că am terminat acest chunk
+                    self.is_speaking = False
+                    speaking_msg.data = False
+                    self.speaking_pub.publish(speaking_msg)
+                
+                if is_final:
+                    self.current_session = None
+                    self.get_logger().info('✅ Stream complete')
+                    
+            except queue.Empty:
+                continue
+            except Exception as e:
+                self.get_logger().error(f'Consumer error: {e}')
     
     async def _synthesize_async(self, text: str, voice: str) -> bytes:
         """Sintetizează text în audio folosind Edge TTS."""
@@ -432,29 +393,13 @@ class TTSNode(Node):
         return audio_data
     
     def _synthesize(self, text: str, voice: str):
-        """Sintetizează text - încearcă Edge TTS, fallback pe Piper."""
-        
-        # Determină limba pentru Piper fallback
-        lang = 'ro' if 'ro' in voice.lower() else 'en'
-        
-        # Încearcă Edge TTS mai întâi (dacă e disponibil)
-        if self.use_edge_tts and EDGE_TTS_AVAILABLE:
-            try:
-                return self._synthesize_edge_tts(text, voice)
-            except Exception as e:
-                self.get_logger().warning(f'⚠️ Edge TTS failed: {e}, trying Piper...')
-        
-        # Fallback pe Piper
-        if PIPER_AVAILABLE and lang in self.piper_voices:
-            try:
-                return self._synthesize_piper(text, lang)
-            except Exception as e:
-                self.get_logger().error(f'❌ Piper TTS also failed: {e}')
-                raise
-        
-        raise RuntimeError(f'No TTS backend available for language: {lang}')
+        """Sintetizează text în audio folosind backend-ul selectat."""
+        if self.backend == 'pyttsx3':
+            return self._synthesize_pyttsx3(text)
+        else:
+            return self._synthesize_edge(text, voice)
     
-    def _synthesize_edge_tts(self, text: str, voice: str):
+    def _synthesize_edge(self, text: str, voice: str):
         """Sintetizează cu Edge TTS (online)."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -475,71 +420,35 @@ class TTSNode(Node):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
     
-    def _synthesize_piper(self, text: str, lang: str):
-        """Sintetizează cu Piper TTS (offline)."""
-        piper_voice = self.piper_voices[lang]
+    def _synthesize_pyttsx3(self, text: str):
+        """Sintetizează cu pyttsx3 (offline)."""
+        # pyttsx3 salvează în fișier WAV
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            temp_path = f.name
         
-        # Sintetizează în memorie
-        audio_buffer = io.BytesIO()
-        
-        with wave.open(audio_buffer, 'wb') as wav_file:
-            piper_voice.synthesize(text, wav_file)
-        
-        # Citește din buffer
-        audio_buffer.seek(0)
-        audio_data, sample_rate = sf.read(audio_buffer, dtype='int16')
-        
-        self.get_logger().debug(f'🔊 Piper synthesized: {len(audio_data)} samples at {sample_rate}Hz')
-        return audio_data, sample_rate
+        try:
+            self.pyttsx3_engine.save_to_file(text, temp_path)
+            self.pyttsx3_engine.runAndWait()
+            
+            # Citește WAV
+            audio_data, sample_rate = sf.read(temp_path, dtype='int16')
+            return audio_data, sample_rate
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+    
+    def stop(self):
+        """Oprește TTS-ul curent (pentru barge-in)."""
+        self.stop_requested = True
+        self._clear_queues()
+        self.is_speaking = False
+        self.get_logger().info('⏹️ TTS stopped')
+        self.stop_requested = False
     
     def destroy_node(self):
-        """Cleanup la închidere - afișează statistici cache."""
+        """Cleanup la închidere."""
         self.running = False
-        self._thread_pool.shutdown(wait=False)
-        
-        # Statistici cache
-        total = self.cache_hits + self.cache_misses
-        if total > 0:
-            hit_rate = (self.cache_hits / total) * 100
-            self.get_logger().info(
-                f'📊 Cache stats: {self.cache_hits} hits, {self.cache_misses} misses '
-                f'({hit_rate:.1f}% hit rate)'
-            )
-        
         super().destroy_node()
-    
-    # ═══════════════════════════════════════════════════════════════════
-    # PRELOAD CACHE - încarcă frazele comune la pornire
-    # ═══════════════════════════════════════════════════════════════════
-    
-    def _preload_cache(self):
-        """Pre-încarcă frazele comune în cache (rulează în background la start)."""
-        import time
-        time.sleep(2)  # Așteaptă să se inițializeze nodul
-        
-        self.get_logger().info('🔄 Pre-loading common phrases cache...')
-        
-        count = 0
-        for lang, phrases in COMMON_PHRASES.items():
-            voice = self.voice_ro if lang == 'ro' else self.voice_en
-            
-            for phrase in phrases:
-                try:
-                    cache_key = (phrase.strip(), voice)
-                    if cache_key not in self.audio_cache:
-                        audio_data, sample_rate = self._synthesize(phrase, voice)
-                        
-                        if len(audio_data.shape) > 1:
-                            audio_data = audio_data[:, 0]
-                        
-                        self.audio_cache[cache_key] = (audio_data.copy(), sample_rate)
-                        count += 1
-                        self.get_logger().debug(f'⚡ Cached: "{phrase}"')
-                        
-                except Exception as e:
-                    self.get_logger().warning(f'Failed to cache "{phrase}": {e}')
-        
-        self.get_logger().info(f'✅ Cache preloaded: {count} phrases ready for instant playback!')
 
 
 def main(args=None):

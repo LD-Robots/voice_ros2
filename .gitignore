@@ -21,3 +21,11 @@ __pycache__/
 # Large models (download separately)
 *.onnx
 conversational_server/models/
+__pycache__/
+
+# ROS2 artifacts (nu ar trebui în repo)
+build/
+install/
+log/
+**/__pycache__/
+*.pyc

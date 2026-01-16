@@ -39,7 +39,8 @@ def generate_launch_description():
                 'model_size': LaunchConfiguration('asr_model_size'),
                 'device': 'cpu',
                 'compute_type': 'int8',
-                'language': 'en',  # Forțează engleză
+                'language': 'ro_en',  # Enable Romanian/English detection
+                'initial_prompt': 'A bilingual conversation in Romanian and English. O conversație bilingvă.',
             }]
         ),
         
@@ -64,8 +65,8 @@ def generate_launch_description():
             name='tts_node',
             output='screen',
             parameters=[{
-                'voice_en': 'en-GB-SoniaNeural',
-                'voice_ro': 'ro-RO-EmilNeural',
+                'voice_en': 'en-IE-EmilyNeural',
+                'voice_ro': 'ro-RO-AlinaNeural',
             }]
         ),
         
@@ -77,9 +78,6 @@ def generate_launch_description():
             executable='audio_capture_node',
             name='audio_capture_node',
             output='screen',
-            parameters=[{
-                # Folosește device default - auto-detect cu resampling
-            }]
         ),
         
         # VAD (Voice Activity Detection)
@@ -87,14 +85,6 @@ def generate_launch_description():
             package='conversational_client',
             executable='vad_node',
             name='vad_node',
-            output='screen',
-        ),
-        
-        # Audio Segment (bufferează audio și trimite segment complet)
-        Node(
-            package='conversational_client',
-            executable='audio_segment_node',
-            name='audio_segment_node',
             output='screen',
         ),
         
@@ -106,7 +96,7 @@ def generate_launch_description():
             output='screen',
         ),
         
-        # Barge-in (detectare "stop" keyword)
+        # Barge-in (întrerupe TTS când vorbește userul)
         Node(
             package='conversational_client',
             executable='barge_in_node',
@@ -114,15 +104,23 @@ def generate_launch_description():
             output='screen',
         ),
         
-        # Wake Word (detectare "hello robot")
-        # TEMPORARY: threshold foarte mic pentru bypass până rezolvăm modelul
+        # Wake Word (detectare "Hey robot")
         Node(
             package='conversational_client',
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
+        ),
+        
+        # Stop Keyword (detectare "stop" în timpul TTS)
+        Node(
+            package='conversational_client',
+            executable='stop_keyword_node',
+            name='stop_keyword_node',
+            output='screen',
             parameters=[{
-                'threshold': 0.5,  # Foarte mic - orice sunet activează
+                'model_path': '/home/valee/voice_ros2/voices/stop_keyword.onnx',
+                'enabled': True,
             }]
         ),
     ])
