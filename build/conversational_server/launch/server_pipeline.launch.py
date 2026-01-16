@@ -1,0 +1,1 @@
+/home/valee/voice_ros2/conversational_server/launch/server_pipeline.launch.py

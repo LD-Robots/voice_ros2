@@ -1,0 +1,24 @@
+running egg_info
+writing ../build/conversational_server/conversational_server.egg-info/PKG-INFO
+writing dependency_links to ../build/conversational_server/conversational_server.egg-info/dependency_links.txt
+writing entry points to ../build/conversational_server/conversational_server.egg-info/entry_points.txt
+writing requirements to ../build/conversational_server/conversational_server.egg-info/requires.txt
+writing top-level names to ../build/conversational_server/conversational_server.egg-info/top_level.txt
+reading manifest file '../build/conversational_server/conversational_server.egg-info/SOURCES.txt'
+writing manifest file '../build/conversational_server/conversational_server.egg-info/SOURCES.txt'
+running build
+running build_py
+copying conversational_server/llm_node.py -> /home/valee/voice_ros2/build/conversational_server/build/lib/conversational_server
+running install
+running install_lib
+copying /home/valee/voice_ros2/build/conversational_server/build/lib/conversational_server/llm_node.py -> /home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages/conversational_server
+byte-compiling /home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages/conversational_server/llm_node.py to llm_node.cpython-312.pyc
+running install_data
+running install_egg_info
+removing '/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages/conversational_server-0.0.0-py3.12.egg-info' (and everything under it)
+Copying ../build/conversational_server/conversational_server.egg-info to /home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages/conversational_server-0.0.0-py3.12.egg-info
+running install_scripts
+Installing asr_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+Installing llm_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+Installing tts_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+writing list of installed files to '/home/valee/voice_ros2/build/conversational_server/install.log'

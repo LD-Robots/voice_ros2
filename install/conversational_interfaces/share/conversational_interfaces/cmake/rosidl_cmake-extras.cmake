@@ -1,0 +1,1 @@
+/home/valee/voice_ros2/build/conversational_interfaces/rosidl_cmake/rosidl_cmake-extras.cmake

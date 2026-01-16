@@ -1,0 +1,6 @@
+msg/Audio.idl
+msg/Audio.msg
+msg/TextChunk.idl
+msg/TextChunk.msg
+msg/Transcription.idl
+msg/Transcription.msg

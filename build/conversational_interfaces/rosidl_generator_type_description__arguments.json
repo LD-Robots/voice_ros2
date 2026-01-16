@@ -1,0 +1,9 @@
+{
+  "package_name": "conversational_interfaces",
+  "output_dir": "/home/valee/voice_ros2/build/conversational_interfaces/rosidl_generator_type_description/conversational_interfaces",
+  "idl_tuples": [
+    "/home/valee/voice_ros2/build/conversational_interfaces/rosidl_adapter/conversational_interfaces:msg/Audio.idl",
+    "/home/valee/voice_ros2/build/conversational_interfaces/rosidl_adapter/conversational_interfaces:msg/Transcription.idl",
+    "/home/valee/voice_ros2/build/conversational_interfaces/rosidl_adapter/conversational_interfaces:msg/TextChunk.idl"
+  ]
+}

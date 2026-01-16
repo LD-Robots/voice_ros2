@@ -1,0 +1,256 @@
+[0.007s] Invoking command in '/home/valee/voice_ros2/build/conversational_interfaces': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/valee/voice_ros2/conversational_interfaces -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/valee/voice_ros2/install/conversational_interfaces
+[0.073s] -- The C compiler identification is GNU 13.3.0
+[0.130s] -- The CXX compiler identification is GNU 13.3.0
+[0.145s] -- Detecting C compiler ABI info
+[0.207s] -- Detecting C compiler ABI info - done
+[0.214s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.216s] -- Detecting C compile features
+[0.216s] -- Detecting C compile features - done
+[0.223s] -- Detecting CXX compiler ABI info
+[0.288s] -- Detecting CXX compiler ABI info - done
+[0.294s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.294s] -- Detecting CXX compile features
+[0.294s] -- Detecting CXX compile features - done
+[0.299s] -- Found ament_cmake: 2.5.4 (/opt/ros/jazzy/share/ament_cmake/cmake)
+[0.393s] -- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter 
+[0.445s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[0.463s] -- Found rosidl_default_generators: 1.6.0 (/opt/ros/jazzy/share/rosidl_default_generators/cmake)
+[0.466s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.497s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.523s] -- Found rosidl_adapter: 4.6.6 (/opt/ros/jazzy/share/rosidl_adapter/cmake)
+[0.899s] -- Found ament_cmake_ros: 0.12.0 (/opt/ros/jazzy/share/ament_cmake_ros/cmake)
+[1.173s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[1.541s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[1.544s] -- Found python_cmake_module: 0.11.1 (/opt/ros/jazzy/share/python_cmake_module/cmake)
+[1.637s] -- Found PythonExtra: /usr/bin/python3  
+[1.925s] -- Found Python3: /usr/bin/python3 (found version "3.12.3") found components: Interpreter Development NumPy Development.Module Development.Embed 
+[1.955s] -- Configuring done (1.9s)
+[1.972s] -- Generating done (0.0s)
+[1.978s] -- Build files have been written to: /home/valee/voice_ros2/build/conversational_interfaces
+[1.982s] Invoked command in '/home/valee/voice_ros2/build/conversational_interfaces' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/valee/voice_ros2/conversational_interfaces -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/valee/voice_ros2/install/conversational_interfaces
+[1.983s] Invoking command in '/home/valee/voice_ros2/build/conversational_interfaces': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/valee/voice_ros2/build/conversational_interfaces -- -j16 -l16
+[2.020s] [  1%] [34m[1mGenerating type hashes for ROS interfaces[0m
+[2.023s] [  1%] Built target ament_cmake_python_symlink_conversational_interfaces
+[2.150s] running egg_info
+[2.150s] creating conversational_interfaces.egg-info
+[2.154s] [  1%] Built target conversational_interfaces__rosidl_generator_type_description
+[2.160s] writing conversational_interfaces.egg-info/PKG-INFO
+[2.160s] writing dependency_links to conversational_interfaces.egg-info/dependency_links.txt
+[2.160s] writing top-level names to conversational_interfaces.egg-info/top_level.txt
+[2.160s] writing manifest file 'conversational_interfaces.egg-info/SOURCES.txt'
+[2.161s] [  3%] [34m[1mGenerating C code for ROS interfaces[0m
+[2.166s] [  5%] [34m[1mGenerating C++ code for ROS interfaces[0m
+[2.192s] reading manifest file 'conversational_interfaces.egg-info/SOURCES.txt'
+[2.192s] writing manifest file 'conversational_interfaces.egg-info/SOURCES.txt'
+[2.210s] [  5%] Built target ament_cmake_python_build_conversational_interfaces_egg
+[2.333s] [  5%] Built target conversational_interfaces__cpp
+[2.366s] [ 12%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/audio__type_support.c.o[0m
+[2.367s] [ 12%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/text_chunk__description.c.o[0m
+[2.367s] [ 12%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/transcription__description.c.o[0m
+[2.367s] [ 12%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/transcription__functions.c.o[0m
+[2.367s] [ 14%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/text_chunk__type_support.c.o[0m
+[2.367s] [ 16%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/text_chunk__functions.c.o[0m
+[2.368s] [ 18%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/transcription__type_support.c.o[0m
+[2.368s] [ 22%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/audio__functions.c.o[0m
+[2.368s] [ 22%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_c.dir/rosidl_generator_c/conversational_interfaces/msg/detail/audio__description.c.o[0m
+[2.405s] [ 24%] [32m[1mLinking C shared library libconversational_interfaces__rosidl_generator_c.so[0m
+[2.429s] [ 24%] Built target conversational_interfaces__rosidl_generator_c
+[2.435s] [ 27%] [34m[1mGenerating C++ type support for eProsima Fast-RTPS[0m
+[2.435s] [ 27%] [34m[1mGenerating C type support for eProsima Fast-RTPS[0m
+[2.435s] [ 29%] [34m[1mGenerating C introspection for ROS interfaces[0m
+[2.435s] [ 31%] [34m[1mGenerating C type support dispatch for ROS interfaces[0m
+[2.436s] [ 33%] [34m[1mGenerating C++ type support dispatch for ROS interfaces[0m
+[2.438s] [ 35%] [34m[1mGenerating C++ introspection for ROS interfaces[0m
+[2.613s] [ 37%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/conversational_interfaces/msg/transcription__type_support.cpp.o[0m
+[2.614s] [ 38%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/conversational_interfaces/msg/audio__type_support.cpp.o[0m
+[2.615s] [ 42%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/conversational_interfaces/msg/transcription__type_support.cpp.o[0m
+[2.615s] [ 42%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_cpp.dir/rosidl_typesupport_cpp/conversational_interfaces/msg/text_chunk__type_support.cpp.o[0m
+[2.616s] [ 44%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/conversational_interfaces/msg/audio__type_support.cpp.o[0m
+[2.617s] [ 46%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_c.dir/rosidl_typesupport_c/conversational_interfaces/msg/text_chunk__type_support.cpp.o[0m
+[2.628s] [ 50%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/audio__type_support.cpp.o[0m
+[2.628s] [ 50%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/text_chunk__type_support.cpp.o[0m
+[2.631s] [ 51%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/transcription__type_support.cpp.o[0m
+[2.652s] [ 53%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/conversational_interfaces/msg/detail/dds_fastrtps/audio__type_support.cpp.o[0m
+[2.653s] [ 55%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/conversational_interfaces/msg/detail/dds_fastrtps/text_chunk__type_support.cpp.o[0m
+[2.654s] [ 57%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_fastrtps_cpp.dir/rosidl_typesupport_fastrtps_cpp/conversational_interfaces/msg/detail/dds_fastrtps/transcription__type_support.cpp.o[0m
+[2.655s] [ 59%] [32m[1mLinking CXX shared library libconversational_interfaces__rosidl_typesupport_c.so[0m
+[2.667s] [ 61%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/conversational_interfaces/msg/detail/transcription__type_support_c.cpp.o[0m
+[2.669s] [ 62%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/conversational_interfaces/msg/detail/text_chunk__type_support_c.cpp.o[0m
+[2.669s] [ 64%] [32mBuilding CXX object CMakeFiles/conversational_interfaces__rosidl_typesupport_fastrtps_c.dir/rosidl_typesupport_fastrtps_c/conversational_interfaces/msg/detail/audio__type_support_c.cpp.o[0m
+[2.678s] [ 70%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/conversational_interfaces/msg/detail/text_chunk__type_support.c.o[0m
+[2.678s] [ 70%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/conversational_interfaces/msg/detail/audio__type_support.c.o[0m
+[2.678s] [ 70%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_c.dir/rosidl_typesupport_introspection_c/conversational_interfaces/msg/detail/transcription__type_support.c.o[0m
+[2.700s] [ 70%] Built target conversational_interfaces__rosidl_typesupport_c
+[2.720s] [ 72%] [32m[1mLinking C shared library libconversational_interfaces__rosidl_typesupport_introspection_c.so[0m
+[2.751s] [ 72%] Built target conversational_interfaces__rosidl_typesupport_introspection_c
+[2.991s] [ 74%] [32m[1mLinking CXX shared library libconversational_interfaces__rosidl_typesupport_cpp.so[0m
+[3.014s] [ 75%] [32m[1mLinking CXX shared library libconversational_interfaces__rosidl_typesupport_introspection_cpp.so[0m
+[3.025s] [ 75%] Built target conversational_interfaces__rosidl_typesupport_cpp
+[3.042s] [ 77%] [32m[1mLinking CXX shared library libconversational_interfaces__rosidl_typesupport_fastrtps_c.so[0m
+[3.068s] [ 77%] Built target conversational_interfaces__rosidl_typesupport_introspection_cpp
+[3.091s] [ 77%] Built target conversational_interfaces__rosidl_typesupport_fastrtps_c
+[3.117s] [ 79%] [32m[1mLinking CXX shared library libconversational_interfaces__rosidl_typesupport_fastrtps_cpp.so[0m
+[3.162s] [ 79%] Built target conversational_interfaces__rosidl_typesupport_fastrtps_cpp
+[3.175s] [ 79%] Built target conversational_interfaces
+[3.189s] [ 81%] [34m[1mGenerating Python code for ROS interfaces[0m
+[3.406s] [ 81%] Built target conversational_interfaces__py
+[3.419s] [ 85%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_py.dir/rosidl_generator_py/conversational_interfaces/msg/_audio_s.c.o[0m
+[3.419s] [ 85%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_py.dir/rosidl_generator_py/conversational_interfaces/msg/_text_chunk_s.c.o[0m
+[3.420s] [ 87%] [32mBuilding C object CMakeFiles/conversational_interfaces__rosidl_generator_py.dir/rosidl_generator_py/conversational_interfaces/msg/_transcription_s.c.o[0m
+[3.499s] [ 88%] [32m[1mLinking C shared library libconversational_interfaces__rosidl_generator_py.so[0m
+[3.526s] [ 88%] Built target conversational_interfaces__rosidl_generator_py
+[3.537s] [ 90%] [32mBuilding C object CMakeFiles/conversational_interfaces_s__rosidl_typesupport_fastrtps_c.dir/rosidl_generator_py/conversational_interfaces/_conversational_interfaces_s.ep.rosidl_typesupport_fastrtps_c.c.o[0m
+[3.541s] [ 92%] [32mBuilding C object CMakeFiles/conversational_interfaces_s__rosidl_typesupport_introspection_c.dir/rosidl_generator_py/conversational_interfaces/_conversational_interfaces_s.ep.rosidl_typesupport_introspection_c.c.o[0m
+[3.542s] [ 94%] [32mBuilding C object CMakeFiles/conversational_interfaces_s__rosidl_typesupport_c.dir/rosidl_generator_py/conversational_interfaces/_conversational_interfaces_s.ep.rosidl_typesupport_c.c.o[0m
+[3.598s] [ 96%] [32m[1mLinking C shared module rosidl_generator_py/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_fastrtps_c.so[0m
+[3.599s] [ 98%] [32m[1mLinking C shared module rosidl_generator_py/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_c.so[0m
+[3.601s] [100%] [32m[1mLinking C shared module rosidl_generator_py/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_introspection_c.so[0m
+[3.615s] [100%] Built target conversational_interfaces_s__rosidl_typesupport_c
+[3.620s] [100%] Built target conversational_interfaces_s__rosidl_typesupport_fastrtps_c
+[3.620s] [100%] Built target conversational_interfaces_s__rosidl_typesupport_introspection_c
+[3.627s] Invoked command in '/home/valee/voice_ros2/build/conversational_interfaces' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/valee/voice_ros2/build/conversational_interfaces -- -j16 -l16
+[3.633s] Invoking command in '/home/valee/voice_ros2/build/conversational_interfaces': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/valee/voice_ros2/build/conversational_interfaces
+[3.638s] -- Install configuration: ""
+[3.638s] -- Execute custom install script
+[3.638s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/ament_index/resource_index/rosidl_interfaces/conversational_interfaces
+[3.644s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/Audio.json
+[3.648s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/Transcription.json
+[3.654s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/TextChunk.json
+[3.659s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/audio.h
+[3.663s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__functions.h
+[3.667s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__struct.h
+[3.673s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__type_support.h
+[3.678s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__functions.h
+[3.683s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__struct.h
+[3.687s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__type_support.h
+[3.692s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__functions.h
+[3.697s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__struct.h
+[3.702s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__type_support.h
+[3.707s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/rosidl_generator_c__visibility_control.h
+[3.712s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/text_chunk.h
+[3.717s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/transcription.h
+[3.722s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/environment/library_path.sh
+[3.729s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/environment/library_path.dsv
+[3.734s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__rosidl_typesupport_fastrtps_c.h
+[3.740s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__rosidl_typesupport_fastrtps_c.h
+[3.746s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__rosidl_typesupport_fastrtps_c.h
+[3.751s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/rosidl_typesupport_fastrtps_c__visibility_control.h
+[3.759s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__rosidl_typesupport_introspection_c.h
+[3.763s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__rosidl_typesupport_introspection_c.h
+[3.768s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__rosidl_typesupport_introspection_c.h
+[3.775s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/rosidl_typesupport_introspection_c__visibility_control.h
+[3.780s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/audio.hpp
+[3.785s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__builder.hpp
+[3.790s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__struct.hpp
+[3.795s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__traits.hpp
+[3.800s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__type_support.hpp
+[3.805s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__builder.hpp
+[3.809s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__struct.hpp
+[3.814s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__traits.hpp
+[3.820s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__type_support.hpp
+[3.825s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__builder.hpp
+[3.830s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__struct.hpp
+[3.835s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__traits.hpp
+[3.842s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__type_support.hpp
+[3.847s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/rosidl_generator_cpp__visibility_control.hpp
+[3.852s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/text_chunk.hpp
+[3.859s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/transcription.hpp
+[3.864s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__rosidl_typesupport_fastrtps_cpp.hpp
+[3.869s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__rosidl_typesupport_fastrtps_cpp.hpp
+[3.873s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__rosidl_typesupport_fastrtps_cpp.hpp
+[3.878s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/rosidl_typesupport_fastrtps_cpp__visibility_control.h
+[3.882s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/audio__rosidl_typesupport_introspection_cpp.hpp
+[3.889s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/text_chunk__rosidl_typesupport_introspection_cpp.hpp
+[3.894s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/include/conversational_interfaces/conversational_interfaces/msg/detail/transcription__rosidl_typesupport_introspection_cpp.hpp
+[3.899s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/environment/pythonpath.sh
+[3.903s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/environment/pythonpath.dsv
+[3.909s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces-1.0.0-py3.12.egg-info/PKG-INFO
+[3.914s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces-1.0.0-py3.12.egg-info/SOURCES.txt
+[3.922s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces-1.0.0-py3.12.egg-info/dependency_links.txt
+[3.927s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces-1.0.0-py3.12.egg-info/top_level.txt
+[3.932s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/__init__.py
+[3.936s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/_conversational_interfaces_s.ep.rosidl_typesupport_c.c
+[3.942s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/_conversational_interfaces_s.ep.rosidl_typesupport_fastrtps_c.c
+[3.948s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/_conversational_interfaces_s.ep.rosidl_typesupport_introspection_c.c
+[3.952s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_c.so
+[3.959s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_fastrtps_c.so
+[3.965s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_introspection_c.so
+[3.970s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/__init__.py
+[3.976s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_audio.py
+[3.981s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_audio_s.c
+[3.986s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_text_chunk.py
+[3.991s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_text_chunk_s.c
+[3.995s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_transcription.py
+[4.000s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_transcription_s.c
+[4.006s] -- Up-to-date symlink: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_fastrtps_c.so
+[4.006s] -- Up-to-date symlink: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_introspection_c.so
+[4.007s] -- Up-to-date symlink: /home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_c.so
+[4.007s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/Audio.idl
+[4.011s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/Transcription.idl
+[4.016s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/TextChunk.idl
+[4.022s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/Audio.msg
+[4.026s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/Transcription.msg
+[4.032s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/msg/TextChunk.msg
+[4.039s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/ament_index/resource_index/package_run_dependencies/conversational_interfaces
+[4.044s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/ament_index/resource_index/parent_prefix_path/conversational_interfaces
+[4.049s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/environment/ament_prefix_path.sh
+[4.055s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/environment/ament_prefix_path.dsv
+[4.060s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/environment/path.sh
+[4.066s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/environment/path.dsv
+[4.072s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/local_setup.bash
+[4.076s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/local_setup.sh
+[4.081s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/local_setup.zsh
+[4.087s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/local_setup.dsv
+[4.091s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.dsv
+[4.097s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/ament_index/resource_index/packages/conversational_interfaces
+[4.104s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/rosidl_cmake-extras.cmake
+[4.110s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/ament_cmake_export_include_directories-extras.cmake
+[4.115s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/ament_cmake_export_libraries-extras.cmake
+[4.120s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/ament_cmake_export_targets-extras.cmake
+[4.126s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/rosidl_cmake_export_typesupport_targets-extras.cmake
+[4.130s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/ament_cmake_export_dependencies-extras.cmake
+[4.137s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/rosidl_cmake_export_typesupport_libraries-extras.cmake
+[4.142s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfacesConfig.cmake
+[4.149s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfacesConfig-version.cmake
+[4.153s] -- Symlinking: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.xml
+[4.159s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_generator_c.so
+[4.159s] -- Set non-toolchain portion of runtime path of "/home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_generator_c.so" to ""
+[4.159s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_fastrtps_c.so
+[4.159s] -- Set non-toolchain portion of runtime path of "/home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_fastrtps_c.so" to ""
+[4.159s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_introspection_c.so
+[4.159s] -- Set non-toolchain portion of runtime path of "/home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_introspection_c.so" to ""
+[4.159s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_c.so
+[4.159s] -- Set non-toolchain portion of runtime path of "/home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_c.so" to ""
+[4.159s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_fastrtps_cpp.so
+[4.160s] -- Set non-toolchain portion of runtime path of "/home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_fastrtps_cpp.so" to ""
+[4.160s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_introspection_cpp.so
+[4.160s] -- Set non-toolchain portion of runtime path of "/home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_introspection_cpp.so" to ""
+[4.160s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_cpp.so
+[4.160s] -- Set non-toolchain portion of runtime path of "/home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_typesupport_cpp.so" to ""
+[4.188s] Listing '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces'...
+[4.189s] Compiling '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/__init__.py'...
+[4.189s] Listing '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg'...
+[4.189s] Compiling '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/__init__.py'...
+[4.189s] Compiling '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_audio.py'...
+[4.189s] Compiling '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_text_chunk.py'...
+[4.189s] Compiling '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages/conversational_interfaces/msg/_transcription.py'...
+[4.191s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_generator_py.so
+[4.192s] -- Set non-toolchain portion of runtime path of "/home/valee/voice_ros2/install/conversational_interfaces/lib/libconversational_interfaces__rosidl_generator_py.so" to ""
+[4.192s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_generator_cExport.cmake
+[4.192s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_generator_cExport-noconfig.cmake
+[4.192s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_typesupport_fastrtps_cExport.cmake
+[4.192s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_typesupport_fastrtps_cExport-noconfig.cmake
+[4.192s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfaces__rosidl_typesupport_introspection_cExport.cmake
+[4.192s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfaces__rosidl_typesupport_introspection_cExport-noconfig.cmake
+[4.192s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfaces__rosidl_typesupport_cExport.cmake
+[4.192s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfaces__rosidl_typesupport_cExport-noconfig.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_generator_cppExport.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_typesupport_fastrtps_cppExport.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_typesupport_fastrtps_cppExport-noconfig.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfaces__rosidl_typesupport_introspection_cppExport.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfaces__rosidl_typesupport_introspection_cppExport-noconfig.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfaces__rosidl_typesupport_cppExport.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/conversational_interfaces__rosidl_typesupport_cppExport-noconfig.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_generator_pyExport.cmake
+[4.193s] -- Installing: /home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/cmake/export_conversational_interfaces__rosidl_generator_pyExport-noconfig.cmake
+[4.194s] Invoked command in '/home/valee/voice_ros2/build/conversational_interfaces' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/valee/voice_ros2/build/conversational_interfaces

@@ -1,0 +1,1 @@
+/home/valee/voice_ros2/build/conversational_interfaces/rosidl_typesupport_fastrtps_cpp/conversational_interfaces/msg/detail/audio__rosidl_typesupport_fastrtps_cpp.hpp

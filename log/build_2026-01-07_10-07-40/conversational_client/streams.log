@@ -1,0 +1,29 @@
+[0.621s] Invoking command in '/home/valee/voice_ros2/build/conversational_client': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_client/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/valee/voice_ros2/build/conversational_client/build --no-deps symlink_data
+[0.801s] running develop
+[0.904s] running egg_info
+[0.904s] creating conversational_client.egg-info
+[0.914s] writing conversational_client.egg-info/PKG-INFO
+[0.914s] writing dependency_links to conversational_client.egg-info/dependency_links.txt
+[0.914s] writing entry points to conversational_client.egg-info/entry_points.txt
+[0.914s] writing requirements to conversational_client.egg-info/requires.txt
+[0.914s] writing top-level names to conversational_client.egg-info/top_level.txt
+[0.914s] writing manifest file 'conversational_client.egg-info/SOURCES.txt'
+[0.935s] reading manifest file 'conversational_client.egg-info/SOURCES.txt'
+[0.935s] writing manifest file 'conversational_client.egg-info/SOURCES.txt'
+[0.947s] running build_ext
+[0.947s] Creating /home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational-client.egg-link (link to .)
+[0.947s] Installing audio_capture_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+[0.947s] Installing audio_playback_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+[0.947s] Installing barge_in_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+[0.947s] Installing vad_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+[0.947s] Installing wake_word_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+[0.947s] 
+[0.947s] Installed /home/valee/voice_ros2/build/conversational_client
+[0.947s] running symlink_data
+[0.947s] creating /home/valee/voice_ros2/install/conversational_client/share/ament_index
+[0.948s] creating /home/valee/voice_ros2/install/conversational_client/share/ament_index/resource_index
+[0.948s] creating /home/valee/voice_ros2/install/conversational_client/share/ament_index/resource_index/packages
+[0.948s] symbolically linking /home/valee/voice_ros2/build/conversational_client/resource/conversational_client -> /home/valee/voice_ros2/install/conversational_client/share/ament_index/resource_index/packages
+[0.948s] symbolically linking /home/valee/voice_ros2/build/conversational_client/package.xml -> /home/valee/voice_ros2/install/conversational_client/share/conversational_client
+[0.948s] creating /home/valee/voice_ros2/install/conversational_client/share/conversational_client/launch
+[0.966s] Invoked command in '/home/valee/voice_ros2/build/conversational_client' returned '0': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_client/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/valee/voice_ros2/build/conversational_client/build --no-deps symlink_data

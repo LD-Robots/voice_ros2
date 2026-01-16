@@ -1,0 +1,1 @@
+/home/valee/voice_ros2/build/conversational_interfaces/rosidl_generator_c/conversational_interfaces/msg/detail/transcription__type_support.h

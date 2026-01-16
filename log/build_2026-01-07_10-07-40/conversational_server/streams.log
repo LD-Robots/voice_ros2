@@ -1,0 +1,29 @@
+[0.618s] Invoking command in '/home/valee/voice_ros2/build/conversational_server': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/valee/voice_ros2/build/conversational_server/build --no-deps symlink_data
+[0.799s] running develop
+[0.902s] running egg_info
+[0.902s] creating conversational_server.egg-info
+[0.912s] writing conversational_server.egg-info/PKG-INFO
+[0.912s] writing dependency_links to conversational_server.egg-info/dependency_links.txt
+[0.913s] writing entry points to conversational_server.egg-info/entry_points.txt
+[0.913s] writing requirements to conversational_server.egg-info/requires.txt
+[0.913s] writing top-level names to conversational_server.egg-info/top_level.txt
+[0.913s] writing manifest file 'conversational_server.egg-info/SOURCES.txt'
+[0.934s] reading manifest file 'conversational_server.egg-info/SOURCES.txt'
+[0.935s] writing manifest file 'conversational_server.egg-info/SOURCES.txt'
+[0.946s] running build_ext
+[0.946s] Creating /home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages/conversational-server.egg-link (link to .)
+[0.946s] Installing asr_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+[0.946s] Installing llm_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+[0.946s] Installing tts_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+[0.946s] 
+[0.946s] Installed /home/valee/voice_ros2/build/conversational_server
+[0.947s] running symlink_data
+[0.947s] creating /home/valee/voice_ros2/install/conversational_server/share/ament_index
+[0.947s] creating /home/valee/voice_ros2/install/conversational_server/share/ament_index/resource_index
+[0.947s] creating /home/valee/voice_ros2/install/conversational_server/share/ament_index/resource_index/packages
+[0.947s] symbolically linking /home/valee/voice_ros2/build/conversational_server/resource/conversational_server -> /home/valee/voice_ros2/install/conversational_server/share/ament_index/resource_index/packages
+[0.947s] symbolically linking /home/valee/voice_ros2/build/conversational_server/package.xml -> /home/valee/voice_ros2/install/conversational_server/share/conversational_server
+[0.947s] creating /home/valee/voice_ros2/install/conversational_server/share/conversational_server/launch
+[0.947s] symbolically linking /home/valee/voice_ros2/build/conversational_server/launch/full_system.launch.py -> /home/valee/voice_ros2/install/conversational_server/share/conversational_server/launch
+[0.947s] symbolically linking /home/valee/voice_ros2/build/conversational_server/launch/server_pipeline.launch.py -> /home/valee/voice_ros2/install/conversational_server/share/conversational_server/launch
+[0.968s] Invoked command in '/home/valee/voice_ros2/build/conversational_server' returned '0': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/valee/voice_ros2/build/conversational_server/build --no-deps symlink_data

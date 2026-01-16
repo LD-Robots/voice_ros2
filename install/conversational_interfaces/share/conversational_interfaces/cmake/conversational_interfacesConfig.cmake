@@ -1,0 +1,1 @@
+/home/valee/voice_ros2/build/conversational_interfaces/ament_cmake_core/conversational_interfacesConfig.cmake

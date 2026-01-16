@@ -1,0 +1,242 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-e9147710a0aff2c96601.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18
+					]
+				},
+				{
+					"build" : "conversational_interfaces__py",
+					"jsonFile" : "directory-conversational_interfaces__py-198ad8fa74aa6e687d6d.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.20"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 0,
+					"source" : "/home/valee/voice_ros2/build/conversational_interfaces/conversational_interfaces__py",
+					"targetIndexes" : 
+					[
+						4
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0,
+						1
+					],
+					"name" : "conversational_interfaces",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_build_conversational_interfaces_egg::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_build_conversational_interfaces_egg-315aa07ed06224455340.json",
+					"name" : "ament_cmake_python_build_conversational_interfaces_egg",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_symlink_conversational_interfaces::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_symlink_conversational_interfaces-d898de9e631fc1699f73.json",
+					"name" : "ament_cmake_python_symlink_conversational_interfaces",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces-50556d04861a583acbac.json",
+					"name" : "conversational_interfaces",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__cpp-ca0f5c95310bbd383fc2.json",
+					"name" : "conversational_interfaces__cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "conversational_interfaces__py::@bc927bd265f09818b002",
+					"jsonFile" : "target-conversational_interfaces__py-a789fbd8eb56b82fab4d.json",
+					"name" : "conversational_interfaces__py",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_generator_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_generator_c-6422d8106bc5d99e3218.json",
+					"name" : "conversational_interfaces__rosidl_generator_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_generator_py::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_generator_py-d2c1d3869f1bbc4a15ef.json",
+					"name" : "conversational_interfaces__rosidl_generator_py",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_generator_type_description::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_generator_type_description-6e8538080ea11b2fd7de.json",
+					"name" : "conversational_interfaces__rosidl_generator_type_description",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_typesupport_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_typesupport_c-bba9fd52150077a1ffa2.json",
+					"name" : "conversational_interfaces__rosidl_typesupport_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_typesupport_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_typesupport_cpp-dbfd5b5212ee5822d972.json",
+					"name" : "conversational_interfaces__rosidl_typesupport_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_typesupport_fastrtps_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_typesupport_fastrtps_c-ba52d15ed99512939aa7.json",
+					"name" : "conversational_interfaces__rosidl_typesupport_fastrtps_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_typesupport_fastrtps_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_typesupport_fastrtps_cpp-28fd30c689f02e677b47.json",
+					"name" : "conversational_interfaces__rosidl_typesupport_fastrtps_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_typesupport_introspection_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_typesupport_introspection_c-832cc1a0ddbc498c29ce.json",
+					"name" : "conversational_interfaces__rosidl_typesupport_introspection_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces__rosidl_typesupport_introspection_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces__rosidl_typesupport_introspection_cpp-f031fc4a4a7ca31624cd.json",
+					"name" : "conversational_interfaces__rosidl_typesupport_introspection_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces_s__rosidl_typesupport_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces_s__rosidl_typesupport_c-3e00e68d454065b4f6a8.json",
+					"name" : "conversational_interfaces_s__rosidl_typesupport_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces_s__rosidl_typesupport_fastrtps_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces_s__rosidl_typesupport_fastrtps_c-01e80b0e22419ad8a49d.json",
+					"name" : "conversational_interfaces_s__rosidl_typesupport_fastrtps_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces_s__rosidl_typesupport_introspection_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces_s__rosidl_typesupport_introspection_c-6401c2a680b953af66b7.json",
+					"name" : "conversational_interfaces_s__rosidl_typesupport_introspection_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "conversational_interfaces_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-conversational_interfaces_uninstall-71fc77b858c5fcd44b95.json",
+					"name" : "conversational_interfaces_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-7db7c1fdd46e8eb4975c.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/valee/voice_ros2/build/conversational_interfaces",
+		"source" : "/home/valee/voice_ros2/conversational_interfaces"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 6
+	}
+}

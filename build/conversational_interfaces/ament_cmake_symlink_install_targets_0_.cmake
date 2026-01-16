@@ -1,0 +1,1 @@
+ament_cmake_symlink_install_targets("TARGET_FILES" "/home/valee/voice_ros2/build/conversational_interfaces/rosidl_generator_py/conversational_interfaces/conversational_interfaces_s__rosidl_typesupport_fastrtps_c.so" "TARGETS" "conversational_interfaces_s__rosidl_typesupport_fastrtps_c" "DESTINATION" "lib/python3.12/site-packages/conversational_interfaces")

@@ -1,0 +1,27 @@
+running develop
+running egg_info
+creating conversational_server.egg-info
+writing conversational_server.egg-info/PKG-INFO
+writing dependency_links to conversational_server.egg-info/dependency_links.txt
+writing entry points to conversational_server.egg-info/entry_points.txt
+writing requirements to conversational_server.egg-info/requires.txt
+writing top-level names to conversational_server.egg-info/top_level.txt
+writing manifest file 'conversational_server.egg-info/SOURCES.txt'
+reading manifest file 'conversational_server.egg-info/SOURCES.txt'
+writing manifest file 'conversational_server.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages/conversational-server.egg-link (link to .)
+Installing asr_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+Installing llm_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+Installing tts_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+
+Installed /home/valee/voice_ros2/build/conversational_server
+running symlink_data
+creating /home/valee/voice_ros2/install/conversational_server/share/ament_index
+creating /home/valee/voice_ros2/install/conversational_server/share/ament_index/resource_index
+creating /home/valee/voice_ros2/install/conversational_server/share/ament_index/resource_index/packages
+symbolically linking /home/valee/voice_ros2/build/conversational_server/resource/conversational_server -> /home/valee/voice_ros2/install/conversational_server/share/ament_index/resource_index/packages
+symbolically linking /home/valee/voice_ros2/build/conversational_server/package.xml -> /home/valee/voice_ros2/install/conversational_server/share/conversational_server
+creating /home/valee/voice_ros2/install/conversational_server/share/conversational_server/launch
+symbolically linking /home/valee/voice_ros2/build/conversational_server/launch/full_system.launch.py -> /home/valee/voice_ros2/install/conversational_server/share/conversational_server/launch
+symbolically linking /home/valee/voice_ros2/build/conversational_server/launch/server_pipeline.launch.py -> /home/valee/voice_ros2/install/conversational_server/share/conversational_server/launch

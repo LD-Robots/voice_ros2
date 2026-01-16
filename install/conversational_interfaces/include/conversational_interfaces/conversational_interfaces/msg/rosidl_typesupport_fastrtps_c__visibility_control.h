@@ -1,0 +1,1 @@
+/home/valee/voice_ros2/build/conversational_interfaces/rosidl_typesupport_fastrtps_c/conversational_interfaces/msg/rosidl_typesupport_fastrtps_c__visibility_control.h

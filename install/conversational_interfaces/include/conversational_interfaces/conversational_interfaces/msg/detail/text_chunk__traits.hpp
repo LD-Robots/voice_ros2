@@ -1,0 +1,1 @@
+/home/valee/voice_ros2/build/conversational_interfaces/rosidl_generator_cpp/conversational_interfaces/msg/detail/text_chunk__traits.hpp

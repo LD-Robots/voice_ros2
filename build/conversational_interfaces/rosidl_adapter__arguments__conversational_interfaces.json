@@ -1,0 +1,8 @@
+{
+  "package_name": "conversational_interfaces",
+  "non_idl_tuples": [
+    "/home/valee/voice_ros2/conversational_interfaces:msg/Audio.msg",
+    "/home/valee/voice_ros2/conversational_interfaces:msg/Transcription.msg",
+    "/home/valee/voice_ros2/conversational_interfaces:msg/TextChunk.msg"
+  ]
+}

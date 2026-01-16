@@ -1,0 +1,21 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/audio__type_support.cpp.o"
+  "CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/audio__type_support.cpp.o.d"
+  "CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/text_chunk__type_support.cpp.o"
+  "CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/text_chunk__type_support.cpp.o.d"
+  "CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/transcription__type_support.cpp.o"
+  "CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/transcription__type_support.cpp.o.d"
+  "libconversational_interfaces__rosidl_typesupport_introspection_cpp.pdb"
+  "libconversational_interfaces__rosidl_typesupport_introspection_cpp.so"
+  "rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/audio__rosidl_typesupport_introspection_cpp.hpp"
+  "rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/audio__type_support.cpp"
+  "rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/text_chunk__rosidl_typesupport_introspection_cpp.hpp"
+  "rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/text_chunk__type_support.cpp"
+  "rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/transcription__rosidl_typesupport_introspection_cpp.hpp"
+  "rosidl_typesupport_introspection_cpp/conversational_interfaces/msg/detail/transcription__type_support.cpp"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CXX)
+  include(CMakeFiles/conversational_interfaces__rosidl_typesupport_introspection_cpp.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

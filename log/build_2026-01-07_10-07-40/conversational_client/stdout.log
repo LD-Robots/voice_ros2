@@ -1,0 +1,27 @@
+running develop
+running egg_info
+creating conversational_client.egg-info
+writing conversational_client.egg-info/PKG-INFO
+writing dependency_links to conversational_client.egg-info/dependency_links.txt
+writing entry points to conversational_client.egg-info/entry_points.txt
+writing requirements to conversational_client.egg-info/requires.txt
+writing top-level names to conversational_client.egg-info/top_level.txt
+writing manifest file 'conversational_client.egg-info/SOURCES.txt'
+reading manifest file 'conversational_client.egg-info/SOURCES.txt'
+writing manifest file 'conversational_client.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational-client.egg-link (link to .)
+Installing audio_capture_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+Installing audio_playback_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+Installing barge_in_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+Installing vad_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+Installing wake_word_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+
+Installed /home/valee/voice_ros2/build/conversational_client
+running symlink_data
+creating /home/valee/voice_ros2/install/conversational_client/share/ament_index
+creating /home/valee/voice_ros2/install/conversational_client/share/ament_index/resource_index
+creating /home/valee/voice_ros2/install/conversational_client/share/ament_index/resource_index/packages
+symbolically linking /home/valee/voice_ros2/build/conversational_client/resource/conversational_client -> /home/valee/voice_ros2/install/conversational_client/share/ament_index/resource_index/packages
+symbolically linking /home/valee/voice_ros2/build/conversational_client/package.xml -> /home/valee/voice_ros2/install/conversational_client/share/conversational_client
+creating /home/valee/voice_ros2/install/conversational_client/share/conversational_client/launch

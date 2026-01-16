@@ -1,0 +1,23 @@
+running egg_info
+writing ../build/conversational_client/conversational_client.egg-info/PKG-INFO
+writing dependency_links to ../build/conversational_client/conversational_client.egg-info/dependency_links.txt
+writing entry points to ../build/conversational_client/conversational_client.egg-info/entry_points.txt
+writing requirements to ../build/conversational_client/conversational_client.egg-info/requires.txt
+writing top-level names to ../build/conversational_client/conversational_client.egg-info/top_level.txt
+reading manifest file '../build/conversational_client/conversational_client.egg-info/SOURCES.txt'
+writing manifest file '../build/conversational_client/conversational_client.egg-info/SOURCES.txt'
+running build
+running build_py
+running install
+running install_lib
+running install_data
+running install_egg_info
+removing '/home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client-0.0.0-py3.12.egg-info' (and everything under it)
+Copying ../build/conversational_client/conversational_client.egg-info to /home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages/conversational_client-0.0.0-py3.12.egg-info
+running install_scripts
+Installing audio_capture_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+Installing audio_playback_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+Installing barge_in_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+Installing vad_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+Installing wake_word_node script to /home/valee/voice_ros2/install/conversational_client/lib/conversational_client
+writing list of installed files to '/home/valee/voice_ros2/build/conversational_client/install.log'

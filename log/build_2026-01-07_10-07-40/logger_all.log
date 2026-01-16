@@ -1,0 +1,252 @@
+[0.069s] [34mcolcon[0m [1;30mDEBUG[0m [32mCommand line arguments: ['/usr/bin/colcon', 'build', '--symlink-install'][0m
+[0.069s] [34mcolcon[0m [1;30mDEBUG[0m [32mParsed command line arguments: Namespace(log_base=None, log_level=None, verb_name='build', build_base='build', install_base='install', merge_install=False, symlink_install=True, test_result_base=None, continue_on_error=False, executor='parallel', parallel_workers=16, event_handlers=None, ignore_user_meta=False, metas=['./colcon.meta'], base_paths=['.'], packages_ignore=None, packages_ignore_regex=None, paths=None, packages_up_to=None, packages_up_to_regex=None, packages_above=None, packages_above_and_dependencies=None, packages_above_depth=None, packages_select_by_dep=None, packages_skip_by_dep=None, packages_skip_up_to=None, packages_select_build_failed=False, packages_skip_build_finished=False, packages_select_test_failures=False, packages_skip_test_passed=False, packages_select=None, packages_skip=None, packages_select_regex=None, packages_skip_regex=None, packages_start=None, packages_end=None, allow_overriding=[], cmake_args=None, cmake_target=None, cmake_target_skip_unavailable=False, cmake_clean_cache=False, cmake_clean_first=False, cmake_force_configure=False, ament_cmake_args=None, catkin_cmake_args=None, catkin_skip_building_tests=False, verb_parser=<colcon_defaults.argument_parser.defaults.DefaultArgumentsDecorator object at 0x76a7c0d25c10>, verb_extension=<colcon_core.verb.build.BuildVerb object at 0x76a7c0e463c0>, main=<bound method BuildVerb.main of <colcon_core.verb.build.BuildVerb object at 0x76a7c0e463c0>>)[0m
+[0.094s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(colcon_meta) check parameters
+[0.094s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(recursive) check parameters
+[0.094s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(ignore) check parameters
+[0.094s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(path) check parameters
+[0.094s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(colcon_meta) discover
+[0.094s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(recursive) discover
+[0.094s] [34mcolcon.colcon_core.package_discovery[0m [1;30mINFO[0m Crawling recursively for packages in '/home/valee/voice_ros2'
+[0.094s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extensions ['ignore', 'ignore_ament_install']
+[0.094s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extension 'ignore'
+[0.094s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extension 'ignore_ament_install'
+[0.094s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extensions ['colcon_pkg']
+[0.094s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extension 'colcon_pkg'
+[0.095s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extensions ['colcon_meta']
+[0.095s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extension 'colcon_meta'
+[0.095s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extensions ['ros']
+[0.095s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extension 'ros'
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extensions ['cmake', 'python']
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extension 'cmake'
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extension 'python'
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extensions ['python_setup_py']
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(.) by extension 'python_setup_py'
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(build) by extensions ['ignore', 'ignore_ament_install']
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(build) by extension 'ignore'
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(build) ignored
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extensions ['ignore', 'ignore_ament_install']
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extension 'ignore'
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extension 'ignore_ament_install'
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extensions ['colcon_pkg']
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extension 'colcon_pkg'
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extensions ['colcon_meta']
+[0.108s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extension 'colcon_meta'
+[0.109s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extensions ['ros']
+[0.109s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_client) by extension 'ros'
+[0.111s] [34mcolcon.colcon_core.package_identification[0m [1;30mDEBUG[0m [32mPackage 'conversational_client' with type 'ros.ament_python' and name 'conversational_client'[0m
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extensions ['ignore', 'ignore_ament_install']
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extension 'ignore'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extension 'ignore_ament_install'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extensions ['colcon_pkg']
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extension 'colcon_pkg'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extensions ['colcon_meta']
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extension 'colcon_meta'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extensions ['ros']
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_interfaces) by extension 'ros'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mDEBUG[0m [32mPackage 'conversational_interfaces' with type 'ros.ament_cmake' and name 'conversational_interfaces'[0m
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extensions ['ignore', 'ignore_ament_install']
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extension 'ignore'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extension 'ignore_ament_install'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extensions ['colcon_pkg']
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extension 'colcon_pkg'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extensions ['colcon_meta']
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extension 'colcon_meta'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extensions ['ros']
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(conversational_server) by extension 'ros'
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mDEBUG[0m [32mPackage 'conversational_server' with type 'ros.ament_python' and name 'conversational_server'[0m
+[0.112s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(install) by extensions ['ignore', 'ignore_ament_install']
+[0.113s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(install) by extension 'ignore'
+[0.113s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(install) ignored
+[0.113s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(log) by extensions ['ignore', 'ignore_ament_install']
+[0.113s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(log) by extension 'ignore'
+[0.113s] [34mcolcon.colcon_core.package_identification[0m [1;30mLevel 1[0m _identify(log) ignored
+[0.113s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(recursive) using defaults
+[0.113s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(ignore) discover
+[0.113s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(ignore) using defaults
+[0.113s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(path) discover
+[0.113s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(path) using defaults
+[0.122s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(prefix_path) check parameters
+[0.122s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(prefix_path) discover
+[0.124s] [34mcolcon.colcon_installed_package_information.package_discovery[0m [1;30mDEBUG[0m [32mFound 285 installed packages in /opt/ros/jazzy[0m
+[0.124s] [34mcolcon.colcon_core.package_discovery[0m [1;30mLevel 1[0m discover_packages(prefix_path) using defaults
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'cmake_args' from command line to 'None'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'cmake_target' from command line to 'None'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'cmake_clean_cache' from command line to 'False'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'cmake_clean_first' from command line to 'False'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'cmake_force_configure' from command line to 'False'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'ament_cmake_args' from command line to 'None'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'catkin_cmake_args' from command line to 'None'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_interfaces' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.143s] [34mcolcon.colcon_core.verb[0m [1;30mDEBUG[0m [32mBuilding package 'conversational_interfaces' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/valee/voice_ros2/build/conversational_interfaces', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/valee/voice_ros2/install/conversational_interfaces', 'merge_install': False, 'path': '/home/valee/voice_ros2/conversational_interfaces', 'symlink_install': True, 'test_result_base': None}[0m
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'cmake_args' from command line to 'None'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'cmake_target' from command line to 'None'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'cmake_clean_cache' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'cmake_clean_first' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'cmake_force_configure' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'ament_cmake_args' from command line to 'None'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'catkin_cmake_args' from command line to 'None'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_client' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mDEBUG[0m [32mBuilding package 'conversational_client' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/valee/voice_ros2/build/conversational_client', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/valee/voice_ros2/install/conversational_client', 'merge_install': False, 'path': '/home/valee/voice_ros2/conversational_client', 'symlink_install': True, 'test_result_base': None}[0m
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'cmake_args' from command line to 'None'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'cmake_target' from command line to 'None'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'cmake_clean_cache' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'cmake_clean_first' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'cmake_force_configure' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'ament_cmake_args' from command line to 'None'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'catkin_cmake_args' from command line to 'None'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mLevel 5[0m set package 'conversational_server' build argument 'catkin_skip_building_tests' from command line to 'False'
+[0.144s] [34mcolcon.colcon_core.verb[0m [1;30mDEBUG[0m [32mBuilding package 'conversational_server' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/valee/voice_ros2/build/conversational_server', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/valee/voice_ros2/install/conversational_server', 'merge_install': False, 'path': '/home/valee/voice_ros2/conversational_server', 'symlink_install': True, 'test_result_base': None}[0m
+[0.144s] [34mcolcon.colcon_core.executor[0m [1;30mINFO[0m Executing jobs using 'parallel' executor
+[0.145s] [34mcolcon.colcon_parallel_executor.executor.parallel[0m [1;30mDEBUG[0m [32mrun_until_complete[0m
+[0.145s] [34mcolcon.colcon_ros.task.ament_cmake.build[0m [1;30mINFO[0m Building ROS package in '/home/valee/voice_ros2/conversational_interfaces' with build type 'ament_cmake'
+[0.145s] [34mcolcon.colcon_cmake.task.cmake.build[0m [1;30mINFO[0m Building CMake package in '/home/valee/voice_ros2/conversational_interfaces'
+[0.147s] [34mcolcon.colcon_core.plugin_system[0m [1;30mINFO[0m Skipping extension 'colcon_core.shell.bat': Not used on non-Windows systems
+[0.147s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[0.148s] [34mcolcon.colcon_core.shell[0m [1;30mDEBUG[0m [32mSkip shell extension 'dsv' for command environment[0m
+[0.152s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoking command in '/home/valee/voice_ros2/build/conversational_interfaces': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/valee/voice_ros2/conversational_interfaces -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/valee/voice_ros2/install/conversational_interfaces[0m
+[2.127s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoked command in '/home/valee/voice_ros2/build/conversational_interfaces' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake /home/valee/voice_ros2/conversational_interfaces -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/valee/voice_ros2/install/conversational_interfaces[0m
+[2.128s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoking command in '/home/valee/voice_ros2/build/conversational_interfaces': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/valee/voice_ros2/build/conversational_interfaces -- -j16 -l16[0m
+[3.772s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoked command in '/home/valee/voice_ros2/build/conversational_interfaces' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --build /home/valee/voice_ros2/build/conversational_interfaces -- -j16 -l16[0m
+[3.778s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoking command in '/home/valee/voice_ros2/build/conversational_interfaces': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/valee/voice_ros2/build/conversational_interfaces[0m
+[4.339s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m create_environment_scripts_only(conversational_interfaces)
+[4.340s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoked command in '/home/valee/voice_ros2/build/conversational_interfaces' returned '0': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/jazzy DEBUGINFOD_URLS=https://debuginfod.ubuntu.com /usr/bin/cmake --install /home/valee/voice_ros2/build/conversational_interfaces[0m
+[4.343s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces' for CMake module files
+[4.344s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces' for CMake config files
+[4.345s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_interfaces', 'cmake_prefix_path')
+[4.345s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/cmake_prefix_path.ps1'
+[4.346s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/cmake_prefix_path.dsv'
+[4.346s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/cmake_prefix_path.sh'
+[4.346s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/lib'
+[4.347s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_interfaces', 'ld_library_path_lib')
+[4.347s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/ld_library_path_lib.ps1'
+[4.347s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/ld_library_path_lib.dsv'
+[4.347s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/ld_library_path_lib.sh'
+[4.347s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/bin'
+[4.347s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/lib/pkgconfig/conversational_interfaces.pc'
+[4.347s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages'
+[4.347s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_interfaces', 'pythonpath')
+[4.348s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/pythonpath.ps1'
+[4.348s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/pythonpath.dsv'
+[4.348s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/pythonpath.sh'
+[4.348s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/bin'
+[4.348s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.ps1'
+[4.349s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package descriptor '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.dsv'
+[4.349s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.sh'
+[4.349s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.bash'
+[4.350s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.zsh'
+[4.350s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m create_file_with_runtime_dependencies(/home/valee/voice_ros2/install/conversational_interfaces/share/colcon-core/packages/conversational_interfaces)
+[4.350s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m create_environment_scripts_only(conversational_interfaces)
+[4.350s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces' for CMake module files
+[4.351s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces' for CMake config files
+[4.351s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_interfaces', 'cmake_prefix_path')
+[4.351s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/cmake_prefix_path.ps1'
+[4.352s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/cmake_prefix_path.dsv'
+[4.352s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/cmake_prefix_path.sh'
+[4.352s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/lib'
+[4.352s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_interfaces', 'ld_library_path_lib')
+[4.352s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/ld_library_path_lib.ps1'
+[4.352s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/ld_library_path_lib.dsv'
+[4.353s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/ld_library_path_lib.sh'
+[4.353s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/bin'
+[4.353s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/lib/pkgconfig/conversational_interfaces.pc'
+[4.353s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages'
+[4.353s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_interfaces', 'pythonpath')
+[4.353s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/pythonpath.ps1'
+[4.353s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/pythonpath.dsv'
+[4.353s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/hook/pythonpath.sh'
+[4.354s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_interfaces/bin'
+[4.354s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.ps1'
+[4.354s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package descriptor '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.dsv'
+[4.355s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.sh'
+[4.355s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.bash'
+[4.355s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_interfaces/share/conversational_interfaces/package.zsh'
+[4.355s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m create_file_with_runtime_dependencies(/home/valee/voice_ros2/install/conversational_interfaces/share/colcon-core/packages/conversational_interfaces)
+[4.356s] [34mcolcon.colcon_ros.task.ament_python.build[0m [1;30mINFO[0m Building ROS package in '/home/valee/voice_ros2/conversational_client' with build type 'ament_python'
+[4.356s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_client', 'ament_prefix_path')
+[4.356s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/hook/ament_prefix_path.ps1'
+[4.356s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/hook/ament_prefix_path.dsv'
+[4.357s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/hook/ament_prefix_path.sh'
+[4.357s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[4.357s] [34mcolcon.colcon_core.shell[0m [1;30mDEBUG[0m [32mSkip shell extension 'dsv' for command environment[0m
+[4.358s] [34mcolcon.colcon_ros.task.ament_python.build[0m [1;30mINFO[0m Building ROS package in '/home/valee/voice_ros2/conversational_server' with build type 'ament_python'
+[4.358s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_server', 'ament_prefix_path')
+[4.359s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/hook/ament_prefix_path.ps1'
+[4.359s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/hook/ament_prefix_path.dsv'
+[4.359s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/hook/ament_prefix_path.sh'
+[4.359s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[4.359s] [34mcolcon.colcon_core.shell[0m [1;30mDEBUG[0m [32mSkip shell extension 'dsv' for command environment[0m
+[4.492s] [34mcolcon.colcon_core.task.python.build[0m [1;30mINFO[0m Building Python package in '/home/valee/voice_ros2/conversational_client'
+[4.492s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[4.492s] [34mcolcon.colcon_core.shell[0m [1;30mDEBUG[0m [32mSkip shell extension 'dsv' for command environment[0m
+[4.613s] [34mcolcon.colcon_core.task.python.build[0m [1;30mINFO[0m Building Python package in '/home/valee/voice_ros2/conversational_server'
+[4.613s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[4.613s] [34mcolcon.colcon_core.shell[0m [1;30mDEBUG[0m [32mSkip shell extension 'dsv' for command environment[0m
+[4.977s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoking command in '/home/valee/voice_ros2/build/conversational_server': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/valee/voice_ros2/build/conversational_server/build --no-deps symlink_data[0m
+[4.978s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoking command in '/home/valee/voice_ros2/build/conversational_client': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_client/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/valee/voice_ros2/build/conversational_client/build --no-deps symlink_data[0m
+[5.323s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_client', 'pythonpath_develop')
+[5.323s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/build/conversational_client/share/conversational_client/hook/pythonpath_develop.ps1'
+[5.323s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoked command in '/home/valee/voice_ros2/build/conversational_client' returned '0': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_client/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/valee/voice_ros2/build/conversational_client/build --no-deps symlink_data[0m
+[5.323s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/build/conversational_client/share/conversational_client/hook/pythonpath_develop.dsv'
+[5.324s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/build/conversational_client/share/conversational_client/hook/pythonpath_develop.sh'
+[5.324s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_client' for CMake module files
+[5.324s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_client' for CMake config files
+[5.324s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_client/lib'
+[5.324s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_client/bin'
+[5.324s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_client/lib/pkgconfig/conversational_client.pc'
+[5.324s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_client/lib/python3.12/site-packages'
+[5.325s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_client', 'pythonpath')
+[5.325s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/hook/pythonpath.ps1'
+[5.325s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/hook/pythonpath.dsv'
+[5.325s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/hook/pythonpath.sh'
+[5.325s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_client/bin'
+[5.325s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m create_environment_scripts_only(conversational_client)
+[5.325s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/package.ps1'
+[5.326s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package descriptor '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/package.dsv'
+[5.326s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/package.sh'
+[5.326s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/package.bash'
+[5.326s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_client/share/conversational_client/package.zsh'
+[5.326s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m create_file_with_runtime_dependencies(/home/valee/voice_ros2/install/conversational_client/share/colcon-core/packages/conversational_client)
+[5.327s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_server', 'pythonpath_develop')
+[5.327s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/build/conversational_server/share/conversational_server/hook/pythonpath_develop.ps1'
+[5.327s] [34mcolcon.colcon_core.event_handler.log_command[0m [1;30mDEBUG[0m [32mInvoked command in '/home/valee/voice_ros2/build/conversational_server' returned '0': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/valee/voice_ros2/build/conversational_server/build --no-deps symlink_data[0m
+[5.327s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/build/conversational_server/share/conversational_server/hook/pythonpath_develop.dsv'
+[5.327s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/build/conversational_server/share/conversational_server/hook/pythonpath_develop.sh'
+[5.328s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_server' for CMake module files
+[5.328s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_server' for CMake config files
+[5.328s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_server/lib'
+[5.328s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_server/bin'
+[5.328s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_server/lib/pkgconfig/conversational_server.pc'
+[5.328s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages'
+[5.328s] [34mcolcon.colcon_core.shell[0m [1;30mLevel 1[0m create_environment_hook('conversational_server', 'pythonpath')
+[5.328s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/hook/pythonpath.ps1'
+[5.329s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment descriptor '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/hook/pythonpath.dsv'
+[5.329s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating environment hook '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/hook/pythonpath.sh'
+[5.329s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m checking '/home/valee/voice_ros2/install/conversational_server/bin'
+[5.329s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m create_environment_scripts_only(conversational_server)
+[5.329s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/package.ps1'
+[5.329s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package descriptor '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/package.dsv'
+[5.330s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/package.sh'
+[5.330s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/package.bash'
+[5.330s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating package script '/home/valee/voice_ros2/install/conversational_server/share/conversational_server/package.zsh'
+[5.330s] [34mcolcon.colcon_core.environment[0m [1;30mLevel 1[0m create_file_with_runtime_dependencies(/home/valee/voice_ros2/install/conversational_server/share/colcon-core/packages/conversational_server)
+[5.330s] [34mcolcon.colcon_parallel_executor.executor.parallel[0m [1;30mDEBUG[0m [32mclosing loop[0m
+[5.330s] [34mcolcon.colcon_parallel_executor.executor.parallel[0m [1;30mDEBUG[0m [32mloop closed[0m
+[5.330s] [34mcolcon.colcon_parallel_executor.executor.parallel[0m [1;30mDEBUG[0m [32mrun_until_complete finished with '0'[0m
+[5.330s] [34mcolcon.colcon_core.event_reactor[0m [1;30mDEBUG[0m [32mjoining thread[0m
+[5.337s] [34mcolcon.colcon_core.plugin_system[0m [1;30mINFO[0m Skipping extension 'colcon_notification.desktop_notification.terminal_notifier': Not used on non-Darwin systems
+[5.337s] [34mcolcon.colcon_core.plugin_system[0m [1;30mINFO[0m Skipping extension 'colcon_notification.desktop_notification.win32': Not used on non-Windows systems
+[5.337s] [34mcolcon.colcon_notification.desktop_notification[0m [1;30mINFO[0m Sending desktop notification using 'notify2'
+[5.347s] [34mcolcon.colcon_core.event_reactor[0m [1;30mDEBUG[0m [32mjoined thread[0m
+[5.347s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix script '/home/valee/voice_ros2/install/local_setup.ps1'
+[5.348s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix util module '/home/valee/voice_ros2/install/_local_setup_util_ps1.py'
+[5.349s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix chain script '/home/valee/voice_ros2/install/setup.ps1'
+[5.349s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix script '/home/valee/voice_ros2/install/local_setup.sh'
+[5.350s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix util module '/home/valee/voice_ros2/install/_local_setup_util_sh.py'
+[5.350s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix chain script '/home/valee/voice_ros2/install/setup.sh'
+[5.350s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix script '/home/valee/voice_ros2/install/local_setup.bash'
+[5.350s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix chain script '/home/valee/voice_ros2/install/setup.bash'
+[5.351s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix script '/home/valee/voice_ros2/install/local_setup.zsh'
+[5.351s] [34mcolcon.colcon_core.shell[0m [1;30mINFO[0m Creating prefix chain script '/home/valee/voice_ros2/install/setup.zsh'

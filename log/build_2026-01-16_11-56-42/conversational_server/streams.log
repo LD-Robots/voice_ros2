@@ -1,0 +1,24 @@
+[0.448s] Invoking command in '/home/valee/voice_ros2/conversational_server': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/conversational_server build --build-base /home/valee/voice_ros2/build/conversational_server/build install --record /home/valee/voice_ros2/build/conversational_server/install.log --single-version-externally-managed install_data
+[0.594s] running egg_info
+[0.605s] writing ../build/conversational_server/conversational_server.egg-info/PKG-INFO
+[0.605s] writing dependency_links to ../build/conversational_server/conversational_server.egg-info/dependency_links.txt
+[0.605s] writing entry points to ../build/conversational_server/conversational_server.egg-info/entry_points.txt
+[0.605s] writing requirements to ../build/conversational_server/conversational_server.egg-info/requires.txt
+[0.605s] writing top-level names to ../build/conversational_server/conversational_server.egg-info/top_level.txt
+[0.627s] reading manifest file '../build/conversational_server/conversational_server.egg-info/SOURCES.txt'
+[0.627s] writing manifest file '../build/conversational_server/conversational_server.egg-info/SOURCES.txt'
+[0.627s] running build
+[0.628s] running build_py
+[0.628s] running install
+[0.632s] running install_lib
+[0.643s] running install_data
+[0.643s] copying launch/full_system.launch.py -> /home/valee/voice_ros2/install/conversational_server/share/conversational_server/launch
+[0.643s] running install_egg_info
+[0.655s] removing '/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages/conversational_server-0.0.0-py3.12.egg-info' (and everything under it)
+[0.655s] Copying ../build/conversational_server/conversational_server.egg-info to /home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages/conversational_server-0.0.0-py3.12.egg-info
+[0.655s] running install_scripts
+[0.725s] Installing asr_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+[0.725s] Installing llm_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+[0.725s] Installing tts_node script to /home/valee/voice_ros2/install/conversational_server/lib/conversational_server
+[0.725s] writing list of installed files to '/home/valee/voice_ros2/build/conversational_server/install.log'
+[0.740s] Invoked command in '/home/valee/voice_ros2/conversational_server' returned '0': AMENT_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/home/valee/voice_ros2/install/conversational_interfaces:${CMAKE_PREFIX_PATH} DEBUGINFOD_URLS=https://debuginfod.ubuntu.com LD_LIBRARY_PATH=/home/valee/voice_ros2/install/conversational_interfaces/lib:${LD_LIBRARY_PATH} PYTHONPATH=/home/valee/voice_ros2/build/conversational_server/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/valee/voice_ros2/install/conversational_server/lib/python3.12/site-packages:/home/valee/voice_ros2/install/conversational_interfaces/lib/python3.12/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/conversational_server build --build-base /home/valee/voice_ros2/build/conversational_server/build install --record /home/valee/voice_ros2/build/conversational_server/install.log --single-version-externally-managed install_data
