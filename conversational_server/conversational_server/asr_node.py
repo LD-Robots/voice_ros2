@@ -23,7 +23,17 @@ import tempfile
 import wave
 import os
 import time
+import re
+import unicodedata
 import soundfile as sf
+
+# RapidFuzz pentru anti-echo textual
+try:
+    from rapidfuzz import fuzz
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
+    print("⚠️ rapidfuzz not installed. Anti-echo disabled. Run: pip install rapidfuzz")
 
 # Faster Whisper pentru ASR
 try:
@@ -48,6 +58,11 @@ class ASRNode(Node):
         self.declare_parameter('vad_min_silence_ms', 300)
         self.declare_parameter('warmup_enabled', True)
         
+        # Anti-echo textual parameters
+        self.declare_parameter('echo_threshold', 85)  # Similarity % to consider as echo
+        self.declare_parameter('echo_min_length', 8)  # Min chars to check for echo
+        self.declare_parameter('echo_enabled', True)  # Enable/disable anti-echo
+        
         model_size = self.get_parameter('model_size').value
         device = self.get_parameter('device').value
         compute_type = self.get_parameter('compute_type').value
@@ -56,6 +71,11 @@ class ASRNode(Node):
         self.beam_size = self.get_parameter('beam_size').value
         self.vad_min_silence_ms = self.get_parameter('vad_min_silence_ms').value
         self.warmup_enabled = self.get_parameter('warmup_enabled').value
+        
+        # Anti-echo settings
+        self.echo_threshold = self.get_parameter('echo_threshold').value
+        self.echo_min_length = self.get_parameter('echo_min_length').value
+        self.echo_enabled = self.get_parameter('echo_enabled').value and RAPIDFUZZ_AVAILABLE
         
         if not WHISPER_AVAILABLE:
             self.get_logger().error('faster-whisper not installed!')
@@ -81,6 +101,9 @@ class ASRNode(Node):
         self.is_speaking = False
         self.was_speaking = False
         
+        # Anti-echo: ultimul răspuns al robotului
+        self.last_bot_reply = ""
+        
         # Subscriber pentru audio
         self.audio_sub = self.create_subscription(
             Audio,
@@ -97,6 +120,14 @@ class ASRNode(Node):
             10
         )
         
+        # Subscriber pentru răspunsul LLM (anti-echo)
+        self.llm_response_sub = self.create_subscription(
+            Transcription,
+            '/llm_response',
+            self.llm_response_callback,
+            10
+        )
+        
         # Publisher pentru transcriere
         self.transcription_pub = self.create_publisher(
             Transcription,
@@ -104,7 +135,12 @@ class ASRNode(Node):
             10
         )
         
-        self.get_logger().info('ASR Node started! Listening on /audio_raw and /voice_activity')
+        if self.echo_enabled:
+            self.get_logger().info(f'🔇 Anti-echo ENABLED (threshold={self.echo_threshold}%, min_len={self.echo_min_length})')
+        else:
+            self.get_logger().info('🔇 Anti-echo DISABLED')
+        
+        self.get_logger().info('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
     
     def _ensure_warm(self):
         """Încarcă complet modelul prin transcriere dummy."""
@@ -186,6 +222,54 @@ class ASRNode(Node):
         else:
             return {"text": en_text, "lang": "en", "language_probability": 1.0}
     
+    def _normalize_text(self, text: str) -> str:
+        """
+        Normalizează text pentru comparație anti-echo.
+        Elimină diacritice, punctuație, spații extra și face lowercase.
+        """
+        if not text:
+            return ""
+        # Lowercase
+        text = text.lower()
+        # Elimină diacritice (ă->a, î->i, etc.)
+        text = unicodedata.normalize('NFD', text)
+        text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+        # Elimină punctuație și caractere speciale
+        text = re.sub(r'[^a-z0-9\s]', '', text)
+        # Normalizează spații
+        text = ' '.join(text.split())
+        return text.strip()
+    
+    def _is_echo(self, transcription: str) -> bool:
+        """
+        Verifică dacă transcripția e echo de la TTS.
+        Returnează True dacă trebuie ignorată.
+        """
+        if not self.echo_enabled or not self.last_bot_reply:
+            return False
+        
+        user_norm = self._normalize_text(transcription)
+        bot_norm = self._normalize_text(self.last_bot_reply)
+        
+        # Verifică doar dacă ambele sunt suficient de lungi
+        if len(user_norm) < self.echo_min_length or len(bot_norm) < self.echo_min_length:
+            return False
+        
+        # Calculează similaritatea
+        similarity = fuzz.partial_ratio(user_norm, bot_norm)
+        
+        if similarity >= self.echo_threshold:
+            self.get_logger().info(f'🔇 Ignor input (echo TTS) sim={similarity}% > {self.echo_threshold}%')
+            return True
+        
+        return False
+    
+    def llm_response_callback(self, msg: Transcription):
+        """Stochează ultimul răspuns al robotului pentru anti-echo."""
+        if msg.text:
+            self.last_bot_reply = msg.text
+            self.get_logger().debug(f'📝 Stored bot reply for anti-echo: {msg.text[:50]}...')
+    
     def vad_callback(self, msg: Bool):
         """Primește statusul VAD (vorbește/nu vorbește)."""
         self.was_speaking = self.is_speaking
@@ -260,6 +344,11 @@ class ASRNode(Node):
             
             if text:
                 self.get_logger().info(f'🧏 [{lang}] {text}')
+                
+                # Anti-echo: verifică dacă e echo de la TTS
+                if self._is_echo(text):
+                    self.audio_buffer = []
+                    return
                 
                 # Publică rezultat
                 out = Transcription()
