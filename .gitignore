@@ -3,6 +3,9 @@ build/
 install/
 log/
 
+# Environment variables
+.env
+
 # Python
 __pycache__/
 *.pyc
