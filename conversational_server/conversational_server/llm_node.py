@@ -21,6 +21,29 @@ import uuid
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
+
+# Încarcă variabilele din .env
+try:
+    from dotenv import load_dotenv
+    # Caută fișierul .env în voice_ros2/ (funcționează din install/ sau src/)
+    current_path = Path(__file__).resolve()
+    # Mergi în sus până găsești directorul care conține conversational_server
+    while current_path.name != 'voice_ros2' and current_path != current_path.parent:
+        current_path = current_path.parent
+    
+    # Dacă nu găsim voice_ros2, încercăm să mergem 3 niveluri în sus de la fișier
+    if current_path.name != 'voice_ros2':
+        current_path = Path(__file__).resolve().parents[3]
+    
+    env_path = current_path / '.env'
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+        print(f"✅ Loaded .env from: {env_path}")
+    else:
+        print(f"⚠️ .env not found at: {env_path}")
+except ImportError:
+    print("⚠️ python-dotenv not installed. Run: pip install python-dotenv")
 
 # Groq pentru LLM
 try:
