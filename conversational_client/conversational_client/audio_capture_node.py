@@ -98,14 +98,32 @@ class AudioCaptureNode(Node):
                 # Dacă device_index e -1, găsește automat un USB mic sau folosește default
                 if device_index == -1:
                     # Încearcă să găsească un microfon USB
+                    usb_found = False
+                    first_input_device = None
+                    
                     for i in range(self.audio.get_device_count()):
                         info = self.audio.get_device_info_by_index(i)
                         if info['maxInputChannels'] > 0:  # E input device
+                            # Păstrează primul input device ca fallback
+                            if first_input_device is None:
+                                first_input_device = i
+                                
                             name = info['name'].lower()
+                            # Caută USB mic sau ME6S
                             if 'usb' in name or 'me6s' in name:
                                 device_index = i
+                                usb_found = True
                                 self.get_logger().info(f'🎤 Found USB mic: {info["name"]} (index={i})')
                                 break
+                    
+                    # Dacă nu a găsit USB, folosește primul input device disponibil
+                    if not usb_found and first_input_device is not None:
+                        device_index = first_input_device
+                        info = self.audio.get_device_info_by_index(device_index)
+                        self.get_logger().info(f'🎤 Using first available input: {info["name"]} (index={device_index})')
+                    elif not usb_found:
+                        # Dacă nu găsim niciun input device, aruncă eroare
+                        raise RuntimeError('No input devices found!')
                 
                 # Deschide microfonul
                 open_params = {
@@ -123,7 +141,7 @@ class AudioCaptureNode(Node):
                 # Log de confirmare
                 actual_device = device_index if device_index >= 0 else 'default'
                 self.get_logger().info(
-                    f'🎤 Audio Capture started: {self.sample_rate}Hz, '
+                    f'✅ Audio Capture started: {self.sample_rate}Hz, '
                     f'{self.channels}ch, chunk={self.chunk_size} samples ({chunk_ms}ms), '
                     f'device={actual_device}'
                 )

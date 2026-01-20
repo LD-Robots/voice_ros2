@@ -6,6 +6,7 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+import os
 
 
 def generate_launch_description():
@@ -110,6 +111,10 @@ def generate_launch_description():
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
+            parameters=[{
+                'threshold': 0.5,
+                'custom_models': os.path.expanduser('~/ros2_ws/src/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
+            }]
         ),
         
         # Stop Keyword (detectare "stop" în timpul TTS)
@@ -119,8 +124,8 @@ def generate_launch_description():
             name='stop_keyword_node',
             output='screen',
             parameters=[{
-                'model_path': '/home/valee/voice_ros2/voices/stop_keyword.onnx',
-                'enabled': True,
+                'model_path': os.path.expanduser('~/ros2_ws/src/voice_ros2/voices/stop_keyword.onnx'),
+                'enabled': False,  # Disabled - .onnx.data file missing
             }]
         ),
     ])
