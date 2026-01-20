@@ -21,7 +21,7 @@ EXPLICAȚIE:
 
 import rclpy
 from rclpy.node import Node
-from conversational_interfaces.msg import Audio
+from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool, String
 import numpy as np
 import time
@@ -136,6 +136,7 @@ class WakeWordNode(Node):
         # PUBLISHERS
         # ─────────────────────────────────────────────────────────
         self.wake_pub = self.create_publisher(Bool, '/wake_detected', 10)
+        self.wake_word_pub = self.create_publisher(WakeWord, '/wake_word', 10)
         self.session_pub = self.create_publisher(Bool, '/session_active', 10)
         self.end_session_pub = self.create_publisher(Bool, '/end_session', 10)
         self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
@@ -260,6 +261,12 @@ class WakeWordNode(Node):
         self.session_active = True
         
         self.get_logger().info(f'🟢 Session ACTIVE via "{model_name}" (score={score:.2f})')
+
+        wake_event = WakeWord()
+        wake_event.word = model_name
+        wake_event.score = float(score)
+        wake_event.timestamp = self.get_clock().now().to_msg()
+        self.wake_word_pub.publish(wake_event)
         
         # Publică pe /wake_detected
         wake_msg = Bool()

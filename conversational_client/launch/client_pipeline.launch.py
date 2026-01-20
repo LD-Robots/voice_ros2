@@ -2,11 +2,25 @@
 Launch file pentru client-side nodes.
 Pornește toate nodurile client pentru conversație vocală.
 """
+import os
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    pkg_share = get_package_share_directory('conversational_client')
+    models_dir = os.path.join(pkg_share, 'models')
+    
+    # Construim string-ul pentru custom_models
+    # Format: path:kind
+    hello_path = os.path.join(models_dir, 'hello_robot.onnx')
+    stop_path = os.path.join(models_dir, 'stop_robot.onnx')
+    goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
+    
+    # Definim modelele: hello=wake, stop/goodbye=stop
+    custom_models = f"{hello_path}:wake,{stop_path}:stop,{goodbye_path}:stop"
+
     return LaunchDescription([
         
         # Audio Capture (microfon)
@@ -24,8 +38,8 @@ def generate_launch_description():
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.5,
-                'wake_phrase': 'hello_robot',
+                'threshold': 0.65,  # Un pic mai strict pentru a evita false positives
+                'custom_models': custom_models,
             }]
         ),
         
@@ -37,6 +51,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'aggressiveness': 2,
+                'wake_word_enabled': True,
+                'session_timeout': 8.0,
             }]
         ),
         

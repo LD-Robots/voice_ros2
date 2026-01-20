@@ -18,7 +18,7 @@ EXPLICAȚIE:
 
 import rclpy
 from rclpy.node import Node
-from conversational_interfaces.msg import Audio
+from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool
 import numpy as np
 
@@ -54,10 +54,15 @@ class VADNode(Node):
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('aggressiveness', 2)  # 0-3, 3 = mai agresiv
         self.declare_parameter('energy_threshold', 500)  # Prag energie RMS
+        self.declare_parameter('wake_word_enabled', True)
+        self.declare_parameter('session_timeout', 8.0)
+
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.aggressiveness = self.get_parameter('aggressiveness').value
         self.energy_threshold = self.get_parameter('energy_threshold').value
+        self.wake_word_enabled = self.get_parameter('wake_word_enabled').value
+        self.session_timeout = self.get_parameter('session_timeout').value
         
         # ─────────────────────────────────────────────────────────
         # STARE
@@ -68,6 +73,9 @@ class VADNode(Node):
         self.min_speech_frames = 3        # Câte frame-uri pentru a confirma voce
         self.min_silence_frames = 10      # Câte frame-uri pentru a confirma tăcere
         self.is_robot_speaking = False    # True când robotul vorbește (TTS playback)
+        self.is_gate_open = not self.wake_word_enabled
+        self.session_timer = None
+        self.is_speaking = False
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER
@@ -84,6 +92,13 @@ class VADNode(Node):
             Bool,
             '/is_speaking',
             self.robot_speaking_callback,
+            10
+        )
+
+        self.wake_word_sub = self.create_subscription(
+            WakeWord,
+            '/wake_word',
+            self.wake_word_callback,
             10
         )
         
@@ -117,9 +132,40 @@ class VADNode(Node):
     def robot_speaking_callback(self, msg: Bool):
         """Callback pentru starea TTS playback."""
         self.is_robot_speaking = msg.data
+
+    def wake_word_callback(self, msg: WakeWord):
+        # Deschide poarta cand aude "hello robot"
+        self.get_logger().info(f"🔓 Wake Word Detected: '{msg.word}' - Opening Gate!")
+        self.is_gate_open = True
+        self._reset_session_timer()
+
+    def _reset_session_timer(self):
+        # Reseteaza cronometrul sesiunii
+        if self.session_timer:
+            self.session_timer.cancel()
+        self.session_timer = self.create_timer(self.session_timeout, self._on_session_timeout)
+
+    def _on_session_timeout(self):
+        # Inchide poarta cand expira timpul
+        self.get_logger().info("🔒 Session Timeout - Closing Gate.")
+        self.is_gate_open = False
+        self.is_speaking = False
+
+        # Anuntam ca s-a terminat vorbirea
+        msg = Bool()
+        msg.data = False
+        self.vad_pub.publish(msg)
+
+        if self.session_timer:
+            self.session_timer.cancel()
+            self.session_timer = None
     
     def audio_callback(self, msg: Audio):
         """Analizează fiecare chunk de audio pentru activitate vocală."""
+
+        # Daca poarta e inchisa, ignoram tot
+        if not self.is_gate_open:
+            return
         
         # Nu procesa VAD când robotul vorbește (previne false positives)
         if self.is_robot_speaking:
@@ -134,6 +180,10 @@ class VADNode(Node):
         if has_voice:
             self.speech_frames += 1
             self.silence_frames = 0
+
+            # Daca vorbim, resetam timer-ul
+            if self.is_gate_open:
+                self._reset_session_timer()
         else:
             self.silence_frames += 1
             self.speech_frames = 0
