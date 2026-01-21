@@ -80,7 +80,7 @@ def generate_launch_description():
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': 3,  # Device ID 3 - pulse (folosește microfonul selectat în Settings)
+                'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
             }]
         ),
         
@@ -91,7 +91,7 @@ def generate_launch_description():
             name='vad_node',
             output='screen',
             parameters=[{
-                'wake_word_enabled': False,   # Gate audio until wake word
+                'wake_word_enabled': True,   # Gate audio until wake word
                 'session_timeout': 8.0,      # Reset to standby after 8s silence
             }]
         ),
@@ -119,7 +119,7 @@ def generate_launch_description():
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.5,
+                'threshold': 0.45,
                 'custom_models': os.path.expanduser('~/ros2_ws/src/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
             }]
         ),
