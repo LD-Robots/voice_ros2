@@ -30,7 +30,7 @@ def generate_launch_description():
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': 3,  # Device ID 3 - pulse (folosește microfonul selectat în Settings)
+                'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
             }]
         ),
         
@@ -54,7 +54,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'aggressiveness': 2,
-                'wake_word_enabled': False,
+                'wake_word_enabled': True,
                 'session_timeout': 8.0,
             }]
         ),

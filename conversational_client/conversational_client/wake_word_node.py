@@ -192,29 +192,97 @@ class WakeWordNode(Node):
         
         # Adaugă la buffer
         self.audio_buffer.extend(audio.tolist())
+
+        # --- DEBUG: Comfirm audio reception ---
+        if not hasattr(self, 'audio_debug_count'): self.audio_debug_count = 0
+        self.audio_debug_count += 1
+        if self.audio_debug_count % 50 == 0:
+            self.get_logger().info(f'👂 WakeWordNode received {self.audio_debug_count} chunks. Buffer size: {len(self.audio_buffer)}')
+        # --------------------------------------
         
-        # OpenWakeWord cere minimum 400 samples (25ms la 16kHz)
-        MIN_SAMPLES = 400
+        # OpenWakeWord typically expects chunks of 1280 samples (80ms at 16kHz)
+        # for optimal performance (though it handles streaming internally).
+        MIN_SAMPLES = 1280
         
         if len(self.audio_buffer) >= MIN_SAMPLES:
-            # Ia primele MIN_SAMPLES din buffer
+            # Extract exactly MIN_SAMPLES
             audio_chunk = np.array(self.audio_buffer[:MIN_SAMPLES], dtype=np.int16)
-            # Păstrează restul în buffer
+            
+            # --- DEBUG: Save Audio to WAV for verification (DISABLED) ---
+            # if not hasattr(self, 'debug_wav_buffer'):
+            #     self.debug_wav_buffer = []
+
+            # # Capture first 3 seconds (16000 * 3 = 48000 samples)
+            # if len(self.debug_wav_buffer) < 48000:
+            #     self.debug_wav_buffer.extend(audio_chunk.tolist())
+            #     # self.get_logger().info(f'🎤 Debug buffer filling: {len(self.debug_wav_buffer)}/48000')
+                
+            #     if len(self.debug_wav_buffer) >= 48000:
+            #         try:
+            #             import soundfile as sf
+            #             wav_path = '/home/delia/ros2_ws/debug_wake_audio.wav'
+                        
+            #             # Convert to numpy int16 array explicitly
+            #             wav_data = np.array(self.debug_wav_buffer, dtype=np.int16)
+                        
+            #             # Verify it's not silence
+            #             rms_debug = np.sqrt(np.mean(wav_data.astype(np.float32)**2))
+            #             self.get_logger().info(f'🎤 Debug WAV RMS: {rms_debug:.2f}')
+                        
+            #             # Write with explicit subtype
+            #             sf.write(wav_path, wav_data, 16000, subtype='PCM_16')
+                        
+            #             self.get_logger().warn(f'💾 DEBUG WAV SAVED: {wav_path}')
+            #             self.get_logger().warn('👉 Please play this file to verify audio quality!')
+            #         except ImportError:
+            #             self.get_logger().error("Cannot save debug WAV: soundfile not installed")
+            #         except Exception as e:
+            #             self.get_logger().error(f"Error saving WAV: {e}")
+            # -------------------------------------------------
+
+            # Slide window: In standard OWW streaming, we usually feed chunks of 1280.
+            # We can either consume all 1280 (no overlap) or slide by a smaller step.
+            # The standard OWW `predict` method is stateful, so we just feed it sequential chunks.
+            # We will consume the whole chunk to keep it real-time and simple.
             self.audio_buffer = self.audio_buffer[MIN_SAMPLES:]
             
             if self.oww_model is not None:
                 try:
-                    # OpenWakeWord așteaptă audio normalizat float32
-                    audio_float = audio_chunk.astype(np.float32) / 32768.0
-                    
-                    # Procesează chunk-ul
-                    prediction = self.oww_model.predict(audio_float)
+                    # ✅ OpenWakeWord expects int16 audio directly!
+                    # Do NOT convert to float32 - that was causing near-zero scores
+                    prediction = self.oww_model.predict(audio_chunk)
                     
                     # Verifică scorurile pentru toate modelele
                     self._check_predictions(prediction)
+
+                    # --- DEBUG: Print scores every ~1 second (assuming ~25ms chunks) ---
+                    # 40 chunks * 25ms = 1000ms
+                    # Compute final_scores for logging
+                    final_scores = {}
+                    for label, score_obj in prediction.items():
+                        current_score = 0.0
+                        if isinstance(score_obj, dict):
+                             current_score = max(score_obj.values()) if score_obj else 0.0
+                        else:
+                             try:
+                                 current_score = float(score_obj)
+                             except:
+                                 current_score = 0.0
+                        final_scores[label] = current_score
+
+                    # Log only hello_robot score as requested
+                    if 'hello_robot' in final_scores:
+                         hr_score = final_scores['hello_robot']
+                         self.get_logger().info(f'👀 Score (hello_robot): {hr_score:.4f}')
+                    # ------------------------------------------------------------------
                     
                 except Exception as e:
                     self.get_logger().error(f'OpenWakeWord prediction error: {e}')
+            else:
+                # Model is None
+                if not hasattr(self, 'model_none_warned'):
+                    self.get_logger().error('❌ oww_model is NONE! Initialization failed?')
+                    self.model_none_warned = True
     
     def _check_predictions(self, prediction: dict):
         """Verifică predicțiile și declanșează acțiuni."""
@@ -263,9 +331,9 @@ class WakeWordNode(Node):
         self.get_logger().info(f'🟢 Session ACTIVE via "{model_name}" (score={score:.2f})')
 
         wake_event = WakeWord()
+        wake_event.header.stamp = self.get_clock().now().to_msg()
         wake_event.word = model_name
         wake_event.score = float(score)
-        wake_event.timestamp = self.get_clock().now().to_msg()
         self.wake_word_pub.publish(wake_event)
         
         # Publică pe /wake_detected
