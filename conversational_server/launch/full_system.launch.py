@@ -79,6 +79,9 @@ def generate_launch_description():
             executable='audio_capture_node',
             name='audio_capture_node',
             output='screen',
+            parameters=[{
+                'device_index': 3,  # Device ID 3 - pulse (folosește microfonul selectat în Settings)
+            }]
         ),
         
         # VAD (Voice Activity Detection)
@@ -87,6 +90,10 @@ def generate_launch_description():
             executable='vad_node',
             name='vad_node',
             output='screen',
+            parameters=[{
+                'wake_word_enabled': False,   # Gate audio until wake word
+                'session_timeout': 8.0,      # Reset to standby after 8s silence
+            }]
         ),
         
         # Audio Playback (difuzor)

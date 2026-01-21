@@ -101,8 +101,11 @@ class AudioCaptureNode(Node):
                     usb_found = False
                     first_input_device = None
                     
+                    self.get_logger().info("--- 📋 AVAILABLE AUDIO DEVICES 📋 ---")
                     for i in range(self.audio.get_device_count()):
                         info = self.audio.get_device_info_by_index(i)
+                        self.get_logger().info(f"  Device {i}: {info['name']} (InChannels={info['maxInputChannels']})")
+                        
                         if info['maxInputChannels'] > 0:  # E input device
                             # Păstrează primul input device ca fallback
                             if first_input_device is None:
