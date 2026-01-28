@@ -193,12 +193,7 @@ class WakeWordNode(Node):
         # Adaugă la buffer
         self.audio_buffer.extend(audio.tolist())
 
-        # --- DEBUG: Comfirm audio reception ---
-        if not hasattr(self, 'audio_debug_count'): self.audio_debug_count = 0
-        self.audio_debug_count += 1
-        if self.audio_debug_count % 50 == 0:
-            self.get_logger().info(f'👂 WakeWordNode received {self.audio_debug_count} chunks. Buffer size: {len(self.audio_buffer)}')
-        # --------------------------------------
+
         
         # OpenWakeWord typically expects chunks of 1280 samples (80ms at 16kHz)
         # for optimal performance (though it handles streaming internally).
@@ -255,26 +250,7 @@ class WakeWordNode(Node):
                     # Verifică scorurile pentru toate modelele
                     self._check_predictions(prediction)
 
-                    # --- DEBUG: Print scores every ~1 second (assuming ~25ms chunks) ---
-                    # 40 chunks * 25ms = 1000ms
-                    # Compute final_scores for logging
-                    final_scores = {}
-                    for label, score_obj in prediction.items():
-                        current_score = 0.0
-                        if isinstance(score_obj, dict):
-                             current_score = max(score_obj.values()) if score_obj else 0.0
-                        else:
-                             try:
-                                 current_score = float(score_obj)
-                             except:
-                                 current_score = 0.0
-                        final_scores[label] = current_score
 
-                    # Log only hello_robot score as requested
-                    if 'hello_robot' in final_scores:
-                         hr_score = final_scores['hello_robot']
-                         self.get_logger().info(f'👀 Score (hello_robot): {hr_score:.4f}')
-                    # ------------------------------------------------------------------
                     
                 except Exception as e:
                     self.get_logger().error(f'OpenWakeWord prediction error: {e}')

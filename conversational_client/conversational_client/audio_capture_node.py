@@ -136,11 +136,6 @@ class AudioCaptureNode(Node):
             self.audio_pub.publish(msg)
             
             self.frame_count += 1
-            
-            # Periodic logging
-            if self.frame_count % 50 == 0:
-                rms = np.sqrt(np.mean(audio_f32**2)) * 32767.0 # Scale RMS to int16 range for readable logs
-                self.get_logger().info(f"📊 Audio Level (RMS): {rms:.2f} (Frames: {self.frame_count})")
                 
         except Exception as e:
             self.get_logger().error(f"Callback error: {e}")
