@@ -102,6 +102,14 @@ class VADNode(Node):
             10
         )
         
+        # Subscriber pentru starea sesiunii (de la wake_word_node)
+        self.session_sub = self.create_subscription(
+            Bool,
+            '/session_active',
+            self.session_callback,
+            10
+        )
+        
         # ─────────────────────────────────────────────────────────
         # PUBLISHER
         # ─────────────────────────────────────────────────────────
@@ -146,6 +154,33 @@ class VADNode(Node):
             if self.is_gate_open:
                 self._reset_session_timer()
                 self.get_logger().debug('▶️ Session timer resumed (robot stopped)')
+
+    def session_callback(self, msg: Bool):
+        """Callback pentru starea sesiunii (de la wake_word_node)."""
+        if msg.data:
+            # Session active - open gate
+            if not self.is_gate_open:
+                self.get_logger().info('🔓 Session started - Opening Gate!')
+                self.is_gate_open = True
+                self._reset_session_timer()
+        else:
+            # Session ended - close gate
+            if self.is_gate_open:
+                self.get_logger().info('🔒 Session ended - Closing Gate!')
+                self.is_gate_open = False
+                self.is_speaking = False
+                self.speech_frames = 0
+                self.silence_frames = 0
+                
+                # Stop session timer
+                if self.session_timer:
+                    self.session_timer.cancel()
+                    self.session_timer = None
+                
+                # Publish voice_activity=False to stop ASR
+                msg_out = Bool()
+                msg_out.data = False
+                self.vad_pub.publish(msg_out)
 
     def wake_word_callback(self, msg: WakeWord):
         # Deschide poarta cand aude "hello robot"
