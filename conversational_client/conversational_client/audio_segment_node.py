@@ -160,6 +160,7 @@ class AudioSegmentNode(Node):
         
         # Când user-ul termină de vorbit, trimite segmentul
         if not msg.data and self.was_speaking:
+            self.get_logger().info(f'📤 VAD speech end - sending segment (session_active={self.session_active})')
             self._send_segment()
     
     def audio_callback(self, msg: Audio):
@@ -190,6 +191,12 @@ class AudioSegmentNode(Node):
     
     def _send_segment(self):
         """Trimite segmentul audio la server."""
+        
+        # CRITICAL: Don't send if session ended (race condition fix)
+        if not self.session_active:
+            self.get_logger().warn(f'🚫 Segment BLOCKED - session not active (had {len(self.audio_buffer)} samples)')
+            self.audio_buffer = []
+            return
         
         if not self.audio_buffer:
             self.get_logger().warn('Empty buffer, skipping')
