@@ -124,6 +124,7 @@ class TTSNode(Node):
         self.is_speaking = False
         self.current_session = None
         self.stop_requested = False
+        self.stop_epoch = 0  # Epoch counter - increments on stop(), chunks with old epoch are skipped
         
         # Subscriber pentru comenzi cache (ack, goodbye, etc)
         from std_msgs.msg import String
@@ -313,18 +314,19 @@ class TTSNode(Node):
                         if len(audio_data.shape) > 1:
                             audio_data = audio_data[:, 0]
                         
-                        # Pune în audio_queue (va bloca dacă e plin = double buffer full)
+                        # Pune în audio_queue CU EPOCH (va bloca dacă e plin = double buffer full)
+                        current_epoch = self.stop_epoch
                         if not self.stop_requested:
-                            self.audio_queue.put((audio_data, sample_rate, is_final, session_id), timeout=5.0)
-                            self.get_logger().debug(f'📦 Buffered audio ({len(audio_data)} samples)')
+                            self.audio_queue.put((audio_data, sample_rate, is_final, session_id, current_epoch), timeout=5.0)
+                            self.get_logger().debug(f'📦 Buffered audio ({len(audio_data)} samples, epoch={current_epoch})')
                     
                     except Exception as e:
                         self.get_logger().error(f'Synthesis error: {e}')
                 
                 elif is_final:
-                    # Semnalizează sfârșitul în audio_queue
+                    # Semnalizează sfârșitul în audio_queue (cu epoch)
                     try:
-                        self.audio_queue.put((None, 0, True, session_id), timeout=1.0)
+                        self.audio_queue.put((None, 0, True, session_id, self.stop_epoch), timeout=1.0)
                     except queue.Full:
                         pass
                     
@@ -341,7 +343,12 @@ class TTSNode(Node):
         
         while self.running:
             try:
-                audio_data, sample_rate, is_final, session_id = self.audio_queue.get(timeout=0.1)
+                audio_data, sample_rate, is_final, session_id, chunk_epoch = self.audio_queue.get(timeout=0.1)
+                
+                # EPOCH CHECK: Skip chunks from before stop() was called
+                if chunk_epoch != self.stop_epoch:
+                    self.get_logger().debug(f'🚫 Skipping old chunk (epoch {chunk_epoch} != current {self.stop_epoch})')
+                    continue
                 
                 if self.stop_requested:
                     continue
@@ -439,10 +446,12 @@ class TTSNode(Node):
     
     def stop(self):
         """Oprește TTS-ul curent (pentru barge-in)."""
+        # INCREMENT EPOCH FIRST - all queued chunks become invalid
+        self.stop_epoch += 1
         self.stop_requested = True
         self._clear_queues()
         self.is_speaking = False
-        self.get_logger().info('⏹️ TTS stopped')
+        self.get_logger().info(f'⏹️ TTS stopped (epoch now {self.stop_epoch})')
         self.stop_requested = False
     
     def destroy_node(self):
