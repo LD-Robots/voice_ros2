@@ -15,11 +15,14 @@ def generate_launch_description():
     # Construim string-ul pentru custom_models
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
-    stop_path = os.path.join(models_dir, 'stop_robot.onnx')
+    stop_path = os.path.join(models_dir, 'stop_robot_oww.onnx')  # "stop robot" antrenat cu OpenWakeWord
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
     # Definim modelele: hello=wake, stop/goodbye=stop
     custom_models = f"{hello_path}:wake,{stop_path}:stop,{goodbye_path}:stop"
+    
+    # Threshold-uri individuale per model (stop_robot_oww mai mic pentru detectare mai bună)
+    model_thresholds = "hello_robot:0.30,stop_robot_oww:0.40,goodbye_robot:0.50"
 
     return LaunchDescription([
         
@@ -34,15 +37,17 @@ def generate_launch_description():
             }]
         ),
         
-        # Wake Word (detectare "hello robot")
+        # Wake Word (detectare "hello robot") + Stop Keyword ("stop")
         Node(
             package='conversational_client',
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.45,  # Mai sensibil pentru testare
+                'threshold': 0.5,  # Default threshold
+                'cooldown_ms': 1500,
                 'custom_models': custom_models,
+                'model_thresholds': model_thresholds,
             }]
         ),
         

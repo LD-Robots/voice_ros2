@@ -276,10 +276,14 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         session_id = str(uuid.uuid4())[:8]
         
         try:
-            # Adaugă mesajul utilizatorului în istoric
+            # Adaugă mesajul utilizatorului în istoric (cu instrucțiune de limbă)
+            # Aceasta forțează modelul să răspundă în limba corectă
+            lang_instruction = "[RESPOND IN ENGLISH]" if not user_lang.startswith('ro') else "[RĂSPUNDE ÎN ROMÂNĂ]"
+            user_message_with_lang = f"{lang_instruction} {user_text}"
+            
             self.conversation_history.append({
                 'role': 'user',
-                'content': user_text
+                'content': user_message_with_lang
             })
             
             # Construiește mesajele pentru API

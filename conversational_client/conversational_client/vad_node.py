@@ -131,7 +131,21 @@ class VADNode(Node):
     
     def robot_speaking_callback(self, msg: Bool):
         """Callback pentru starea TTS playback."""
+        was_speaking = self.is_robot_speaking
         self.is_robot_speaking = msg.data
+        
+        # Când robotul începe să vorbească, oprim timer-ul de timeout
+        if self.is_robot_speaking and not was_speaking:
+            if self.session_timer:
+                self.session_timer.cancel()
+                self.session_timer = None
+                self.get_logger().debug('⏸️ Session timer paused (robot speaking)')
+        
+        # Când robotul termină de vorbit, repornim timer-ul
+        elif not self.is_robot_speaking and was_speaking:
+            if self.is_gate_open:
+                self._reset_session_timer()
+                self.get_logger().debug('▶️ Session timer resumed (robot stopped)')
 
     def wake_word_callback(self, msg: WakeWord):
         # Deschide poarta cand aude "hello robot"
@@ -146,6 +160,11 @@ class VADNode(Node):
         self.session_timer = self.create_timer(self.session_timeout, self._on_session_timeout)
 
     def _on_session_timeout(self):
+        # Nu închide poarta dacă robotul vorbește
+        if self.is_robot_speaking:
+            self.get_logger().debug('⏳ Session timeout skipped (robot still speaking)')
+            return
+            
         # Inchide poarta cand expira timpul
         self.get_logger().info("🔒 Session Timeout - Closing Gate.")
         self.is_gate_open = False

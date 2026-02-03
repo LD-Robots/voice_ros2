@@ -112,27 +112,35 @@ def generate_launch_description():
             output='screen',
         ),
         
-        # Wake Word (detectare "Hey robot")
+        # Wake Word + Stop Keyword (OpenWakeWord unified)
+        # Detectează: "hello robot" (wake) + "stop" (stop)
         Node(
             package='conversational_client',
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.45,
-                'custom_models': os.path.expanduser('~/ros2_ws/src/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
+                'threshold': 0.5,  # Default threshold
+                'cooldown_ms': 1500,
+                # Format: "path:kind" - 'wake' pentru activare, 'stop' pentru oprire
+                'custom_models': ','.join([
+                    os.path.expanduser('~/ros2_ws/src/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
+                    os.path.expanduser('~/ros2_ws/src/voice_ros2/conversational_client/models/stop.onnx:stop'),
+                ]),
+                # Threshold-uri individuale per model
+                'model_thresholds': 'hello_robot:0.30,stop:0.5',
             }]
         ),
         
-        # Stop Keyword (detectare "stop" în timpul TTS)
-        Node(
-            package='conversational_client',
-            executable='stop_keyword_node',
-            name='stop_keyword_node',
-            output='screen',
-            parameters=[{
-                'model_path': os.path.expanduser('~/ros2_ws/src/voice_ros2/voices/stop_keyword.onnx'),
-                'enabled': False,  # Disabled - .onnx.data file missing
-            }]
-        ),
+        # Stop Keyword Node (DISABLED - folosim OpenWakeWord în wake_word_node)
+        # Node(
+        #     package='conversational_client',
+        #     executable='stop_keyword_node',
+        #     name='stop_keyword_node',
+        #     output='screen',
+        #     parameters=[{
+        #         'model_path': os.path.expanduser('~/ros2_ws/src/voice_ros2/voices/stop_keyword.onnx'),
+        #         'enabled': False,
+        #     }]
+        # ),
     ])
