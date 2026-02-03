@@ -312,10 +312,17 @@ class WakeWordNode(Node):
                 self.get_logger().info(f'🔔 Detected "{model_name}" (kind={kind}, score={score:.2f})')
                 
                 if kind == 'stop':
+                    # STOP total + End Session (ex: "goodbye robot")
                     self._end_session(model_name, score)
+                elif kind == 'barge_in':
+                    # DOAR STOP TTS, sesiunea rămâne activă (ex: "stop robot")
+                    self._trigger_barge_in(model_name, score)
                 else:  # wake
                     if not self.session_active:
                         self._activate_session(model_name, score)
+                    else:
+                        # Dacă e deja activă, putem face un re-activate/ack opțional
+                        self.get_logger().info('ℹ️ Session already active (wake word ignored)')
     
     # ═══════════════════════════════════════════════════════════════════
     # ACTIVARE SESIUNE (wake word)
@@ -347,6 +354,22 @@ class WakeWordNode(Node):
         tts_cmd.data = 'ack_en'
         self.tts_cmd_pub.publish(tts_cmd)
     
+    # ═══════════════════════════════════════════════════════════════════
+    # OPRIRE TTS (BARGE-IN ONLY)
+    # ═══════════════════════════════════════════════════════════════════
+    def _trigger_barge_in(self, model_name: str, score: float):
+        """Oprește doar TTS-ul, sesiunea rămâne activă."""
+        self.get_logger().info(f'✋ BARGE-IN via "{model_name}" (score={score:.2f}) - Stopping TTS only')
+        
+        # Oprește TTS imediat
+        stop_msg = Bool()
+        stop_msg.data = True
+        self.tts_stop_pub.publish(stop_msg)
+        
+        # OPȚIONAL: Reset VAD e.g. dacă vrem să fim siguri
+        # Dar VAD-ul oricum ascultă cât timp session_active=True
+
+
     # ═══════════════════════════════════════════════════════════════════
     # OPRIRE SESIUNE (stop/goodbye word)
     # ═══════════════════════════════════════════════════════════════════

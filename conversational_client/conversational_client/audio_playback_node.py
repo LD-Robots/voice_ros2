@@ -63,6 +63,9 @@ class AudioPlaybackNode(Node):
         self.audio_buffer = deque(maxlen=100)  # Max 100 chunks (~2 secunde)
         self.is_playing = False
         self._stream_lock = threading.Lock()  # Lock pentru thread-safety la stop
+        self._ignore_until = 0.0               # Timestamp until which to ignore new audio (for barge-in)
+        self._stop_requested = False           # Flag for immediate stop during playback
+        self._playback_chunk_size = 1024       # Small chunks for responsive stop (~42ms at 24kHz)
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - ascultăm pe topic-ul /audio_out
@@ -113,6 +116,14 @@ class AudioPlaybackNode(Node):
             10
         )
         
+        # ALSO listen on /tts_stop (from wake_word_node barge-in)
+        self.tts_stop_sub = self.create_subscription(
+            Bool,
+            '/tts_stop',
+            self.stop_callback,
+            10
+        )
+        
         # ─────────────────────────────────────────────────────────
         # PUBLISHER PENTRU is_speaking - publică starea TTS
         # ─────────────────────────────────────────────────────────
@@ -153,8 +164,17 @@ class AudioPlaybackNode(Node):
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to recreate stream: {e}')
         
+        # BARGE-IN: Ignorăm audio nou dacă suntem în cooldown (după stop)
+        import time
+        if time.time() < self._ignore_until:
+            self.get_logger().debug('🚫 Ignoring audio (barge-in cooldown active)')
+            return
+        
         # Convertim lista de int16 la numpy array
         audio_data = np.array(msg.data, dtype=np.int16)
+        
+        # Clear stop flag - new audio means we should play again
+        self._stop_requested = False
         
         # Punem chunk-ul în buffer
         self.audio_buffer.append(audio_data)
@@ -170,30 +190,60 @@ class AudioPlaybackNode(Node):
     def _playback_loop(self):
         """
         Acest loop rulează într-un thread separat.
-        Ia audio din buffer și îl redă pe speaker.
+        Ia audio din buffer și îl redă pe speaker îN BUCĂȚI MICI pentru stop instant.
         """
         import time
         
         while self.running:
+            # Check stop flag first
+            if self._stop_requested:
+                time.sleep(0.01)
+                continue
+            
+            chunk = None
             with self._stream_lock:
                 if self.audio_buffer and self.stream is not None:
                     # Ia primul chunk din buffer
                     chunk = self.audio_buffer.popleft()
-                    # Redă-l pe speaker
-                    try:
-                        self.stream.write(chunk.tobytes())
-                    except Exception:
-                        pass  # Stream s-ar putea să fi fost oprit
                 else:
                     # Buffer gol - așteptăm puțin
                     self.is_playing = False
-            time.sleep(0.001)  # 1ms pauză pentru a permite lock-ul
+            
+            if chunk is not None:
+                # Redă chunk-ul îN BUCĂȚI MICI pentru a permite stop instant
+                chunk_bytes = chunk.tobytes()
+                bytes_per_sample = 2  # int16
+                piece_size = self._playback_chunk_size * bytes_per_sample  # ~1024 samples = 42ms
+                offset = 0
+                
+                while offset < len(chunk_bytes):
+                    # Check stop flag between each small piece
+                    if self._stop_requested:
+                        self.get_logger().info('⏹️ Playback interrupted mid-chunk!')
+                        break
+                    
+                    # Get next small piece
+                    piece = chunk_bytes[offset:offset + piece_size]
+                    offset += piece_size
+                    
+                    # Play this small piece
+                    try:
+                        with self._stream_lock:
+                            if self.stream is not None:
+                                self.stream.write(piece)
+                    except Exception:
+                        break  # Stream might have been stopped
+            else:
+                time.sleep(0.001)  # 1ms pause when buffer empty
     
     # ═══════════════════════════════════════════════════════════════════
     # STOP PLAYBACK - oprește playback când user vorbește peste (barge-in)
     # ═══════════════════════════════════════════════════════════════════
     def stop_playback(self):
         """Oprește playback-ul curent IMEDIAT (pentru barge-in)."""
+        # 0. Set stop flag FIRST - interrupts playback loop immediately
+        self._stop_requested = True
+        
         # 1. Golește buffer-ul
         self.audio_buffer.clear()
         self.is_playing = False
@@ -216,7 +266,11 @@ class AudioPlaybackNode(Node):
                 except Exception as e:
                     self.get_logger().error(f'❌ Error stopping stream: {e}')
         
-        self.get_logger().info('⏹️ Playback stopped immediately')
+        # 4. Setează cooldown - ignoră audio nou pentru 1.5s (evită race condition cu TTS double-buffer)
+        import time
+        self._ignore_until = time.time() + 1.5
+        
+        self.get_logger().info('⏹️ Playback stopped immediately (ignoring new audio for 1.5s)')
     
     def stop_callback(self, msg: Bool):
         """Callback pentru comanda de stop (de la barge_in_node)."""

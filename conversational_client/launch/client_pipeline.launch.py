@@ -18,8 +18,8 @@ def generate_launch_description():
     stop_path = os.path.join(models_dir, 'stop_robot_oww.onnx')  # "stop robot" antrenat cu OpenWakeWord
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
-    # Definim modelele: hello=wake, stop/goodbye=stop
-    custom_models = f"{hello_path}:wake,{stop_path}:stop,{goodbye_path}:stop"
+    # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
+    custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
     # Threshold-uri individuale per model (stop_robot_oww mai mic pentru detectare mai bună)
     model_thresholds = "hello_robot:0.30,stop_robot_oww:0.40,goodbye_robot:0.50"
