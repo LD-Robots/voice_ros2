@@ -37,6 +37,7 @@ def generate_launch_description():
                 'model_size': LaunchConfiguration('asr_model_size'),
                 'device': 'cpu',
                 'compute_type': 'int8',
+                'language': 'ro_en',  # Force EN/RO detection only
             }]
         ),
         

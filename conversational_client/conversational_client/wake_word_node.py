@@ -193,12 +193,9 @@ class WakeWordNode(Node):
         # Adaugă la buffer
         self.audio_buffer.extend(audio.tolist())
 
-        # --- DEBUG: Comfirm audio reception ---
+        # Track chunk count for periodic logging
         if not hasattr(self, 'audio_debug_count'): self.audio_debug_count = 0
         self.audio_debug_count += 1
-        if self.audio_debug_count % 50 == 0:
-            self.get_logger().info(f'👂 WakeWordNode received {self.audio_debug_count} chunks. Buffer size: {len(self.audio_buffer)}')
-        # --------------------------------------
         
         # OpenWakeWord typically expects chunks of 1280 samples (80ms at 16kHz)
         # for optimal performance (though it handles streaming internally).
@@ -270,11 +267,10 @@ class WakeWordNode(Node):
                                  current_score = 0.0
                         final_scores[label] = current_score
 
-                    # Log only hello_robot score as requested
-                    if 'hello_robot' in final_scores:
-                         hr_score = final_scores['hello_robot']
-                         self.get_logger().info(f'👀 Score (hello_robot): {hr_score:.4f}')
-                    # ------------------------------------------------------------------
+                    # Log ALL model scores every ~2 seconds (25 chunks at 80ms each)
+                    if self.audio_debug_count % 25 == 0:
+                        scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in final_scores.items()])
+                        self.get_logger().info(f'👀 Scores: {scores_str}')
                     
                 except Exception as e:
                     self.get_logger().error(f'OpenWakeWord prediction error: {e}')
