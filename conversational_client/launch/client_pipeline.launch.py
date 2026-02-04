@@ -15,14 +15,16 @@ def generate_launch_description():
     # Construim string-ul pentru custom_models
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
-    stop_path = os.path.join(models_dir, 'stop_robot_oww.onnx')  # "stop robot" antrenat cu OpenWakeWord
+    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # testăm modelul original
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
     # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
     custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
     # Threshold-uri individuale per model (stop_robot_oww mai mic pentru detectare mai bună)
-    model_thresholds = "hello_robot:0.30,stop_robot_oww:0.40,goodbye_robot:0.50"
+    # stop_robot_oww mai mic (0.25) pentru detectare chiar și când robotul vorbește
+    # stop_robot mai mic (0.15) pentru detectare chiar și când robotul vorbește
+    model_thresholds = "hello_robot:0.30,stop_robot:0.15,goodbye_robot:0.50"
 
     return LaunchDescription([
         
@@ -76,15 +78,21 @@ def generate_launch_description():
             }]
         ),
         
-        # Barge-in (detectare "stop" keyword)
+        # Barge-in (detectare voce + PyTorch stop keyword)
         Node(
             package='conversational_client',
             executable='barge_in_node',
             name='barge_in_node',
             output='screen',
             parameters=[{
-                'prob_threshold': 0.96,
-                'hits_required': 2,
+                # Voice-based barge-in params (original)
+                'min_voice_ms': 600,
+                # PyTorch stop keyword detector
+                'stop_enabled': True,
+                'stop_model_path': os.path.join(models_dir, 'stop_keyword.onnx'),
+                'stop_prob_threshold': 0.8,
+                'stop_logit_margin': 0.5,
+                'stop_hits_required': 2,
             }]
         ),
         
