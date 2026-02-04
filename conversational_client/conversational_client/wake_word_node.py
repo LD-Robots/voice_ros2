@@ -83,8 +83,10 @@ class WakeWordNode(Node):
         
         # Parse custom model paths
         if custom_models_str:
+            self.get_logger().info(f'📦 Parsing custom_models: {custom_models_str}')
             for entry in custom_models_str.split(','):
                 entry = entry.strip()
+                self.get_logger().info(f'  → Entry: {entry}')
                 if ':' in entry:
                     parts = entry.rsplit(':', 1)
                     path_str = parts[0]
