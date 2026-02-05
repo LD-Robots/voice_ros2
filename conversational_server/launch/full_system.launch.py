@@ -56,6 +56,7 @@ def generate_launch_description():
                 'model': LaunchConfiguration('llm_model'),
                 'max_tokens': 150,
                 'temperature': 0.7,
+                'min_chunk_chars': 20,  # Smaller chunks = faster initial response
             }]
         ),
         
@@ -68,6 +69,7 @@ def generate_launch_description():
             parameters=[{
                 'voice_en': 'en-GB-RyanNeural',  # British male voice (Ryan)
                 'voice_ro': 'ro-RO-AlinaNeural',
+                'buffer_size': 1,  # Start playback immediately (was 2)
             }]
         ),
         

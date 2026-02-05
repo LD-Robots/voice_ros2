@@ -66,6 +66,8 @@ class AudioPlaybackNode(Node):
         self._ignore_until = 0.0               # Timestamp until which to ignore new audio (for barge-in)
         self._stop_requested = False           # Flag for immediate stop during playback
         self._playback_chunk_size = 1024       # Small chunks for responsive stop (~42ms at 24kHz)
+        self._last_audio_time = 0.0            # Timestamp of last audio received (for grace period)
+        self._speaking_grace_period = 2.0      # Keep is_speaking True for 2s after last audio
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - ascultăm pe topic-ul /audio_out
@@ -176,6 +178,10 @@ class AudioPlaybackNode(Node):
         # Clear stop flag - new audio means we should play again
         self._stop_requested = False
         
+        # Track last audio time for grace period
+        import time
+        self._last_audio_time = time.time()
+        
         # Punem chunk-ul în buffer
         self.audio_buffer.append(audio_data)
         self.is_playing = True
@@ -282,7 +288,12 @@ class AudioPlaybackNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     def _publish_speaking_state(self):
         """Publică starea is_speaking pe topic (doar când se schimbă)."""
-        current_state = self.is_playing
+        import time
+        
+        # Calculate current state with grace period
+        # Stay "speaking" for grace period after last audio (covers gaps between chunks)
+        in_grace_period = (time.time() - self._last_audio_time) < self._speaking_grace_period
+        current_state = self.is_playing or (in_grace_period and self._last_audio_time > 0)
         
         # Publică doar când starea se schimbă (optimizare)
         if current_state != self._last_speaking_state:
