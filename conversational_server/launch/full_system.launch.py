@@ -14,7 +14,7 @@ def generate_launch_description():
         # ========== ARGUMENTE ==========
         DeclareLaunchArgument(
             'asr_model_size',
-            default_value='small',
+            default_value='medium',  # Upgraded from 'small' for better accuracy
             description='Whisper model size'
         ),
         DeclareLaunchArgument(
@@ -30,7 +30,6 @@ def generate_launch_description():
         
         # ========== SERVER NODES ==========
         
-        # ASR Node
         Node(
             package='conversational_server',
             executable='asr_node',
@@ -41,6 +40,7 @@ def generate_launch_description():
                 'device': 'cpu',
                 'compute_type': 'int8',
                 'language': 'ro_en',  # Enable Romanian/English detection
+                'beam_size': 8,  # Higher = more accurate (default was 5)
                 'initial_prompt': 'A bilingual conversation in Romanian and English. O conversație bilingvă.',
             }]
         ),
@@ -92,7 +92,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'wake_word_enabled': True,   # Gate audio until wake word
-                'session_timeout': 8.0,      # Reset to standby after 8s silence
+                'session_timeout': 30.0,     # Reset to standby after 30s silence (was 8s)
             }]
         ),
         

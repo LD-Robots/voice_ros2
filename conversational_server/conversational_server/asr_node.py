@@ -183,8 +183,8 @@ class ASRNode(Node):
             temperature=0.0,
             vad_filter=use_vad,
             vad_parameters={"min_silence_duration_ms": self.vad_min_silence_ms} if use_vad else None,
-            no_speech_threshold=0.6,
-            log_prob_threshold=-0.5,
+            no_speech_threshold=0.5,  # Lower = less likely to skip valid speech
+            log_prob_threshold=-0.7,  # Lower = accept lower confidence segments
             condition_on_previous_text=False,
         )
         segs = list(segments)
