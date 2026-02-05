@@ -70,7 +70,7 @@ class VADNode(Node):
         self.is_speaking = False          # Starea curentă
         self.speech_frames = 0            # Câte frame-uri consecutive cu voce
         self.silence_frames = 0           # Câte frame-uri consecutive fără voce
-        self.min_speech_frames = 3        # Câte frame-uri pentru a confirma voce
+        self.min_speech_frames = 5        # Câte frame-uri pentru a confirma voce (mărit pentru mai puține false positives)
         self.min_silence_frames = 10      # Câte frame-uri pentru a confirma tăcere
         self.is_robot_speaking = False    # True când robotul vorbește (TTS playback)
         self.is_gate_open = not self.wake_word_enabled
@@ -132,6 +132,33 @@ class VADNode(Node):
             self.get_logger().info(f'🎯 VAD Node started (energy threshold={self.energy_threshold})')
         
         self.frame_count = 0
+        
+        # Timer pentru reminder "READY TO LISTEN"
+        self.reminder_timer = None
+    
+    def _start_reminder_timer(self):
+        """Pornește timer-ul de reminder periodic."""
+        if self.reminder_timer:
+            self.reminder_timer.cancel()
+        # Reminder la fiecare 3 secunde
+        self.reminder_timer = self.create_timer(3.0, self._on_reminder)
+        # Log imediat prima dată
+        self.get_logger().info('🎤 READY TO LISTEN - speak now!')
+    
+    def _stop_reminder_timer(self):
+        """Oprește timer-ul de reminder."""
+        if self.reminder_timer:
+            self.reminder_timer.cancel()
+            self.reminder_timer = None
+    
+    def _on_reminder(self):
+        """Callback pentru reminder periodic."""
+        # Doar dacă poarta e deschisă și robotul nu vorbește
+        if self.is_gate_open and not self.is_robot_speaking and not self.is_speaking:
+            self.get_logger().info('🎤 READY TO LISTEN - speak now!')
+        else:
+            # Oprește timer-ul dacă condițiile nu mai sunt îndeplinite
+            self._stop_reminder_timer()
     
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACK AUDIO
@@ -142,18 +169,19 @@ class VADNode(Node):
         was_speaking = self.is_robot_speaking
         self.is_robot_speaking = msg.data
         
-        # Când robotul începe să vorbească, oprim timer-ul de timeout
+        # Când robotul începe să vorbească, oprim timer-ul de timeout și reminder-ul
         if self.is_robot_speaking and not was_speaking:
+            self._stop_reminder_timer()
             if self.session_timer:
                 self.session_timer.cancel()
                 self.session_timer = None
-                self.get_logger().debug('⏸️ Session timer paused (robot speaking)')
+            self.get_logger().info('🤖 Robot is SPEAKING - please wait...')
         
-        # Când robotul termină de vorbit, repornim timer-ul
+        # Când robotul termină de vorbit, repornim timer-ul și reminder-ul
         elif not self.is_robot_speaking and was_speaking:
             if self.is_gate_open:
                 self._reset_session_timer()
-                self.get_logger().debug('▶️ Session timer resumed (robot stopped)')
+                self._start_reminder_timer()
 
     def session_callback(self, msg: Bool):
         """Callback pentru starea sesiunii (de la wake_word_node)."""
@@ -247,10 +275,14 @@ class VADNode(Node):
         
         if not self.is_speaking and self.speech_frames >= self.min_speech_frames:
             self.is_speaking = True
+            self._stop_reminder_timer()  # Oprește reminder când user vorbește
             self.get_logger().info('🗣️ Voice DETECTED - user is speaking')
         elif self.is_speaking and self.silence_frames >= self.min_silence_frames:
             self.is_speaking = False
             self.get_logger().info('🤫 Voice ENDED - silence detected')
+            # Repornește reminder-ul dacă suntem încă în modul listening
+            if self.is_gate_open and not self.is_robot_speaking:
+                self._start_reminder_timer()
         
         # Publică starea
         msg_out = Bool()
