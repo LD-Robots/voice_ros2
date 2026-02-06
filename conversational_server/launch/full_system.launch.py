@@ -112,10 +112,20 @@ def generate_launch_description():
             executable='barge_in_node',
             name='barge_in_node',
             output='screen',
+            parameters=[{
+                # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
+                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
+                'stop_enabled': False,  # DEZACTIVAT - dă false positives, folosim OWW stop_robot.onnx
+                'stop_prob_threshold': 0.95,  # Foarte mare - doar detecții clare
+                'stop_logit_margin': 1.0,     # Marjă mare
+                'stop_hits_required': 2,      # 2 detectări consecutive
+                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
+            }]
         ),
         
         # Wake Word + Stop Keyword (OpenWakeWord unified)
-        # Detectează: "hello robot" (wake) + "stop" (stop)
+        # Detectează: "hello robot" (wake), "stop robot" (barge_in), "goodbye robot" (stop)
         Node(
             package='conversational_client',
             executable='wake_word_node',
@@ -124,13 +134,14 @@ def generate_launch_description():
             parameters=[{
                 'threshold': 0.5,  # Default threshold
                 'cooldown_ms': 1500,
-                # Format: "path:kind" - 'wake' pentru activare, 'stop' pentru oprire
+                # Format: "path:kind" - 'wake' pentru activare, 'barge_in' pentru stop TTS, 'stop' pentru end session
                 'custom_models': ','.join([
-                    os.path.expanduser('~/ros2_ws/src/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
-                    os.path.expanduser('~/ros2_ws/src/voice_ros2/conversational_client/models/stop.onnx:stop'),
+                    os.path.expanduser('~/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
+                    os.path.expanduser('~/voice_ros2/conversational_client/models/stop_robot.onnx:barge_in'),
+                    os.path.expanduser('~/voice_ros2/conversational_client/models/goodbye_robot.onnx:stop'),
                 ]),
                 # Threshold-uri individuale per model
-                'model_thresholds': 'hello_robot:0.30,stop:0.5',
+                'model_thresholds': 'hello_robot:0.30,stop_robot:0.25,goodbye_robot:0.40',
             }]
         ),
         
