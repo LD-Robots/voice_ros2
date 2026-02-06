@@ -354,13 +354,7 @@ class TTSNode(Node):
                     continue
                 
                 if audio_data is not None:
-                    # Marchează că vorbim
-                    self.is_speaking = True
-                    speaking_msg = Bool()
-                    speaking_msg.data = True
-                    self.speaking_pub.publish(speaking_msg)
-                    
-                    # Publică audio
+                    # Publică audio - audio_playback_node va gestiona is_speaking
                     out = Audio()
                     out.data = audio_data.tolist()
                     out.sample_rate = sample_rate
@@ -368,11 +362,7 @@ class TTSNode(Node):
                     self.audio_pub.publish(out)
                     
                     self.get_logger().info(f'📤 Published {len(audio_data)} samples at {sample_rate}Hz')
-                    
-                    # Marchează că am terminat acest chunk
-                    self.is_speaking = False
-                    speaking_msg.data = False
-                    self.speaking_pub.publish(speaking_msg)
+                    # NU facem sleep - audio_playback_node gestionează starea is_speaking
                 
                 if is_final:
                     self.current_session = None

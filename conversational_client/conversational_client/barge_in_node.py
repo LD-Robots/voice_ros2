@@ -129,6 +129,8 @@ class BargeInNode(Node):
         self.declare_parameter('stop_prob_threshold', 0.8)
         self.declare_parameter('stop_logit_margin', 0.5)
         self.declare_parameter('stop_hits_required', 2)
+        self.declare_parameter('stop_frame_samples', 16000)  # Frame size in samples
+        self.declare_parameter('stop_hop_samples', 8000)     # Hop size in samples
         
         self.sr = self.get_parameter('sample_rate').value
         self.min_voice_ms = self.get_parameter('min_voice_ms').value
@@ -171,7 +173,9 @@ class BargeInNode(Node):
                     'prob_threshold': self.get_parameter('stop_prob_threshold').value,
                     'logit_margin': self.get_parameter('stop_logit_margin').value,
                     'hits_required': self.get_parameter('stop_hits_required').value,
-                    'debug': False,
+                    'frame_samples': self.get_parameter('stop_frame_samples').value,
+                    'hop_samples': self.get_parameter('stop_hop_samples').value,
+                    'debug': True,  # Always show scores for debugging
                 }
                 self.stop_detector = StopKeywordDetector(stop_cfg, self.sr, self.get_logger())
                 self.get_logger().info(f'🛑 PyTorch Stop Detector ENABLED: {os.path.basename(stop_model_path)}')
@@ -198,7 +202,7 @@ class BargeInNode(Node):
         # Starea TTS
         self.tts_sub = self.create_subscription(
             Bool,
-            '/tts_speaking',
+            '/is_speaking',  # De la audio_playback_node (starea reală a playback-ului)
             self.tts_callback,
             10
         )

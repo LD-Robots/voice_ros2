@@ -9,7 +9,7 @@ from openwakeword.model import Model as OWWModel
 import os
 
 # Calea către modele
-MODELS_DIR = '/home/delia/voice_ros2/conversational_client/models'
+MODELS_DIR = '/home/valee/voice_ros2/conversational_client/models'
 
 def main():
     print("🎤 Încărcare modele...")
@@ -17,7 +17,7 @@ def main():
     # Încarcă toate modelele
     model_paths = [
         os.path.join(MODELS_DIR, 'hello_robot.onnx'),
-        os.path.join(MODELS_DIR, 'stop_robot_oww.onnx'),
+        os.path.join(MODELS_DIR, 'stop_robot.onnx'),
         os.path.join(MODELS_DIR, 'goodbye_robot.onnx'),
     ]
     
