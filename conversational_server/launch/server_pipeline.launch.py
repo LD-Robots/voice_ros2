@@ -62,7 +62,7 @@ def generate_launch_description():
             name='tts_node',
             output='screen',
             parameters=[{
-                'voice_en': 'en-GB-SoniaNeural',
+                'voice_en': 'en-GB-RyanNeural',
                 'voice_ro': 'ro-RO-EmilNeural',
             }]
         ),
