@@ -175,7 +175,7 @@ class VADNode(Node):
             if self.session_timer:
                 self.session_timer.cancel()
                 self.session_timer = None
-            self.get_logger().info('🤖 Robot is SPEAKING - please wait...')
+            self.get_logger().debug('🤖 Robot is SPEAKING - please wait...')
         
         # Când robotul termină de vorbit, repornim timer-ul și reminder-ul
         elif not self.is_robot_speaking and was_speaking:
@@ -188,13 +188,13 @@ class VADNode(Node):
         if msg.data:
             # Session active - open gate
             if not self.is_gate_open:
-                self.get_logger().info('🔓 Session started - Opening Gate!')
+                self.get_logger().debug('🔓 Session started - Opening Gate!')
                 self.is_gate_open = True
                 self._reset_session_timer()
         else:
             # Session ended - close gate
             if self.is_gate_open:
-                self.get_logger().info('🔒 Session ended - Closing Gate!')
+                self.get_logger().debug('🔒 Session ended - Closing Gate!')
                 self.is_gate_open = False
                 self.is_speaking = False
                 self.speech_frames = 0
@@ -212,7 +212,7 @@ class VADNode(Node):
 
     def wake_word_callback(self, msg: WakeWord):
         # Deschide poarta cand aude "hello robot"
-        self.get_logger().info(f"🔓 Wake Word Detected: '{msg.word}' - Opening Gate!")
+        self.get_logger().debug(f"🔓 Wake Word Detected: '{msg.word}' - Opening Gate!")
         self.is_gate_open = True
         self._reset_session_timer()
 
@@ -276,10 +276,10 @@ class VADNode(Node):
         if not self.is_speaking and self.speech_frames >= self.min_speech_frames:
             self.is_speaking = True
             self._stop_reminder_timer()  # Oprește reminder când user vorbește
-            self.get_logger().info('🗣️ Voice DETECTED - user is speaking')
+            self.get_logger().debug('🗣️ Voice DETECTED - user is speaking')
         elif self.is_speaking and self.silence_frames >= self.min_silence_frames:
             self.is_speaking = False
-            self.get_logger().info('🤫 Voice ENDED - silence detected')
+            self.get_logger().debug('🤫 Voice ENDED - silence detected')
             # Repornește reminder-ul dacă suntem încă în modul listening
             if self.is_gate_open and not self.is_robot_speaking:
                 self._start_reminder_timer()
@@ -345,7 +345,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

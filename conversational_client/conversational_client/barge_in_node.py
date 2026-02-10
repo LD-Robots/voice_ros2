@@ -233,65 +233,37 @@ class BargeInNode(Node):
             self.leak_baseline_dbfs = None
     
     def audio_callback(self, msg: Audio):
-        """Procesează audio pentru detectare voce umană."""
+        """Procesează audio pentru detectare stop keyword."""
         now_ms = int(time.time() * 1000)
         
         # Arm delay - ignoră la început
         if (now_ms - self.start_ms) < self.arm_after_ms:
             return
         
+        # Nu procesăm dacă TTS nu vorbește
+        if not self.is_tts_speaking:
+            return
+        
+        # Debounce - ignoră detecții duble
+        if (now_ms - self.last_trigger_ms) < 2000:
+            return
+        
         # Convertește la int16
         pcm = np.array(msg.data, dtype=np.int16)
         
         # ══════════════════════════════════════════════════════════
-        # STOP KEYWORD DETECTOR (rulează ÎNTOTDEAUNA când TTS vorbește)
+        # STOP KEYWORD DETECTOR (doar când TTS vorbește)
         # ══════════════════════════════════════════════════════════
         if self.stop_detector:
-            if self.is_tts_speaking:
-                try:
-                    stop_result = self.stop_detector.process_block(pcm)
-                    if stop_result:
-                        self.get_logger().info(
-                            f'🛑 STOP KEYWORD detected (p={stop_result.probability:.2f}) - Immediate barge-in!'
-                        )
-                        self._trigger_barge_in()
-                        return
-                except Exception as e:
-                    self.get_logger().warning(f'Stop detector error: {e}')
-            # Debug: log când TTS nu vorbește dar avem detector
-            # else:
-            #     self.get_logger().debug('Stop detector ready, waiting for TTS...')
-        
-        # ══════════════════════════════════════════════════════════
-        # VOICE-BASED BARGE-IN (detectează voce umană continuă)
-        # ══════════════════════════════════════════════════════════
-        
-        # Nu verificăm dacă TTS nu vorbește (nu are sens barge-in)
-        if not self.is_tts_speaking:
-            # Resetăm acumularea și actualizăm baseline
-            self.voiced_ms = 0
-            self._update_leak_baseline(_rms_dbfs(pcm), now_ms, fast=True)
-            return
-        
-        # Debounce
-        if (now_ms - self.last_trigger_ms) < self.debounce_ms:
-            return
-        
-        # Verifică dacă e voce umană
-        if self._is_human_voice(pcm, now_ms):
-            # Acumulează timp de voce (max min_voice_ms)
-            block_ms = len(pcm) * 1000 // self.sr
-            self.voiced_ms = min(self.voiced_ms + block_ms, self.min_voice_ms)
-            self.last_voice_ms = now_ms
-        else:
-            # Pierde voce gradual (pentru drop-uri scurte)
-            self.voiced_ms = max(0, self.voiced_ms - self.voice_drop_ms)
-        
-        # Trigger barge-in dacă voce continuă suficientă
-        if self.voiced_ms >= self.min_voice_ms:
-            if (now_ms - self.last_trigger_ms) >= self.cooldown_ms:
-                self._trigger_barge_in()
-            self.voiced_ms = 0
+            try:
+                stop_result = self.stop_detector.process_block(pcm)
+                if stop_result:
+                    self.get_logger().info(
+                        f'🛑 STOP KEYWORD detected (p={stop_result.probability:.2f}) - Barge-in!'
+                    )
+                    self._trigger_barge_in()
+            except Exception as e:
+                self.get_logger().warning(f'Stop detector error: {e}')
     
     # ═══════════════════════════════════════════════════════════════════
     # DETECȚIE VOCE UMANĂ
@@ -369,7 +341,7 @@ class BargeInNode(Node):
         self.last_trigger_ms = now_ms
         self.voiced_ms = 0
         
-        self.get_logger().info('🛑 BARGE-IN: Voce umană detectată, opresc TTS!')
+        self.get_logger().debug('_trigger_barge_in called')
         
         # Publică pe /barge_in
         msg = Bool()
@@ -394,7 +366,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

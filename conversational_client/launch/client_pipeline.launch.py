@@ -46,7 +46,7 @@ def generate_launch_description():
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.5,  # Default threshold
+                'threshold': 0.8,  # Default threshold
                 'cooldown_ms': 1500,
                 'custom_models': custom_models,
                 'model_thresholds': model_thresholds,
