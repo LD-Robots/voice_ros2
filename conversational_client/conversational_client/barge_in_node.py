@@ -244,6 +244,10 @@ class BargeInNode(Node):
         if not self.is_tts_speaking:
             return
         
+        # Debounce - ignoră detecții duble
+        if (now_ms - self.last_trigger_ms) < 2000:
+            return
+        
         # Convertește la int16
         pcm = np.array(msg.data, dtype=np.int16)
         
@@ -337,7 +341,7 @@ class BargeInNode(Node):
         self.last_trigger_ms = now_ms
         self.voiced_ms = 0
         
-        self.get_logger().info('🛑 BARGE-IN: Voce umană detectată, opresc TTS!')
+        self.get_logger().debug('_trigger_barge_in called')
         
         # Publică pe /barge_in
         msg = Bool()
@@ -362,7 +366,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

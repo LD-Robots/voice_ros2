@@ -82,13 +82,13 @@ class ASRNode(Node):
             raise RuntimeError('faster-whisper not available')
         
         # Inițializează Whisper model
-        self.get_logger().info(f'Loading Whisper model: {model_size} on {device}...')
+        self.get_logger().debug(f'Loading Whisper model: {model_size} on {device}...')
         self.model = WhisperModel(
             model_size,
             device=device,
             compute_type=compute_type
         )
-        self.get_logger().info('✅ Whisper model loaded!')
+        self.get_logger().debug('✅ Whisper model loaded!')
         
         # Warmup la start
         self._warmed_up = False
@@ -136,18 +136,18 @@ class ASRNode(Node):
         )
         
         if self.echo_enabled:
-            self.get_logger().info(f'🔇 Anti-echo ENABLED (threshold={self.echo_threshold}%, min_len={self.echo_min_length})')
+            self.get_logger().debug(f'🔇 Anti-echo ENABLED (threshold={self.echo_threshold}%, min_len={self.echo_min_length})')
         else:
-            self.get_logger().info('🔇 Anti-echo DISABLED')
+            self.get_logger().debug('🔇 Anti-echo DISABLED')
         
-        self.get_logger().info('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
+        self.get_logger().debug('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
     
     def _ensure_warm(self):
         """Încarcă complet modelul prin transcriere dummy."""
         if not self.warmup_enabled or self._warmed_up:
             return
         try:
-            self.get_logger().info("🔥 ASR warm-up start...")
+            self.get_logger().debug("🔥 ASR warm-up start...")
             start = time.perf_counter()
             
             # Creează fișier audio scurt (0.5s tăcere)
@@ -167,7 +167,7 @@ class ASRNode(Node):
             
             elapsed = time.perf_counter() - start
             self._warmed_up = True
-            self.get_logger().info(f"✅ ASR warm-up gata ({elapsed:.2f}s)")
+            self.get_logger().debug(f"✅ ASR warm-up gata ({elapsed:.2f}s)")
         except Exception as e:
             self.get_logger().warning(f"ASR warm-up eșuat: {e}")
     
@@ -259,7 +259,7 @@ class ASRNode(Node):
         similarity = fuzz.partial_ratio(user_norm, bot_norm)
         
         if similarity >= self.echo_threshold:
-            self.get_logger().info(f'🔇 Ignor input (echo TTS) sim={similarity}% > {self.echo_threshold}%')
+            self.get_logger().debug(f'🔇 Ignor input (echo TTS) sim={similarity}% > {self.echo_threshold}%')
             return True
         
         return False
@@ -277,7 +277,7 @@ class ASRNode(Node):
         
         # Când userul termină de vorbit, transcrie
         if self.was_speaking and not self.is_speaking:
-            self.get_logger().info(f'🔚 Speech ended, processing {len(self.audio_buffer)} frames...')
+            self.get_logger().debug(f'🔚 Speech ended, processing {len(self.audio_buffer)} frames...')
             self._process_buffer()
     
     def audio_callback(self, msg: Audio):
@@ -379,7 +379,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

@@ -68,7 +68,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'voice_en': 'en-GB-RyanNeural',  # British male voice (Ryan)
-                'voice_ro': 'ro-RO-AlinaNeural',
+                'voice_ro': 'ro-RO-EmilNeural',
                 'buffer_size': 1,  # Start playback immediately (was 2)
             }]
         ),

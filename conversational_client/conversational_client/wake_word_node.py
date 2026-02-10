@@ -83,10 +83,10 @@ class WakeWordNode(Node):
         
         # Parse custom model paths
         if custom_models_str:
-            self.get_logger().info(f'📦 Parsing custom_models: {custom_models_str}')
+            self.get_logger().debug(f'📦 Parsing custom_models: {custom_models_str}')
             for entry in custom_models_str.split(','):
                 entry = entry.strip()
-                self.get_logger().info(f'  → Entry: {entry}')
+                self.get_logger().debug(f'  → Entry: {entry}')
                 if ':' in entry:
                     parts = entry.rsplit(':', 1)
                     path_str = parts[0]
@@ -100,7 +100,7 @@ class WakeWordNode(Node):
                             'threshold': self.threshold,
                             'last_hit': 0.0
                         }
-                        self.get_logger().info(f'  ✓ Loaded model: {label} (kind={kind})')
+                        self.get_logger().debug(f'  ✓ Loaded model: {label} (kind={kind})')
                     else:
                         self.get_logger().warn(f'  ✗ Model not found: {path}')
         
@@ -167,13 +167,13 @@ class WakeWordNode(Node):
                 if model_paths:
                     # Load custom models
                     self.oww_model = OWWModel(wakeword_models=model_paths)
-                    self.get_logger().info(f'🔔 Wake Word Node started with {len(model_paths)} custom models')
+                    self.get_logger().debug(f'🔔 Wake Word Node started with {len(model_paths)} custom models')
                 else:
                     # Use default built-in models
                     self.oww_model = OWWModel()
-                    self.get_logger().info('🔔 Wake Word Node started with default models')
+                    self.get_logger().debug('🔔 Wake Word Node started with default models')
                 
-                self.get_logger().info(f'   threshold={self.threshold}, cooldown={self.cooldown_ms}ms')
+                self.get_logger().debug(f'   threshold={self.threshold}, cooldown={self.cooldown_ms}ms')
                 
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to load OpenWakeWord: {e}')
@@ -311,7 +311,7 @@ class WakeWordNode(Node):
                 if model_name in self.keywords:
                     self.keywords[model_name]['last_hit'] = now_ms
                 
-                self.get_logger().info(f'🔔 Detected "{model_name}" (kind={kind}, score={score:.2f})')
+                self.get_logger().debug(f'🔔 Detected "{model_name}" (kind={kind}, score={score:.2f})')
                 
                 if kind == 'stop':
                     # STOP total + End Session (ex: "goodbye robot")
@@ -324,7 +324,7 @@ class WakeWordNode(Node):
                         self._activate_session(model_name, score)
                     else:
                         # Dacă e deja activă, putem face un re-activate/ack opțional
-                        self.get_logger().info('ℹ️ Session already active (wake word ignored)')
+                        self.get_logger().debug('ℹ️ Session already active (wake word ignored)')
     
     # ═══════════════════════════════════════════════════════════════════
     # ACTIVARE SESIUNE (wake word)
@@ -361,7 +361,7 @@ class WakeWordNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     def _trigger_barge_in(self, model_name: str, score: float):
         """Oprește doar TTS-ul, sesiunea rămâne activă."""
-        self.get_logger().info(f'✋ BARGE-IN via "{model_name}" (score={score:.2f}) - Stopping TTS only')
+        self.get_logger().debug(f'✋ BARGE-IN via "{model_name}" (score={score:.2f}) - Stopping TTS only')
         
         # Oprește TTS imediat
         stop_msg = Bool()
@@ -413,7 +413,7 @@ class WakeWordNode(Node):
     def reset_session(self):
         """Resetează sesiunea la standby."""
         self.session_active = False
-        self.get_logger().info('⏳ Session reset to standby')
+        self.get_logger().info('⏳ Standby')
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -430,7 +430,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
