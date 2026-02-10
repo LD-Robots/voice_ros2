@@ -225,7 +225,7 @@ class AudioPlaybackNode(Node):
                 while offset < len(chunk_bytes):
                     # Check stop flag between each small piece
                     if self._stop_requested:
-                        self.get_logger().info('⏹️ Playback interrupted mid-chunk!')
+                        self.get_logger().debug('⏹️ Playback interrupted mid-chunk!')
                         break
                     
                     # Get next small piece
@@ -276,7 +276,7 @@ class AudioPlaybackNode(Node):
         import time
         self._ignore_until = time.time() + 1.5
         
-        self.get_logger().info('⏹️ Playback stopped immediately (ignoring new audio for 1.5s)')
+        self.get_logger().debug('⏹️ Playback stopped immediately (ignoring new audio for 1.5s)')
     
     def stop_callback(self, msg: Bool):
         """Callback pentru comanda de stop (de la barge_in_node)."""
@@ -338,7 +338,10 @@ def main(args=None):
         pass                         # Ctrl+C - ieșire normală
     finally:
         node.destroy_node()          # Curățare
-        rclpy.shutdown()             # Oprește ROS2
+        try:
+            rclpy.shutdown()             # Oprește ROS2
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
