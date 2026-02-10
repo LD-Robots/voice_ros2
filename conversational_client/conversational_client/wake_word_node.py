@@ -30,7 +30,11 @@ from pathlib import Path
 
 # Încercăm să importăm OpenWakeWord
 try:
+    import logging
+    # Suppress "Tried to import the tflite runtime" warning
+    logging.getLogger().setLevel(logging.ERROR)
     from openwakeword.model import Model as OWWModel
+    logging.getLogger().setLevel(logging.INFO)  # Restore
     OPENWAKEWORD_AVAILABLE = True
 except ImportError:
     OPENWAKEWORD_AVAILABLE = False

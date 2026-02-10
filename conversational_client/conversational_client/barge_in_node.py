@@ -264,6 +264,19 @@ class BargeInNode(Node):
                     self._trigger_barge_in()
             except Exception as e:
                 self.get_logger().warning(f'Stop detector error: {e}')
+        
+        # ══════════════════════════════════════════════════════════
+        # VOCE UMANĂ (Barge-in standard) - DEZACTIVAT (User request)
+        # ══════════════════════════════════════════════════════════
+        # if self._is_human_voice(pcm, now_ms):
+        #     self.voiced_ms += 20
+        #     self.last_voice_ms = now_ms
+        # else:
+        #     self.voiced_ms = max(0, self.voiced_ms - self.voice_drop_ms)
+            
+        # if self.voiced_ms > self.min_voice_ms:
+        #     self.get_logger().info(f'🗣️ Voice Barge-in detected ({self.voiced_ms}ms) - Stopping TTS')
+        #     self._trigger_barge_in()
     
     # ═══════════════════════════════════════════════════════════════════
     # DETECȚIE VOCE UMANĂ

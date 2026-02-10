@@ -115,8 +115,8 @@ def generate_launch_description():
             parameters=[{
                 # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
                 'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
-                'stop_enabled': False,  # DEZACTIVAT - dă false positives, folosim OWW stop_robot.onnx
-                'stop_prob_threshold': 0.95,  # Foarte mare - doar detecții clare
+                'stop_enabled': True,  # ACTIVAT - la cererea userului
+                'stop_prob_threshold': 0.99,  # Increased to prevent false positives (was 0.95)
                 'stop_logit_margin': 1.0,     # Marjă mare
                 'stop_hits_required': 2,      # 2 detectări consecutive
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)

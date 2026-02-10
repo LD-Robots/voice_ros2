@@ -28,6 +28,30 @@ except ImportError:
     PYAUDIO_AVAILABLE = False
     print("⚠️ PyAudio not installed. Run: pip install pyaudio")
 
+import os
+import sys
+import ctypes
+
+# Context manager to suppress stderr from C libraries (ALSA/Jack)
+class RedirectStderr:
+    def __init__(self):
+        self._err_pipe_r, self._err_pipe_w = os.pipe()
+        self._original_stderr_fd = sys.stderr.fileno()
+        self._dup_stderr_fd = None
+
+    def __enter__(self):
+        self._dup_stderr_fd = os.dup(self._original_stderr_fd)
+        sys.stderr.flush()
+        os.dup2(self._err_pipe_w, self._original_stderr_fd)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        sys.stderr.flush()
+        os.dup2(self._dup_stderr_fd, self._original_stderr_fd)
+        os.close(self._dup_stderr_fd)
+        os.close(self._err_pipe_r)
+        os.close(self._err_pipe_w)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # CLASA NODULUI - aici e logica principală
@@ -86,14 +110,19 @@ class AudioPlaybackNode(Node):
         self.stream = None
         if PYAUDIO_AVAILABLE:
             try:
-                self.audio = pyaudio.PyAudio()
-                self.stream = self.audio.open(
-                    format=pyaudio.paInt16,    # Format: 16-bit integer
-                    channels=self.channels,     # Mono sau stereo
-                    rate=self.sample_rate,      # 16000 Hz
-                    output=True,                # OUTPUT (nu input!) = speaker
-                    frames_per_buffer=1024      # Mărimea buffer-ului
-                )
+                # Suppress ALSA/Jack error spam
+                with RedirectStderr():
+                    self.audio = pyaudio.PyAudio()
+                    
+                # Suppress ALSA/Jack error spam
+                with RedirectStderr():
+                    self.stream = self.audio.open(
+                        format=pyaudio.paInt16,    # Format: 16-bit integer
+                        channels=self.channels,     # Mono sau stereo
+                        rate=self.sample_rate,      # 16000 Hz
+                        output=True,                # OUTPUT (nu input!) = speaker
+                        frames_per_buffer=1024      # Mărimea buffer-ului
+                    )
                 self.get_logger().info(f'🔊 Audio Playback ready: {self.sample_rate}Hz')
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to open speaker: {e}')
@@ -156,13 +185,15 @@ class AudioPlaybackNode(Node):
                 if self.stream is not None:
                     self.stream.stop_stream()
                     self.stream.close()
-                self.stream = self.audio.open(
-                    format=pyaudio.paInt16,
-                    channels=self.channels,
-                    rate=self.sample_rate,
-                    output=True,
-                    frames_per_buffer=1024
-                )
+                # Suppress ALSA logs
+                with RedirectStderr():
+                    self.stream = self.audio.open(
+                        format=pyaudio.paInt16,
+                        channels=self.channels,
+                        rate=self.sample_rate,
+                        output=True,
+                        frames_per_buffer=1024
+                    )
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to recreate stream: {e}')
         
@@ -262,13 +293,15 @@ class AudioPlaybackNode(Node):
                     self.stream.close()
                     
                     # 3. Recreează stream-ul pentru viitoare redări
-                    self.stream = self.audio.open(
-                        format=pyaudio.paInt16,
-                        channels=self.channels,
-                        rate=self.sample_rate,
-                        output=True,
-                        frames_per_buffer=1024
-                    )
+                    # Suppress ALSA logs
+                    with RedirectStderr():
+                        self.stream = self.audio.open(
+                            format=pyaudio.paInt16,
+                            channels=self.channels,
+                            rate=self.sample_rate,
+                            output=True,
+                            frames_per_buffer=1024
+                        )
                 except Exception as e:
                     self.get_logger().error(f'❌ Error stopping stream: {e}')
         
