@@ -114,6 +114,7 @@ class VADNode(Node):
         # PUBLISHER
         # ─────────────────────────────────────────────────────────
         self.vad_pub = self.create_publisher(Bool, '/voice_activity', 10)
+        self.end_session_pub = self.create_publisher(Bool, '/end_session_external', 10)
         
         # ─────────────────────────────────────────────────────────
         # INIȚIALIZARE WEBRTC VAD
@@ -237,6 +238,11 @@ class VADNode(Node):
         msg = Bool()
         msg.data = False
         self.vad_pub.publish(msg)
+
+        # Notifică wake_word_node să reseteze session_active
+        end_msg = Bool()
+        end_msg.data = True
+        self.end_session_pub.publish(end_msg)
 
         if self.session_timer:
             self.session_timer.cancel()

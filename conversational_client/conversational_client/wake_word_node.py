@@ -261,7 +261,7 @@ class WakeWordNode(Node):
 
                     # Log ALL model scores every ~2 seconds (25 chunks at 80ms each) - DEBUG only
                     if self.audio_debug_count % 25 == 0:
-                        scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in final_scores.items()])
+                        scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in prediction.items()])
                         self.get_logger().debug(f'👀 Scores: {scores_str}')
                     
                 except Exception as e:
