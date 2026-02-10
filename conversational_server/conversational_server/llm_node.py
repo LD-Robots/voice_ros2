@@ -374,7 +374,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                 if len(self.conversation_history) > 10:
                     self.conversation_history = self.conversation_history[-10:]
                 
-                self.get_logger().info(f'🤖 Bot ({chunk_count} chunks): {full_response[:80]}...')
+                self.get_logger().info(f'🤖 Bot ({chunk_count} chunks): {full_response}')
                 
                 # Publică și răspunsul complet pentru compatibilitate
                 out = Transcription()
