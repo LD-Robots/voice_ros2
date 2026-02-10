@@ -46,7 +46,7 @@ def generate_launch_description():
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.5,  # Default threshold
+                'threshold': 0.8,  # Default threshold
                 'cooldown_ms': 1500,
                 'custom_models': custom_models,
                 'model_thresholds': model_thresholds,
@@ -90,9 +90,9 @@ def generate_launch_description():
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
                 'stop_model_path': os.path.join(models_dir, 'stop_keyword.onnx'),
-                'stop_prob_threshold': 0.8,
+                'stop_prob_threshold': 0.9,
                 'stop_logit_margin': 0.5,
-                'stop_hits_required': 2,
+                'stop_hits_required': 1,
             }]
         ),
         
