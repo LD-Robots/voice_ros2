@@ -86,13 +86,13 @@ class TTSNode(Node):
             # Inițializează pyttsx3
             self.pyttsx3_engine = pyttsx3.init()
             self.pyttsx3_engine.setProperty('rate', 170)
-            self.get_logger().info('✅ TTS initialized with pyttsx3 (offline)')
+            self.get_logger().debug('✅ TTS initialized with pyttsx3 (offline)')
         else:
             # Edge TTS necesită soundfile pt MP3
             if not SOUNDFILE_AVAILABLE:
                 self.get_logger().error('soundfile not installed - required for edge-tts!')
                 raise RuntimeError('soundfile not available')
-            self.get_logger().info(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
+            self.get_logger().debug(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
         
         # === WAV CACHE - fraze comune pre-generate ===
         self.cache_dir = '/tmp/tts_cache'
@@ -124,6 +124,7 @@ class TTSNode(Node):
         self.is_speaking = False
         self.current_session = None
         self.stop_requested = False
+        self.stop_epoch = 0  # Epoch counter - increments on stop(), chunks with old epoch are skipped
         
         # Subscriber pentru comenzi cache (ack, goodbye, etc)
         from std_msgs.msg import String
@@ -187,7 +188,7 @@ class TTSNode(Node):
         self.consumer_thread = threading.Thread(target=self._consumer_loop, daemon=True, name="TTS-Consumer")
         self.consumer_thread.start()
         
-        self.get_logger().info('TTS Node started with DOUBLE BUFFER + CACHE! Listening on /llm_stream')
+        self.get_logger().debug('TTS Node started with DOUBLE BUFFER + CACHE! Listening on /llm_stream')
     
     def _publish_speaking_status(self):
         """Publică periodic starea is_speaking pe /tts_speaking."""
@@ -203,7 +204,7 @@ class TTSNode(Node):
     
     def _precache(self):
         """Pre-generează audio pentru frazele comune."""
-        self.get_logger().info('🔄 Pre-generating cached phrases...')
+        self.get_logger().debug('🔄 Pre-generating cached phrases...')
         for key, (text, lang) in self.cache_phrases.items():
             try:
                 voice = self._pick_voice(lang)
@@ -214,7 +215,7 @@ class TTSNode(Node):
                 self.get_logger().debug(f'  ✓ Cached: {key}')
             except Exception as e:
                 self.get_logger().warn(f'  ✗ Failed to cache {key}: {e}')
-        self.get_logger().info(f'✅ Cached {len(self.audio_cache)} phrases')
+        self.get_logger().debug(f'✅ Cached {len(self.audio_cache)} phrases')
     
     def say_cached(self, key: str) -> bool:
         """Redă o frază din cache. Returnează True dacă a reușit."""
@@ -231,7 +232,7 @@ class TTSNode(Node):
         out.channels = 1
         self.audio_pub.publish(out)
         
-        self.get_logger().info(f'🎵 Playing cached: {key}')
+        self.get_logger().debug(f'🎵 Playing cached: {key}')
         return True
     
     def command_callback(self, msg):
@@ -267,7 +268,7 @@ class TTSNode(Node):
             self.current_session = msg.session_id
         
         if msg.text.strip():
-            self.get_logger().info(f'📥 Stream chunk: "{msg.text[:40]}..." (final={msg.is_final})')
+            self.get_logger().debug(f'📥 Stream chunk: "{msg.text[:40]}..." (final={msg.is_final})')
             self.text_queue.put((msg.text, msg.language, msg.is_final, msg.session_id))
         elif msg.is_final:
             # Mesaj gol cu is_final - semnalizează sfârșitul
@@ -304,7 +305,7 @@ class TTSNode(Node):
                 
                 if text:
                     voice = self._pick_voice(lang)
-                    self.get_logger().info(f'🔧 Pre-synthesizing: "{text[:30]}..."')
+                    self.get_logger().debug(f'🔧 Pre-synthesizing: "{text[:30]}..."')
                     
                     try:
                         audio_data, sample_rate = self._synthesize(text, voice)
@@ -313,18 +314,19 @@ class TTSNode(Node):
                         if len(audio_data.shape) > 1:
                             audio_data = audio_data[:, 0]
                         
-                        # Pune în audio_queue (va bloca dacă e plin = double buffer full)
+                        # Pune în audio_queue CU EPOCH (va bloca dacă e plin = double buffer full)
+                        current_epoch = self.stop_epoch
                         if not self.stop_requested:
-                            self.audio_queue.put((audio_data, sample_rate, is_final, session_id), timeout=5.0)
-                            self.get_logger().debug(f'📦 Buffered audio ({len(audio_data)} samples)')
+                            self.audio_queue.put((audio_data, sample_rate, is_final, session_id, current_epoch), timeout=5.0)
+                            self.get_logger().debug(f'📦 Buffered audio ({len(audio_data)} samples, epoch={current_epoch})')
                     
                     except Exception as e:
                         self.get_logger().error(f'Synthesis error: {e}')
                 
                 elif is_final:
-                    # Semnalizează sfârșitul în audio_queue
+                    # Semnalizează sfârșitul în audio_queue (cu epoch)
                     try:
-                        self.audio_queue.put((None, 0, True, session_id), timeout=1.0)
+                        self.audio_queue.put((None, 0, True, session_id, self.stop_epoch), timeout=1.0)
                     except queue.Full:
                         pass
                     
@@ -341,35 +343,30 @@ class TTSNode(Node):
         
         while self.running:
             try:
-                audio_data, sample_rate, is_final, session_id = self.audio_queue.get(timeout=0.1)
+                audio_data, sample_rate, is_final, session_id, chunk_epoch = self.audio_queue.get(timeout=0.1)
+                
+                # EPOCH CHECK: Skip chunks from before stop() was called
+                if chunk_epoch != self.stop_epoch:
+                    self.get_logger().debug(f'🚫 Skipping old chunk (epoch {chunk_epoch} != current {self.stop_epoch})')
+                    continue
                 
                 if self.stop_requested:
                     continue
                 
                 if audio_data is not None:
-                    # Marchează că vorbim
-                    self.is_speaking = True
-                    speaking_msg = Bool()
-                    speaking_msg.data = True
-                    self.speaking_pub.publish(speaking_msg)
-                    
-                    # Publică audio
+                    # Publică audio - audio_playback_node va gestiona is_speaking
                     out = Audio()
                     out.data = audio_data.tolist()
                     out.sample_rate = sample_rate
                     out.channels = 1
                     self.audio_pub.publish(out)
                     
-                    self.get_logger().info(f'📤 Published {len(audio_data)} samples at {sample_rate}Hz')
-                    
-                    # Marchează că am terminat acest chunk
-                    self.is_speaking = False
-                    speaking_msg.data = False
-                    self.speaking_pub.publish(speaking_msg)
+                    self.get_logger().debug(f'📤 Published {len(audio_data)} samples at {sample_rate}Hz')
+                    # NU facem sleep - audio_playback_node gestionează starea is_speaking
                 
                 if is_final:
                     self.current_session = None
-                    self.get_logger().info('✅ Stream complete')
+                    self.get_logger().debug('✅ Stream complete')
                     
             except queue.Empty:
                 continue
@@ -439,10 +436,12 @@ class TTSNode(Node):
     
     def stop(self):
         """Oprește TTS-ul curent (pentru barge-in)."""
+        # INCREMENT EPOCH FIRST - all queued chunks become invalid
+        self.stop_epoch += 1
         self.stop_requested = True
         self._clear_queues()
         self.is_speaking = False
-        self.get_logger().info('⏹️ TTS stopped')
+        self.get_logger().debug(f'⏹️ TTS stopped (epoch now {self.stop_epoch})')
         self.stop_requested = False
     
     def destroy_node(self):
@@ -462,7 +461,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

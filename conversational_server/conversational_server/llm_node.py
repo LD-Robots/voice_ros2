@@ -152,7 +152,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         
         # Inițializează client Groq
         self.client = Groq(api_key=self.api_key)
-        self.get_logger().info(f'✅ Groq client initialized with model: {self.model}')
+        self.get_logger().debug(f'✅ Groq client initialized with model: {self.model}')
         
         # Istoricul conversației
         self.conversation_history = []
@@ -186,7 +186,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             10
         )
         
-        self.get_logger().info(f'LLM Node started with STREAMING + BACKCHANNEL! websearch={self.websearch_enabled}')
+        self.get_logger().debug(f'LLM Node started with STREAMING + BACKCHANNEL! websearch={self.websearch_enabled}')
     
     def _get_system_prompt_with_date(self) -> str:
         """Returnează system prompt cu data curentă injectată."""
@@ -247,7 +247,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         
         for keyword in current_info_keywords:
             if keyword in text_lower:
-                self.get_logger().info(f'🔍 Web search triggered by keyword: "{keyword}"')
+                self.get_logger().debug(f'🔍 Web search triggered by keyword: "{keyword}"')
                 return True
         
         return False
@@ -276,10 +276,14 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         session_id = str(uuid.uuid4())[:8]
         
         try:
-            # Adaugă mesajul utilizatorului în istoric
+            # Adaugă mesajul utilizatorului în istoric (cu instrucțiune de limbă)
+            # Aceasta forțează modelul să răspundă în limba corectă
+            lang_instruction = "[RESPOND IN ENGLISH]" if not user_lang.startswith('ro') else "[RĂSPUNDE ÎN ROMÂNĂ]"
+            user_message_with_lang = f"{lang_instruction} {user_text}"
+            
             self.conversation_history.append({
                 'role': 'user',
-                'content': user_text
+                'content': user_message_with_lang
             })
             
             # Construiește mesajele pentru API
@@ -294,7 +298,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             if needs_websearch:
                 model_to_use = self.websearch_model
                 max_tokens_to_use = self.websearch_max_tokens
-                self.get_logger().info(f'🌐 Using web search model: {model_to_use}')
+                self.get_logger().debug(f'🌐 Using web search model: {model_to_use}')
             else:
                 model_to_use = self.model
                 max_tokens_to_use = self.max_tokens
@@ -327,13 +331,13 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                         if first_token_time is None:
                             first_token_time = time.time()
                             ttft_ms = (first_token_time - start_time) * 1000
-                            self.get_logger().info(f'⏱️ Time to first token: {ttft_ms:.0f}ms')
+                            self.get_logger().debug(f'⏱️ Time to first token: {ttft_ms:.0f}ms')
                             
                             # Trimite backchannel dacă a durat prea mult
                             if self.backchannel_enabled and ttft_ms > self.backchannel_delay_ms and not backchannel_sent:
                                 backchannel_sent = True
                                 phrase = self.backchannel_phrase_ro if user_lang.startswith('ro') else self.backchannel_phrase_en
-                                self.get_logger().info(f'⌛ Backchannel: TTFT > {self.backchannel_delay_ms}ms, sending "{phrase}"')
+                                self.get_logger().debug(f'⌛ Backchannel: TTFT > {self.backchannel_delay_ms}ms, sending "{phrase}"')
                                 cmd = String()
                                 cmd.data = 'filler_ro' if user_lang.startswith('ro') else 'filler_en'
                                 self.tts_cmd_pub.publish(cmd)
@@ -370,7 +374,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                 if len(self.conversation_history) > 10:
                     self.conversation_history = self.conversation_history[-10:]
                 
-                self.get_logger().info(f'🤖 Bot ({chunk_count} chunks): {full_response[:80]}...')
+                self.get_logger().info(f'🤖 Bot ({chunk_count} chunks): {full_response}')
                 
                 # Publică și răspunsul complet pentru compatibilitate
                 out = Transcription()
@@ -387,7 +391,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             fallback_msg = self._get_fallback(error_type, user_lang)
             
             if fallback_msg:
-                self.get_logger().info(f'📢 Sending fallback response: {fallback_msg}')
+                self.get_logger().debug(f'📢 Sending fallback response: {fallback_msg}')
                 self._publish_chunk(fallback_msg, user_lang, True, session_id)
     
     def _publish_chunk(self, text: str, language: str, is_final: bool, session_id: str):
@@ -405,7 +409,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
     def clear_history(self):
         """Șterge istoricul conversației."""
         self.conversation_history = []
-        self.get_logger().info('Conversation history cleared')
+        self.get_logger().debug('Conversation history cleared')
 
 
 def main(args=None):
@@ -419,7 +423,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

@@ -112,7 +112,7 @@ class AudioSegmentNode(Node):
         # ─────────────────────────────────────────────────────────
         self.segment_pub = self.create_publisher(Audio, '/audio_segment', 10)
         
-        self.get_logger().info('📦 Audio Segment Node started')
+        self.get_logger().debug('📦 Audio Segment Node started')
     
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACKS
@@ -122,12 +122,12 @@ class AudioSegmentNode(Node):
         """Callback pentru starea sesiunii."""
         self.session_active = msg.data
         if msg.data:
-            self.get_logger().info('🟢 Session active - ready to capture speech')
+            self.get_logger().debug('🟢 Session active - ready to capture speech')
         else:
             # Resetează buffer-ele când sesiunea se termină
             self.audio_buffer = []
             self.pre_buffer = []
-            self.get_logger().info('🔴 Session ended - buffers cleared')
+            self.get_logger().debug('🔴 Session ended - buffers cleared')
     
     def robot_speaking_callback(self, msg: Bool):
         """Callback pentru starea TTS playback."""
@@ -135,9 +135,9 @@ class AudioSegmentNode(Node):
         self.is_robot_speaking = msg.data
         
         if msg.data and not was_speaking:
-            self.get_logger().info('🔇 Robot speaking - muting input')
+            self.get_logger().debug('🔇 Robot speaking - muting input')
         elif not msg.data and was_speaking:
-            self.get_logger().info('🔊 Robot stopped - listening again')
+            self.get_logger().debug('🔊 Robot stopped - listening again')
     
     def vad_callback(self, msg: Bool):
         """Callback pentru starea VAD (voice activity)."""
@@ -146,10 +146,10 @@ class AudioSegmentNode(Node):
         
         # Nu procesa dacă sesiunea nu e activă sau dacă robotul vorbește
         if not self.session_active:
-            self.get_logger().info(f'⏸️ VAD ignored - session not active', throttle_duration_sec=5.0)
+            self.get_logger().debug(f'⏸️ VAD ignored - session not active', throttle_duration_sec=5.0)
             return
         if self.is_robot_speaking:
-            self.get_logger().info(f'⏸️ VAD ignored - robot speaking', throttle_duration_sec=5.0)
+            self.get_logger().debug(f'⏸️ VAD ignored - robot speaking', throttle_duration_sec=5.0)
             return
         
         # Când user-ul începe să vorbească, adaugă pre-buffer
@@ -160,6 +160,7 @@ class AudioSegmentNode(Node):
         
         # Când user-ul termină de vorbit, trimite segmentul
         if not msg.data and self.was_speaking:
+            self.get_logger().debug(f'📤 VAD speech end - sending segment (session_active={self.session_active})')
             self._send_segment()
     
     def audio_callback(self, msg: Audio):
@@ -191,6 +192,12 @@ class AudioSegmentNode(Node):
     def _send_segment(self):
         """Trimite segmentul audio la server."""
         
+        # CRITICAL: Don't send if session ended (race condition fix)
+        if not self.session_active:
+            self.get_logger().warn(f'🚫 Segment BLOCKED - session not active (had {len(self.audio_buffer)} samples)')
+            self.audio_buffer = []
+            return
+        
         if not self.audio_buffer:
             self.get_logger().warn('Empty buffer, skipping')
             return
@@ -207,7 +214,7 @@ class AudioSegmentNode(Node):
         # Calculează durata
         duration = len(self.audio_buffer) / self.sample_rate
         
-        self.get_logger().info(f'📤 Sending audio segment: {duration:.2f}s ({len(self.audio_buffer)} samples)')
+        self.get_logger().debug(f'📤 Sending audio segment: {duration:.2f}s ({len(self.audio_buffer)} samples)')
         
         # Creează și publică mesajul
         msg = Audio()
@@ -219,7 +226,7 @@ class AudioSegmentNode(Node):
         
         # Resetează buffer-ul
         self.audio_buffer = []
-        self.get_logger().info('✅ Segment sent to server')
+        self.get_logger().debug('✅ Segment sent to server')
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -236,7 +243,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':

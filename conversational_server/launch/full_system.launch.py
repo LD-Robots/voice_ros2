@@ -14,7 +14,7 @@ def generate_launch_description():
         # ========== ARGUMENTE ==========
         DeclareLaunchArgument(
             'asr_model_size',
-            default_value='small',
+            default_value='medium',  # Upgraded from 'small' for better accuracy
             description='Whisper model size'
         ),
         DeclareLaunchArgument(
@@ -30,7 +30,6 @@ def generate_launch_description():
         
         # ========== SERVER NODES ==========
         
-        # ASR Node
         Node(
             package='conversational_server',
             executable='asr_node',
@@ -41,6 +40,7 @@ def generate_launch_description():
                 'device': 'cpu',
                 'compute_type': 'int8',
                 'language': 'ro_en',  # Enable Romanian/English detection
+                'beam_size': 8,  # Higher = more accurate (default was 5)
                 'initial_prompt': 'A bilingual conversation in Romanian and English. O conversație bilingvă.',
             }]
         ),
@@ -56,6 +56,7 @@ def generate_launch_description():
                 'model': LaunchConfiguration('llm_model'),
                 'max_tokens': 150,
                 'temperature': 0.7,
+                'min_chunk_chars': 20,  # Smaller chunks = faster initial response
             }]
         ),
         
@@ -66,8 +67,9 @@ def generate_launch_description():
             name='tts_node',
             output='screen',
             parameters=[{
-                'voice_en': 'en-IE-EmilyNeural',
-                'voice_ro': 'ro-RO-AlinaNeural',
+                'voice_en': 'en-GB-RyanNeural',  # British male voice (Ryan)
+                'voice_ro': 'ro-RO-EmilNeural',
+                'buffer_size': 1,  # Start playback immediately (was 2)
             }]
         ),
         
@@ -92,7 +94,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'wake_word_enabled': True,   # Gate audio until wake word
-                'session_timeout': 8.0,      # Reset to standby after 8s silence
+                'session_timeout': 30.0,     # Reset to standby after 30s silence (was 8s)
             }]
         ),
         
@@ -110,29 +112,48 @@ def generate_launch_description():
             executable='barge_in_node',
             name='barge_in_node',
             output='screen',
+            parameters=[{
+                # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
+                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
+                'stop_enabled': True,  # ACTIVAT - la cererea userului
+                'stop_prob_threshold': 0.99,  # Increased to prevent false positives (was 0.95)
+                'stop_logit_margin': 1.0,     # Marjă mare
+                'stop_hits_required': 2,      # 2 detectări consecutive
+                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
+            }]
         ),
         
-        # Wake Word (detectare "Hey robot")
+        # Wake Word + Stop Keyword (OpenWakeWord unified)
+        # Detectează: "hello robot" (wake), "stop robot" (barge_in), "goodbye robot" (stop)
         Node(
             package='conversational_client',
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.45,
-                'custom_models': os.path.expanduser('~/ros2_ws/src/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
+                'threshold': 0.5,  # Default threshold
+                'cooldown_ms': 1500,
+                # Format: "path:kind" - 'wake' pentru activare, 'barge_in' pentru stop TTS, 'stop' pentru end session
+                'custom_models': ','.join([
+                    os.path.expanduser('~/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
+                    os.path.expanduser('~/voice_ros2/conversational_client/models/stop_robot.onnx:barge_in'),
+                    os.path.expanduser('~/voice_ros2/conversational_client/models/goodbye_robot.onnx:stop'),
+                ]),
+                # Threshold-uri individuale per model
+                'model_thresholds': 'hello_robot:0.30,stop_robot:0.25,goodbye_robot:0.40',
             }]
         ),
         
-        # Stop Keyword (detectare "stop" în timpul TTS)
-        Node(
-            package='conversational_client',
-            executable='stop_keyword_node',
-            name='stop_keyword_node',
-            output='screen',
-            parameters=[{
-                'model_path': os.path.expanduser('~/ros2_ws/src/voice_ros2/voices/stop_keyword.onnx'),
-                'enabled': False,  # Disabled - .onnx.data file missing
-            }]
-        ),
+        # Stop Keyword Node (DISABLED - folosim OpenWakeWord în wake_word_node)
+        # Node(
+        #     package='conversational_client',
+        #     executable='stop_keyword_node',
+        #     name='stop_keyword_node',
+        #     output='screen',
+        #     parameters=[{
+        #         'model_path': os.path.expanduser('~/ros2_ws/src/voice_ros2/voices/stop_keyword.onnx'),
+        #         'enabled': False,
+        #     }]
+        # ),
     ])

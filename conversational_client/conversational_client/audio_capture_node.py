@@ -50,39 +50,21 @@ class AudioCaptureNode(Node):
     def start_capture(self):
         try:
             # Device selection
-            device = None
             if self.device_index >= 0:
                 device = self.device_index
                 self.get_logger().info(f"🎤 Using explicit device index: {device}")
             else:
-                # SEARCH for PipeWire or PulseAudio to avoid RAW ALSA issues
+                # Folosim DISPOZITIVUL DEFAULT al sistemului (care știm că merge cu arecord)
+                # Nu mai căutăm explicit 'pulse' sau 'pipewire' pentru că poate cauza probleme cu indexul
+                device = None 
+                self.get_logger().info("🎤 Using OS Default Input Device (sounddevice default)")
+                
+                # Debug: arătăm ce dispozitiv consideră sounddevice ca fiind default
                 try:
-                    devs = sd.query_devices()
-                    found_index = None
-                    
-                    # 1. Try 'pulse' (User confirmed this is clearest)
-                    for i, d in enumerate(devs):
-                        if 'pulse' in d['name'].lower() and d['max_input_channels'] > 0:
-                            found_index = i
-                            self.get_logger().info(f"Found 'pulse' device at index {i}")
-                            break
-                    
-                    # 2. Try 'pipewire' if no pulse
-                    if found_index is None:
-                        for i, d in enumerate(devs):
-                            if 'pipewire' in d['name'].lower() and d['max_input_channels'] > 0:
-                                found_index = i
-                                self.get_logger().info(f"Found 'pipewire' device at index {i}")
-                                break
-                                
-                    if found_index is not None:
-                        device = found_index
-                        self.get_logger().info(f"🎤 Auto-selected device index: {device} (Better mixing/resampling)")
-                    else:
-                        self.get_logger().info("🎤 Using OS Default Input Device (No specific pipewire/pulse found)")
-                        
-                except Exception as e:
-                    self.get_logger().warn(f"Could not query devices: {e}")
+                    default_dev = sd.query_devices(kind='input')
+                    self.get_logger().info(f"ℹ️ Default device info: {default_dev['name']}")
+                except:
+                    pass
 
             # Determine optimal blocksize if possible, or use fixed
             # We enforce fixed block_size to match downstream expectation (20ms)
@@ -136,6 +118,11 @@ class AudioCaptureNode(Node):
             self.audio_pub.publish(msg)
             
             self.frame_count += 1
+            
+            # Periodic logging
+            if self.frame_count % 500 == 0:  # Log every ~10 seconds
+                rms = np.sqrt(np.mean(audio_f32**2)) * 32767.0 # Scale RMS to int16 range for readable logs
+                self.get_logger().info(f"📊 Audio Level (RMS): {rms:.2f} (Frames: {self.frame_count})")
                 
         except Exception as e:
             self.get_logger().error(f"Callback error: {e}")
@@ -158,7 +145,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 if __name__ == '__main__':
     main()
