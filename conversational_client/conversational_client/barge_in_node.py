@@ -25,6 +25,15 @@ from std_msgs.msg import Bool
 from conversational_interfaces.msg import Audio
 import numpy as np
 import time
+import os
+
+# PyTorch-based stop keyword detector
+try:
+    from .stop_keyword_detector import StopKeywordDetector
+    STOP_DETECTOR_AVAILABLE = True
+except ImportError as e:
+    STOP_DETECTOR_AVAILABLE = False
+    _STOP_DETECTOR_ERROR = str(e)
 
 # ═══════════════════════════════════════════════════════════════════
 # FUNCȚII HELPER
@@ -114,6 +123,15 @@ class BargeInNode(Node):
         self.declare_parameter('leak_margin_db', 3.0)    # Marjă peste ecou
         self.declare_parameter('leak_decay_ms', 1200)    # Cât durează până expiră baseline
         
+        # Stop keyword detector (PyTorch)
+        self.declare_parameter('stop_model_path', '')
+        self.declare_parameter('stop_enabled', True)
+        self.declare_parameter('stop_prob_threshold', 0.8)
+        self.declare_parameter('stop_logit_margin', 0.5)
+        self.declare_parameter('stop_hits_required', 2)
+        self.declare_parameter('stop_frame_samples', 16000)  # Frame size in samples
+        self.declare_parameter('stop_hop_samples', 8000)     # Hop size in samples
+        
         self.sr = self.get_parameter('sample_rate').value
         self.min_voice_ms = self.get_parameter('min_voice_ms').value
         self.debounce_ms = self.get_parameter('debounce_ms').value
@@ -143,6 +161,32 @@ class BargeInNode(Node):
         self.leak_baseline_dbfs = None
         self.last_leak_update_ms = 0
         
+        # Initialize PyTorch stop keyword detector
+        self.stop_detector = None
+        stop_model_path = self.get_parameter('stop_model_path').value
+        stop_enabled = self.get_parameter('stop_enabled').value
+        
+        if stop_enabled and STOP_DETECTOR_AVAILABLE and stop_model_path and os.path.exists(stop_model_path):
+            try:
+                stop_cfg = {
+                    'model_path': stop_model_path,
+                    'prob_threshold': self.get_parameter('stop_prob_threshold').value,
+                    'logit_margin': self.get_parameter('stop_logit_margin').value,
+                    'hits_required': self.get_parameter('stop_hits_required').value,
+                    'frame_samples': self.get_parameter('stop_frame_samples').value,
+                    'hop_samples': self.get_parameter('stop_hop_samples').value,
+                    'debug': True,  # Always show scores for debugging
+                }
+                self.stop_detector = StopKeywordDetector(stop_cfg, self.sr, self.get_logger())
+                self.get_logger().info(f'🛑 PyTorch Stop Detector ENABLED: {os.path.basename(stop_model_path)}')
+            except Exception as e:
+                self.get_logger().warning(f'⚠️ Stop detector init failed: {e}')
+                self.stop_detector = None
+        elif stop_enabled and not STOP_DETECTOR_AVAILABLE:
+            self.get_logger().warning(f'⚠️ Stop detector unavailable: {_STOP_DETECTOR_ERROR}')
+        elif stop_enabled and stop_model_path and not os.path.exists(stop_model_path):
+            self.get_logger().warning(f'⚠️ Stop model not found: {stop_model_path}')
+        
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBERS
         # ─────────────────────────────────────────────────────────
@@ -158,7 +202,7 @@ class BargeInNode(Node):
         # Starea TTS
         self.tts_sub = self.create_subscription(
             Bool,
-            '/tts_speaking',
+            '/is_speaking',  # De la audio_playback_node (starea reală a playback-ului)
             self.tts_callback,
             10
         )
@@ -189,43 +233,50 @@ class BargeInNode(Node):
             self.leak_baseline_dbfs = None
     
     def audio_callback(self, msg: Audio):
-        """Procesează audio pentru detectare voce umană."""
+        """Procesează audio pentru detectare stop keyword."""
         now_ms = int(time.time() * 1000)
         
         # Arm delay - ignoră la început
         if (now_ms - self.start_ms) < self.arm_after_ms:
             return
         
-        # Nu verificăm dacă TTS nu vorbește (nu are sens barge-in)
+        # Nu procesăm dacă TTS nu vorbește
         if not self.is_tts_speaking:
-            # Resetăm acumularea și actualizăm baseline
-            self.voiced_ms = 0
-            pcm = np.array(msg.data, dtype=np.int16)
-            self._update_leak_baseline(_rms_dbfs(pcm), now_ms, fast=True)
             return
         
-        # Debounce
-        if (now_ms - self.last_trigger_ms) < self.debounce_ms:
+        # Debounce - ignoră detecții duble
+        if (now_ms - self.last_trigger_ms) < 2000:
             return
         
         # Convertește la int16
         pcm = np.array(msg.data, dtype=np.int16)
         
-        # Verifică dacă e voce umană
-        if self._is_human_voice(pcm, now_ms):
-            # Acumulează timp de voce (max min_voice_ms)
-            block_ms = len(pcm) * 1000 // self.sr
-            self.voiced_ms = min(self.voiced_ms + block_ms, self.min_voice_ms)
-            self.last_voice_ms = now_ms
-        else:
-            # Pierde voce gradual (pentru drop-uri scurte)
-            self.voiced_ms = max(0, self.voiced_ms - self.voice_drop_ms)
+        # ══════════════════════════════════════════════════════════
+        # STOP KEYWORD DETECTOR (doar când TTS vorbește)
+        # ══════════════════════════════════════════════════════════
+        if self.stop_detector:
+            try:
+                stop_result = self.stop_detector.process_block(pcm)
+                if stop_result:
+                    self.get_logger().info(
+                        f'🛑 STOP KEYWORD detected (p={stop_result.probability:.2f}) - Barge-in!'
+                    )
+                    self._trigger_barge_in()
+            except Exception as e:
+                self.get_logger().warning(f'Stop detector error: {e}')
         
-        # Trigger barge-in dacă voce continuă suficientă
-        if self.voiced_ms >= self.min_voice_ms:
-            if (now_ms - self.last_trigger_ms) >= self.cooldown_ms:
-                self._trigger_barge_in()
-            self.voiced_ms = 0
+        # ══════════════════════════════════════════════════════════
+        # VOCE UMANĂ (Barge-in standard) - DEZACTIVAT (User request)
+        # ══════════════════════════════════════════════════════════
+        # if self._is_human_voice(pcm, now_ms):
+        #     self.voiced_ms += 20
+        #     self.last_voice_ms = now_ms
+        # else:
+        #     self.voiced_ms = max(0, self.voiced_ms - self.voice_drop_ms)
+            
+        # if self.voiced_ms > self.min_voice_ms:
+        #     self.get_logger().info(f'🗣️ Voice Barge-in detected ({self.voiced_ms}ms) - Stopping TTS')
+        #     self._trigger_barge_in()
     
     # ═══════════════════════════════════════════════════════════════════
     # DETECȚIE VOCE UMANĂ
@@ -303,7 +354,7 @@ class BargeInNode(Node):
         self.last_trigger_ms = now_ms
         self.voiced_ms = 0
         
-        self.get_logger().info('🛑 BARGE-IN: Voce umană detectată, opresc TTS!')
+        self.get_logger().debug('_trigger_barge_in called')
         
         # Publică pe /barge_in
         msg = Bool()
@@ -328,7 +379,10 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
