@@ -36,6 +36,7 @@ setup(
             'vad_node = conversational_client.vad_node:main',
             'barge_in_node = conversational_client.barge_in_node:main',
             'stop_keyword_node = conversational_client.stop_keyword_node:main',
+            'speaker_id_node = conversational_client.speaker_id_node:main',
         ],
     },
 )
