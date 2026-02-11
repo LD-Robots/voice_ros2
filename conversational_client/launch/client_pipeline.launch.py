@@ -90,7 +90,7 @@ def generate_launch_description():
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
                 'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
-                'stop_prob_threshold': 0.8,  # Increased to prevent false positives (was 0.9)
+                'stop_prob_threshold': 0.99,  # Increased to prevent false positives (was 0.9)
                 'stop_logit_margin': 0.5,
                 'stop_hits_required': 1,
             }]
@@ -102,5 +102,17 @@ def generate_launch_description():
             executable='audio_playback_node',
             name='audio_playback_node',
             output='screen',
+        ),
+
+        # Speaker Identification (cine vorbește)
+        Node(
+            package='conversational_client',
+            executable='speaker_id_node',
+            name='speaker_id_node',
+            output='screen',
+            parameters=[{
+                'enrollment_dir': os.path.expanduser('~/voice_ros2/voices/enrollment/'),
+                'similarity_threshold': 0.25,
+            }]
         ),
     ])
