@@ -157,8 +157,14 @@ class SpeakerIdNode(Node):
         # ─────────────────────────────────────────────────────────
         audio_int16 = np.array(msg.data, dtype=np.int16)
         audio_float = audio_int16.astype(np.float32) / 32768.0
-
+        
         duration = len(audio_float) / msg.sample_rate
+        
+        # Ignoră segmentele foarte scurte (zgomote, click-uri) pentru identificare
+        if duration < 0.8:
+            self.get_logger().debug(f'🔇 Segment prea scurt pentru ID ({duration:.2f}s) - Ignorat')
+            return
+
         self.get_logger().debug(
             f'🔊 Segment primit: {duration:.2f}s ({len(audio_float)} samples)'
         )
@@ -170,8 +176,17 @@ class SpeakerIdNode(Node):
 
         if self.db_loaded and self.speaker_manager is not None:
             try:
+                # Identifică vorbitorul
                 speaker_name = self.speaker_manager.identify(audio_float)
-                self.get_logger().info(f'🗣️ Speaker identificat: {speaker_name}')
+                
+                # LOGGING INTELIGENT:
+                # - Afișează INFO doar dacă e cineva cunoscut
+                # - Dacă e Unknown, afișează doar DEBUG (ca să nu spammeze consola)
+                if speaker_name != "Unknown":
+                    self.get_logger().info(f'UNKNOWN -> 🗣️ SPEAKER IDENTIFICAT: {speaker_name}')
+                else:
+                    self.get_logger().debug(f'👤 Speaker neidentificat (Unknown)')
+
             except Exception as e:
                 self.get_logger().error(f'❌ Eroare la identificare: {e}')
                 speaker_name = "Unknown"
@@ -188,9 +203,14 @@ class SpeakerIdNode(Node):
         result_msg.data = speaker_name
         self.speaker_pub.publish(result_msg)
 
-        self.get_logger().info(
-            f'📤 /speaker_id: "{speaker_name}" (segment: {duration:.2f}s)'
-        )
+        if speaker_name != "Unknown":
+            self.get_logger().info(
+                f'📤 /speaker_id: "{speaker_name}" (segment: {duration:.2f}s)'
+            )
+        else:
+            self.get_logger().debug(
+                f'📤 /speaker_id: "Unknown" (segment: {duration:.2f}s)'
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════
