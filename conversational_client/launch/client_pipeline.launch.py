@@ -90,7 +90,7 @@ def generate_launch_description():
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
                 'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
-                'stop_prob_threshold': 0.95,
+                'stop_prob_threshold': 0.99,
                 'stop_logit_margin': 0.3,
                 'stop_hits_required': 2,
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
