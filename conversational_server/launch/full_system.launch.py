@@ -123,14 +123,14 @@ def generate_launch_description():
             name='barge_in_node',
             output='screen',
             parameters=[{
-                # PyTorch Stop Keyword Detector (runs ONLY when TTS is speaking)
-                'stop_model_path': stop_model_path,
-                'stop_enabled': True,  # ENABLED - per user request
-                'stop_prob_threshold': 0.99,  # Increased to prevent false positives (was 0.95)
-                'stop_logit_margin': 1.0,     # Large margin
-                'stop_hits_required': 2,      # 2 consecutive detections
-                'stop_frame_samples': 16000,  # Frame = 1s (required by the model!)
-                'stop_hop_samples': 4000,     # Hop = 0.25s = check every 250ms
+                # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
+                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
+                'stop_enabled': True,  # ACTIVAT - la cererea userului
+                'stop_prob_threshold': 0.95,
+                'stop_logit_margin': 0.3,
+                'stop_hits_required': 2,      # 2 detectări consecutive
+                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
             }]
         ),
         
