@@ -12,6 +12,7 @@ Used by speaker_id_node.py (Developer B — Delia).
 """
 
 import os
+from pathlib import Path
 import numpy as np
 import torch
 import torchaudio
@@ -40,7 +41,7 @@ class SpeakerManager:
 
         Args:
             enrollment_dir: Path to the folder with enrollment .wav files
-                           (e.g., share/conversational_client/voices/enrollment/)
+                           (e.g., voice_ros2/voices/enrollment/)
                            Each file must be named after the person: vale.wav, delia.wav
             threshold: Minimum cosine similarity for identification (default: 0.25)
         """
@@ -239,12 +240,23 @@ class SpeakerManager:
 # QUICK TEST (optional)
 # ═══════════════════════════════════════════════════════════════════
 
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
+
+
 def main():
     import sys
-    from ament_index_python.packages import get_package_share_directory
 
-    client_share = get_package_share_directory('conversational_client')
-    enrollment_path = os.path.join(client_share, 'voices', 'enrollment')
+    workspace_root = _find_workspace_root()
+    voices_dir = os.path.join(
+        str(workspace_root) if workspace_root else os.getcwd(),
+        'voices'
+    )
+    enrollment_path = os.path.join(voices_dir, 'enrollment')
 
     if not os.path.isdir(enrollment_path):
         print(f"❌ Folderul de enrollment nu există: {enrollment_path}")

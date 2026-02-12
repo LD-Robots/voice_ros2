@@ -21,13 +21,21 @@ from conversational_interfaces.msg import Audio
 from std_msgs.msg import String
 import numpy as np
 import os
-from ament_index_python.packages import get_package_share_directory
+from pathlib import Path
 
 try:
     from conversational_client.speaker_manager import SpeakerManager
     SPEAKER_MANAGER_AVAILABLE = True
 except ImportError:
     SPEAKER_MANAGER_AVAILABLE = False
+
+
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -51,10 +59,14 @@ class SpeakerIdNode(Node):
         # ─────────────────────────────────────────────────────────
         # PARAMETERS
         # ─────────────────────────────────────────────────────────
-        client_share = get_package_share_directory('conversational_client')
+        workspace_root = _find_workspace_root()
+        voices_dir = os.path.join(
+            str(workspace_root) if workspace_root else os.getcwd(),
+            'voices'
+        )
         self.declare_parameter(
             'enrollment_dir',
-            os.path.join(client_share, 'voices', 'enrollment')
+            os.path.join(voices_dir, 'enrollment')
         )
         self.declare_parameter('similarity_threshold', 0.25)
         self.declare_parameter('sample_rate', 16000)

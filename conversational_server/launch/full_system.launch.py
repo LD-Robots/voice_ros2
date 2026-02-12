@@ -8,12 +8,25 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 import os
+from pathlib import Path
+
+
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
 
 
 def generate_launch_description():
     client_share = get_package_share_directory('conversational_client')
     models_dir = os.path.join(client_share, 'models')
-    voices_dir = os.path.join(client_share, 'voices')
+    workspace_root = _find_workspace_root()
+    voices_dir = os.path.join(
+        str(workspace_root) if workspace_root else os.getcwd(),
+        'voices'
+    )
 
     stop_model_path = os.path.join(voices_dir, 'stop_keyword.onnx')
     hello_model_path = os.path.join(models_dir, 'hello_robot.onnx')
@@ -123,14 +136,14 @@ def generate_launch_description():
             name='barge_in_node',
             output='screen',
             parameters=[{
-                # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
-                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
-                'stop_enabled': True,  # ACTIVAT - la cererea userului
+                # PyTorch Stop Keyword Detector (runs ONLY when TTS is speaking)
+                'stop_model_path': stop_model_path,
+                'stop_enabled': True,  # ENABLED - per user request
                 'stop_prob_threshold': 0.95,
                 'stop_logit_margin': 0.3,
-                'stop_hits_required': 2,      # 2 detectări consecutive
-                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
-                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
+                'stop_hits_required': 2,      # 2 consecutive detections
+                'stop_frame_samples': 16000,  # Frame = 1s (required by the model)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = check every 250ms
             }]
         ),
         

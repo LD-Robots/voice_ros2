@@ -6,12 +6,25 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from pathlib import Path
+
+
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('conversational_client')
     models_dir = os.path.join(pkg_share, 'models')
-    voices_dir = os.path.join(pkg_share, 'voices')
+    workspace_root = _find_workspace_root()
+    voices_dir = os.path.join(
+        str(workspace_root) if workspace_root else os.getcwd(),
+        'voices'
+    )
     
     # Build the custom_models string
     # Format: path:kind
@@ -90,7 +103,7 @@ def generate_launch_description():
                 'min_voice_ms': 600,
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
-                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
+                'stop_model_path': os.path.join(voices_dir, 'stop_keyword.onnx'),
                 'stop_prob_threshold': 0.95,
                 'stop_logit_margin': 0.3,
                 'stop_hits_required': 2,

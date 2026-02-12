@@ -6,18 +6,18 @@ Script for recording a user's voice (enrollment).
 EXPLANATION:
 - Asks for the person's name
 - Records 5 seconds of audio from the microphone (16kHz, mono)
-- Saves the file in share/conversational_client/voices/enrollment/<name>.wav
+- Saves the file in voice_ros2/voices/enrollment/<name>.wav
 
 Usage:
     python3 enroll_speaker.py
 """
 
 import os
+from pathlib import Path
 import sys
 import sounddevice as sd
 import soundfile as sf
 import numpy as np
-from ament_index_python.packages import get_package_share_directory
 
 # ═══════════════════════════════════════════════════════════════════
 # CONFIGURATION
@@ -26,8 +26,20 @@ from ament_index_python.packages import get_package_share_directory
 SAMPLE_RATE = 16000           # Hz — standard for speech processing
 DURATION = 5                  # recording seconds
 CHANNELS = 1                  # mono
-CLIENT_SHARE = get_package_share_directory('conversational_client')
-ENROLLMENT_DIR = os.path.join(CLIENT_SHARE, 'voices', 'enrollment')
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
+
+
+workspace_root = _find_workspace_root()
+VOICE_DIR = os.path.join(
+    str(workspace_root) if workspace_root else os.getcwd(),
+    'voices'
+)
+ENROLLMENT_DIR = os.path.join(VOICE_DIR, 'enrollment')
 
 
 # ═══════════════════════════════════════════════════════════════════
