@@ -69,6 +69,7 @@ class AudioSegmentNode(Node):
         self.was_speaking = False       # Starea anterioară
         self.session_active = False     # True când sesiunea e activă (după wake word)
         self.is_robot_speaking = False  # True când robotul vorbește (TTS playback)
+        self.ignore_segment = False     # Flag to ignore segment sending
         self.channels = 1
         
         # ─────────────────────────────────────────────────────────
@@ -107,6 +108,14 @@ class AudioSegmentNode(Node):
             10
         )
         
+        # Barge-in event - șterge buffer-ul curent pentru a nu transcrie "Stop"
+        self.barge_in_sub = self.create_subscription(
+            Bool,
+            '/barge_in',
+            self.barge_in_callback,
+            10
+        )
+        
         # ─────────────────────────────────────────────────────────
         # PUBLISHER - trimite segmente complete la server
         # ─────────────────────────────────────────────────────────
@@ -135,10 +144,22 @@ class AudioSegmentNode(Node):
         self.is_robot_speaking = msg.data
         
         if msg.data and not was_speaking:
-            self.get_logger().debug('🔇 Robot speaking - muting input')
+            self.get_logger().info('🔇 Robot speaking - muting input')
+            # Clear buffer immediately when robot starts speaking to remove any leak
+            self.audio_buffer = []
+            self.ignore_segment = True  # Ignore any pending segment as it might be echo
         elif not msg.data and was_speaking:
-            self.get_logger().debug('🔊 Robot stopped - listening again')
-    
+            self.get_logger().info('🔊 Robot stopped - listening again')
+
+    def barge_in_callback(self, msg: Bool):
+        """Callback pentru evenimentul de barge-in."""
+        if msg.data:
+            self.get_logger().warn('🚫 Barge-in detected - clearing audio buffer to prevent transcription')
+            self.audio_buffer = []
+            self.pre_buffer = []
+            self.is_speaking = False  # Reset VAD state locally
+            self.ignore_segment = True # Flag to ignore sending segment if VAD triggers later
+
     def vad_callback(self, msg: Bool):
         """Callback pentru starea VAD (voice activity)."""
         self.was_speaking = self.is_speaking
@@ -154,6 +175,7 @@ class AudioSegmentNode(Node):
         
         # Când user-ul începe să vorbească, adaugă pre-buffer
         if msg.data and not self.was_speaking:
+            self.ignore_segment = False # Reset ignore flag on new speech
             # Adaugă pre-buffer-ul la începutul înregistrării
             self.audio_buffer = list(self.pre_buffer)
             self.get_logger().info('🎤 Voice started - capturing...')
@@ -168,6 +190,10 @@ class AudioSegmentNode(Node):
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
+        # PARANOID DEBUG: Check why buffer grows despite mute
+        # if len(self.audio_buffer) % 50 == 0 and len(self.audio_buffer) > 0:
+        #    self.get_logger().debug(f'Buffer stats: len={len(self.audio_buffer)}, RobotSpeaking={self.is_robot_speaking}, Speaking={self.is_speaking}')
+
         # Nu buffera audio când robotul vorbește (previne feedback loop)
         if self.session_active and not self.is_robot_speaking:
             if self.is_speaking:
@@ -184,6 +210,10 @@ class AudioSegmentNode(Node):
                 # Păstrează doar ultimele pre_buffer_samples
                 if len(self.pre_buffer) > self.pre_buffer_samples:
                     self.pre_buffer = self.pre_buffer[-self.pre_buffer_samples:]
+        elif self.session_active and self.is_robot_speaking:
+            if self.is_speaking and len(self.audio_buffer) > 0:
+                 self.get_logger().debug(f'DROPPING audio because RobotSpeaking=True (Buffer len: {len(self.audio_buffer)})')
+                 self.audio_buffer = [] # Enforce empty buffer
     
     # ═══════════════════════════════════════════════════════════════════
     # TRIMITE SEGMENT
@@ -196,6 +226,12 @@ class AudioSegmentNode(Node):
         if not self.session_active:
             self.get_logger().warn(f'🚫 Segment BLOCKED - session not active (had {len(self.audio_buffer)} samples)')
             self.audio_buffer = []
+            return
+            
+        if getattr(self, 'ignore_segment', False):
+            self.get_logger().warn('🚫 Segment BLOCKED - ignore flag set (barge-in)')
+            self.audio_buffer = []
+            self.ignore_segment = False
             return
         
         if not self.audio_buffer:
