@@ -90,10 +90,12 @@ def generate_launch_description():
                 'min_voice_ms': 600,
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
-                'stop_model_path': os.path.join(voices_dir, 'stop_keyword.onnx'),
-                'stop_prob_threshold': 0.99,  # Increased to prevent false positives (was 0.9)
-                'stop_logit_margin': 0.5,
-                'stop_hits_required': 1,
+                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
+                'stop_prob_threshold': 0.95,
+                'stop_logit_margin': 0.3,
+                'stop_hits_required': 2,
+                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
             }]
         ),
         
