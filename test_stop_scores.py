@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
 """
-Test rapid pentru scorurile modelului stop_robot_oww.
-Rulează și zii "stop robot" pentru a vedea scorurile în timp real.
+Quick test for stop_robot_oww model scores.
+Run and say "stop robot" to see scores in real time.
 """
 import pyaudio
 import numpy as np
 from openwakeword.model import Model as OWWModel
 import os
+from ament_index_python.packages import get_package_share_directory
 
-# Calea către modele
-MODELS_DIR = '/home/valee/voice_ros2/conversational_client/models'
+# Path to models
+CLIENT_SHARE = get_package_share_directory('conversational_client')
+MODELS_DIR = os.path.join(CLIENT_SHARE, 'models')
 
 def main():
     print("🎤 Încărcare modele...")
     
-    # Încarcă toate modelele
+    # Load all models
     model_paths = [
         os.path.join(MODELS_DIR, 'hello_robot.onnx'),
         os.path.join(MODELS_DIR, 'stop_robot.onnx'),
         os.path.join(MODELS_DIR, 'goodbye_robot.onnx'),
     ]
     
-    # Verifică ce modele există
+    # Check which models exist
     existing = []
     for p in model_paths:
         if os.path.exists(p):
@@ -34,14 +36,14 @@ def main():
         print("❌ Niciun model găsit!")
         return
     
-    # Încarcă modelul OWW
+    # Load the OWW model
     model = OWWModel(wakeword_models=existing)
     print(f"\n✅ Modele încărcate: {list(model.models.keys())}")
     
-    # Inițializează PyAudio
+    # Initialize PyAudio
     audio = pyaudio.PyAudio()
     
-    # Găsește ReSpeaker sau default
+    # Find ReSpeaker or fallback to default
     device_index = None
     for i in range(audio.get_device_count()):
         info = audio.get_device_info_by_index(i)
@@ -53,7 +55,7 @@ def main():
     if device_index is None:
         print("🎙️ Folosesc microfonul default")
     
-    # Deschide stream
+    # Open stream
     stream = audio.open(
         format=pyaudio.paInt16,
         channels=1,
@@ -71,14 +73,14 @@ def main():
     
     try:
         while True:
-            # Citește audio
+            # Read audio
             data = stream.read(1280, exception_on_overflow=False)
             audio_chunk = np.frombuffer(data, dtype=np.int16)
             
-            # Predicție
+            # Prediction
             prediction = model.predict(audio_chunk)
             
-            # Afișează scoruri
+            # Display scores
             scores = []
             triggered = []
             for label, score_obj in prediction.items():
@@ -89,7 +91,7 @@ def main():
                 
                 scores.append(f"{label}: {score:.3f}")
                 
-                # Verifică trigger
+                # Check trigger
                 if 'stop' in label.lower() and score >= 0.25:
                     triggered.append(f"🛑 {label}={score:.2f}")
                 elif 'hello' in label.lower() and score >= 0.30:
@@ -97,7 +99,7 @@ def main():
                 elif 'goodbye' in label.lower() and score >= 0.50:
                     triggered.append(f"👋 {label}={score:.2f}")
             
-            # Print pe o singură linie (overwrite)
+            # Print on a single line (overwrite)
             line = " | ".join(scores)
             if triggered:
                 line += f"  <<<  TRIGGERED: {', '.join(triggered)}"

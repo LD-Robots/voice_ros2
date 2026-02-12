@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""
+speaker_manager.py
+Manages the voice fingerprint database.
+
+EXPLANATION:
+- Loads .wav files from the enrollment folder
+- Computes embeddings using SpeechBrain (ECAPA-TDNN)
+- Identifies the speaker via cosine similarity
+
+Used by speaker_id_node.py (Developer B — Delia).
+"""
+
+import os
+import numpy as np
+import torch
+import torchaudio
+# ─────────────────────────────────────────────────────────────────
+# FIX: torchaudio 2.6+ removed list_audio_backends(),
+#      but speechbrain 1.0.x still calls it at import.
+# ─────────────────────────────────────────────────────────────────
+if not hasattr(torchaudio, 'list_audio_backends'):
+    torchaudio.list_audio_backends = lambda: ['ffmpeg']
+
+from speechbrain.inference.speaker import EncoderClassifier
+
+
+class SpeakerManager:
+    """
+    Voice fingerprint manager.
+
+    Usage:
+        manager = SpeakerManager('/path/to/enrollment/')
+        speaker = manager.identify(audio_float32_array)
+    """
+
+    def __init__(self, enrollment_dir, threshold=0.25):
+        """
+        Initialize SpeakerManager.
+
+        Args:
+            enrollment_dir: Path to the folder with enrollment .wav files
+                           (e.g., share/conversational_client/voices/enrollment/)
+                           Each file must be named after the person: vale.wav, delia.wav
+            threshold: Minimum cosine similarity for identification (default: 0.25)
+        """
+        self.enrollment_dir = enrollment_dir
+        self.threshold = threshold
+
+        # ─────────────────────────────────────────────────────────
+        # Load SpeechBrain ECAPA-TDNN model
+        # ─────────────────────────────────────────────────────────
+        print("🔄 Se încarcă modelul SpeechBrain ECAPA-TDNN...")
+        self.classifier = EncoderClassifier.from_hparams(
+            source="speechbrain/spkrec-ecapa-voxceleb",
+            savedir=os.path.expanduser("~/.cache/speechbrain/spkrec-ecapa-voxceleb"),
+            run_opts={"device": "cpu"}
+        )
+        print("✅ Model ECAPA-TDNN încărcat!")
+
+        # ─────────────────────────────────────────────────────────
+        # Database: {"Vale": embedding_tensor, "Delia": embedding_tensor}
+        # ─────────────────────────────────────────────────────────
+        self.speaker_db = {}
+        self._load_enrollment()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ENROLLMENT LOADING
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _load_enrollment(self):
+        """Load all .wav files from enrollment_dir and compute embeddings."""
+
+        if not os.path.isdir(self.enrollment_dir):
+            print(f"⚠️ Folderul de enrollment nu există: {self.enrollment_dir}")
+            return
+
+        wav_files = [f for f in os.listdir(self.enrollment_dir) if f.endswith('.wav')]
+
+        if not wav_files:
+            print(f"⚠️ Niciun fișier .wav în: {self.enrollment_dir}")
+            return
+
+        print(f"🔄 Se încarcă {len(wav_files)} voci din enrollment...")
+
+        for wav_file in wav_files:
+            # Person name = file name without extension
+            # ex: vale.wav → "Vale" (capitalized)
+            speaker_name = os.path.splitext(wav_file)[0].capitalize()
+            wav_path = os.path.join(self.enrollment_dir, wav_file)
+
+            try:
+                embedding = self._compute_embedding_from_file(wav_path)
+                self.speaker_db[speaker_name] = embedding
+                print(f"  ✅ {speaker_name} — embedding calculat ({wav_file})")
+            except Exception as e:
+                print(f"  ❌ Eroare la {wav_file}: {e}")
+
+        print(f"📊 Baza de date: {len(self.speaker_db)} voci "
+              f"({', '.join(self.speaker_db.keys())})")
+
+    # ═══════════════════════════════════════════════════════════════════
+    # EMBEDDING COMPUTATION
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _compute_embedding_from_file(self, wav_path):
+        """
+        Compute embedding from a .wav file.
+
+        Args:
+            wav_path: Path to the .wav file
+
+        Returns:
+            torch.Tensor: Voice embedding (vector)
+        """
+        signal, sr = torchaudio.load(wav_path)
+
+        # Resample to 16kHz if needed
+        if sr != 16000:
+            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
+            signal = resampler(signal)
+
+        # Convert to mono if stereo
+        if signal.shape[0] > 1:
+            signal = torch.mean(signal, dim=0, keepdim=True)
+
+        # Compute embedding
+        embedding = self.classifier.encode_batch(signal)
+        return embedding.squeeze()
+
+    def _compute_embedding_from_array(self, audio_float):
+        """
+        Compute embedding from a float32 numpy array.
+
+        Args:
+            audio_float: float32 numpy array, normalized [-1, 1], mono, 16kHz
+
+        Returns:
+            torch.Tensor: Voice embedding (vector)
+        """
+        # Convert numpy → torch tensor
+        if isinstance(audio_float, np.ndarray):
+            signal = torch.from_numpy(audio_float).float()
+        else:
+            signal = torch.tensor(audio_float, dtype=torch.float32)
+
+        # Ensure 2D: [1, num_samples]
+        if signal.dim() == 1:
+            signal = signal.unsqueeze(0)
+
+        # Compute embedding
+        embedding = self.classifier.encode_batch(signal)
+        return embedding.squeeze()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # SPEAKER IDENTIFICATION
+    # ═══════════════════════════════════════════════════════════════════
+
+    def identify(self, audio_float, threshold=None):
+        """
+        Identify the speaker based on an audio segment.
+
+        Args:
+            audio_float: float32 numpy array, normalized [-1, 1], mono, 16kHz
+            threshold: Optional threshold (uses self.threshold if not provided)
+
+        Returns:
+            str: Speaker name (e.g., "Vale") or "Unknown"
+        """
+        if not self.speaker_db:
+            return "Unknown"
+
+        if threshold is None:
+            threshold = self.threshold
+
+        # Compute embedding for the incoming audio
+        new_embedding = self._compute_embedding_from_array(audio_float)
+
+        # ─────────────────────────────────────────────────────────
+        # Compare with all speakers in the database (cosine similarity)
+        # ─────────────────────────────────────────────────────────
+        best_name = "Unknown"
+        best_score = -1.0
+
+        for name, stored_embedding in self.speaker_db.items():
+            score = self._cosine_similarity(new_embedding, stored_embedding)
+
+            if score > best_score:
+                best_score = score
+                best_name = name
+
+        # Check if the score exceeds the threshold
+        if best_score >= threshold:
+            return best_name
+        else:
+            return "Unknown"
+
+    # ═══════════════════════════════════════════════════════════════════
+    # COSINE SIMILARITY
+    # ═══════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _cosine_similarity(vec_a, vec_b):
+        """
+        Compute cosine similarity between two vectors.
+
+        Returns:
+            float: Score between -1 and 1 (1 = identical, 0 = unrelated)
+        """
+        # Ensure 1D
+        vec_a = vec_a.flatten()
+        vec_b = vec_b.flatten()
+
+        dot_product = torch.dot(vec_a, vec_b)
+        norm_a = torch.norm(vec_a)
+        norm_b = torch.norm(vec_b)
+
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+
+        similarity = dot_product / (norm_a * norm_b)
+        return similarity.item()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # UTILITIES
+    # ═══════════════════════════════════════════════════════════════════
+
+    def get_speakers(self):
+        """Return the list of speaker names in the database."""
+        return list(self.speaker_db.keys())
+
+    def reload(self):
+        """Reload the database (useful after new enrollment)."""
+        self.speaker_db.clear()
+        self._load_enrollment()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# QUICK TEST (optional)
+# ═══════════════════════════════════════════════════════════════════
+
+def main():
+    import sys
+    from ament_index_python.packages import get_package_share_directory
+
+    client_share = get_package_share_directory('conversational_client')
+    enrollment_path = os.path.join(client_share, 'voices', 'enrollment')
+
+    if not os.path.isdir(enrollment_path):
+        print(f"❌ Folderul de enrollment nu există: {enrollment_path}")
+        print("   Rulează mai întâi: python3 speaker_id/enroll_speaker.py")
+        sys.exit(1)
+
+    wav_count = len([f for f in os.listdir(enrollment_path) if f.endswith('.wav')])
+    if wav_count == 0:
+        print("❌ Niciun fișier .wav în enrollment. Rulează mai întâi: python3 speaker_id/enroll_speaker.py")
+        sys.exit(1)
+
+    print(f"\n📂 Testare SpeakerManager cu {wav_count} voci...\n")
+    manager = SpeakerManager(enrollment_path)
+    print(f"\n✅ Vorbitori încărcați: {manager.get_speakers()}")
+
+
+if __name__ == '__main__':
+    main()
+    print("   SpeakerManager funcționează corect!")
