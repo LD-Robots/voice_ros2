@@ -2,10 +2,10 @@
 """
 ASR Node - Speech to Text using Faster Whisper (Standalone).
 
-FEATURES (sincronizat cu Conversational_Robot Python):
-  - Warmup la start pentru încărcare completă model
-  - Detecție RO/EN cu alegere best score
-  - Fallback fără VAD pentru erori
+FEATURES (synced with Conversational_Robot Python):
+  - Warmup at start for full model load
+  - RO/EN detection with best score selection
+  - Fallback without VAD on errors
 
 Subscribes to: 
   - /audio_raw (Audio) - audio frames
@@ -27,7 +27,7 @@ import re
 import unicodedata
 import soundfile as sf
 
-# RapidFuzz pentru anti-echo textual
+# RapidFuzz for textual anti-echo
 try:
     from rapidfuzz import fuzz
     RAPIDFUZZ_AVAILABLE = True
@@ -35,7 +35,7 @@ except ImportError:
     RAPIDFUZZ_AVAILABLE = False
     print("⚠️ rapidfuzz not installed. Anti-echo disabled. Run: pip install rapidfuzz")
 
-# Faster Whisper pentru ASR
+# Faster Whisper for ASR
 try:
     from faster_whisper import WhisperModel
     WHISPER_AVAILABLE = True
@@ -48,7 +48,7 @@ class ASRNode(Node):
     def __init__(self):
         super().__init__('asr_node')
         
-        # Parametri configurabili
+        # Configurable parameters
         self.declare_parameter('model_size', 'small')
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('compute_type', 'int8')
@@ -81,7 +81,7 @@ class ASRNode(Node):
             self.get_logger().error('faster-whisper not installed!')
             raise RuntimeError('faster-whisper not available')
         
-        # Inițializează Whisper model
+        # Initialize Whisper model
         self.get_logger().debug(f'Loading Whisper model: {model_size} on {device}...')
         self.model = WhisperModel(
             model_size,
@@ -90,21 +90,21 @@ class ASRNode(Node):
         )
         self.get_logger().debug('✅ Whisper model loaded!')
         
-        # Warmup la start
+        # Warmup at start
         self._warmed_up = False
         self._ensure_warm()
         
-        # Buffer pentru audio
+        # Audio buffer
         self.audio_buffer = []
         self.sample_rate = 16000
         self.channels = 1
         self.is_speaking = False
         self.was_speaking = False
         
-        # Anti-echo: ultimul răspuns al robotului
+        # Anti-echo: last bot reply
         self.last_bot_reply = ""
         
-        # Subscriber pentru audio
+        # Subscriber for audio
         self.audio_sub = self.create_subscription(
             Audio,
             '/audio_raw',
@@ -112,7 +112,7 @@ class ASRNode(Node):
             10
         )
         
-        # Subscriber pentru VAD
+        # Subscriber for VAD
         self.vad_sub = self.create_subscription(
             Bool,
             '/voice_activity',
@@ -120,7 +120,7 @@ class ASRNode(Node):
             10
         )
         
-        # Subscriber pentru răspunsul LLM (anti-echo)
+        # Subscriber for LLM response (anti-echo)
         self.llm_response_sub = self.create_subscription(
             Transcription,
             '/llm_response',
@@ -128,7 +128,7 @@ class ASRNode(Node):
             10
         )
         
-        # Publisher pentru transcriere
+        # Publisher for transcription
         self.transcription_pub = self.create_publisher(
             Transcription,
             '/transcription',
@@ -143,21 +143,21 @@ class ASRNode(Node):
         self.get_logger().debug('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
     
     def _ensure_warm(self):
-        """Încarcă complet modelul prin transcriere dummy."""
+        """Fully load the model via a dummy transcription."""
         if not self.warmup_enabled or self._warmed_up:
             return
         try:
             self.get_logger().debug("🔥 ASR warm-up start...")
             start = time.perf_counter()
             
-            # Creează fișier audio scurt (0.5s tăcere)
+            # Create a short audio file (0.5s silence)
             fd, temp_path = tempfile.mkstemp(suffix=".wav")
             os.close(fd)
             try:
                 silence = np.zeros(8000, dtype=np.float32)  # 0.5s @ 16kHz
                 sf.write(temp_path, silence, 16000)
                 
-                # Transcriere dummy
+                # Dummy transcription
                 self.model.transcribe(temp_path, language="en", beam_size=1)
             finally:
                 try:
@@ -173,8 +173,8 @@ class ASRNode(Node):
     
     def _run_once(self, wav_path: str, language, use_vad: bool):
         """
-        Returnează: (text, lang_out, lang_prob, score)
-        score = medie(avg_logprob pe segmente) + 0.01 * len(text)
+        Returns: (text, lang_out, lang_prob, score)
+        score = average(avg_logprob over segments) + 0.01 * len(text)
         """
         segments, info = self.model.transcribe(
             str(wav_path),
@@ -190,7 +190,7 @@ class ASRNode(Node):
         segs = list(segments)
         text = "".join(s.text for s in segs).strip()
         
-        # scor simplu și robust
+        # Simple, robust score
         if segs:
             vals = [getattr(s, "avg_logprob", -5.0) if getattr(s, "avg_logprob", None) is not None else -5.0 for s in segs]
             avg_lp = sum(vals) / len(vals)
@@ -203,8 +203,8 @@ class ASRNode(Node):
     
     def _transcribe_ro_en(self, wav_path: str):
         """
-        Transcriere strict EN/RO -> alegem cea mai bună.
-        Rulăm EN & RO cu VAD intern; dacă dă eroare, retry fără VAD.
+        Strict EN/RO transcription -> choose the best.
+        Run EN & RO with internal VAD; if it errors, retry without VAD.
         """
         def safe(lang):
             try:
@@ -224,26 +224,26 @@ class ASRNode(Node):
     
     def _normalize_text(self, text: str) -> str:
         """
-        Normalizează text pentru comparație anti-echo.
-        Elimină diacritice, punctuație, spații extra și face lowercase.
+        Normalize text for anti-echo comparison.
+        Removes diacritics, punctuation, extra spaces, and lowercases.
         """
         if not text:
             return ""
         # Lowercase
         text = text.lower()
-        # Elimină diacritice (ă->a, î->i, etc.)
+        # Remove diacritics (ă->a, î->i, etc.)
         text = unicodedata.normalize('NFD', text)
         text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
-        # Elimină punctuație și caractere speciale
+        # Remove punctuation and special characters
         text = re.sub(r'[^a-z0-9\s]', '', text)
-        # Normalizează spații
+        # Normalize spaces
         text = ' '.join(text.split())
         return text.strip()
     
     def _is_echo(self, transcription: str) -> bool:
         """
-        Verifică dacă transcripția e echo de la TTS.
-        Returnează True dacă trebuie ignorată.
+        Check whether the transcription is TTS echo.
+        Return True if it should be ignored.
         """
         if not self.echo_enabled or not self.last_bot_reply:
             return False
@@ -251,11 +251,11 @@ class ASRNode(Node):
         user_norm = self._normalize_text(transcription)
         bot_norm = self._normalize_text(self.last_bot_reply)
         
-        # Verifică doar dacă ambele sunt suficient de lungi
+        # Check only if both are long enough
         if len(user_norm) < self.echo_min_length or len(bot_norm) < self.echo_min_length:
             return False
         
-        # Calculează similaritatea
+        # Compute similarity
         similarity = fuzz.partial_ratio(user_norm, bot_norm)
         
         if similarity >= self.echo_threshold:
@@ -265,44 +265,44 @@ class ASRNode(Node):
         return False
     
     def llm_response_callback(self, msg: Transcription):
-        """Stochează ultimul răspuns al robotului pentru anti-echo."""
+        """Store the last bot reply for anti-echo."""
         if msg.text:
             self.last_bot_reply = msg.text
             self.get_logger().debug(f'📝 Stored bot reply for anti-echo: {msg.text[:50]}...')
     
     def vad_callback(self, msg: Bool):
-        """Primește statusul VAD (vorbește/nu vorbește)."""
+        """Receive VAD status (speaking/not speaking)."""
         self.was_speaking = self.is_speaking
         self.is_speaking = msg.data
         
-        # Când userul termină de vorbit, transcrie
+        # When the user finishes speaking, transcribe
         if self.was_speaking and not self.is_speaking:
             self.get_logger().debug(f'🔚 Speech ended, processing {len(self.audio_buffer)} frames...')
             self._process_buffer()
     
     def audio_callback(self, msg: Audio):
-        """Bufferează audio în timpul vorbirii."""
+        """Buffer audio during speech."""
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
-        # Bufferează audio când userul vorbește (sau puțin înainte)
+        # Buffer audio when the user speaks (or slightly before)
         if self.is_speaking:
             self.audio_buffer.extend(msg.data)
         else:
-            # Păstrează ultimele 0.5 secunde pentru context
+            # Keep the last 0.5 seconds for context
             max_pre_buffer = int(self.sample_rate * 0.5)
             self.audio_buffer.extend(msg.data)
             if len(self.audio_buffer) > max_pre_buffer:
                 self.audio_buffer = self.audio_buffer[-max_pre_buffer:]
     
     def _process_buffer(self):
-        """Procesează audio-ul bufferat și publică transcrierea."""
+        """Process buffered audio and publish transcription."""
         if not self.audio_buffer:
             self.get_logger().warn('Empty audio buffer, skipping')
             self.audio_buffer = []
             return
         
-        # Verifică lungimea minimă
+        # Check minimum length
         audio_length = len(self.audio_buffer) / self.sample_rate
         if audio_length < self.min_audio_length:
             self.get_logger().warn(f'Audio too short ({audio_length:.2f}s < {self.min_audio_length}s), skipping')
@@ -311,10 +311,10 @@ class ASRNode(Node):
         
         self.get_logger().info(f'🎤 Processing {audio_length:.2f}s of audio...')
         
-        # Convertește în numpy array
+        # Convert to numpy array
         audio_data = np.array(self.audio_buffer, dtype=np.int16)
         
-        # Salvează temporar ca WAV
+        # Save temporarily as WAV
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
             temp_path = f.name
             with wave.open(f.name, 'wb') as wav:
@@ -324,14 +324,14 @@ class ASRNode(Node):
                 wav.writeframes(audio_data.tobytes())
         
         try:
-            # Folosește detecție RO/EN dacă setat
+            # Use RO/EN detection if set
             if self.language == 'ro_en':
                 result = self._transcribe_ro_en(temp_path)
                 text = result["text"]
                 lang = result["lang"]
                 confidence = result["language_probability"]
             else:
-                # Transcrie cu Faster Whisper - cu fallback fără VAD
+                # Transcribe with Faster Whisper - with fallback without VAD
                 try:
                     text, lang, confidence, _ = self._run_once(temp_path, self.language, use_vad=True)
                 except ValueError as e:
@@ -345,12 +345,12 @@ class ASRNode(Node):
             if text:
                 self.get_logger().info(f'🧏 [{lang}] {text}')
                 
-                # Anti-echo: verifică dacă e echo de la TTS
+                # Anti-echo: check if it's echo from TTS
                 if self._is_echo(text):
                     self.audio_buffer = []
                     return
                 
-                # Publică rezultat
+                # Publish result
                 out = Transcription()
                 out.text = text
                 out.language = lang

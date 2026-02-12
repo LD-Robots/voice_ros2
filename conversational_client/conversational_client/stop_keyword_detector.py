@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
+from ament_index_python.packages import get_package_share_directory
 
 try:
     import onnxruntime as ort
@@ -34,8 +35,8 @@ class StopDetectionResult:
 
 class StopKeywordDetector:
     """
-    Rulează modelul ONNX „stop” și emite un event când scorul depășește pragurile.
-    Fereastră: 1s, hop: 0.5s (configurabil).
+    Runs the ONNX "stop" model and emits an event when scores exceed thresholds.
+    Window: 1s, hop: 0.5s (configurable).
     """
 
     def __init__(self, cfg: dict, sample_rate: int, logger):
@@ -52,7 +53,12 @@ class StopKeywordDetector:
         self.prob_threshold = float(cfg.get("prob_threshold", 0.8))
         self.hits_required = max(1, int(cfg.get("hits_required", 1)))
         self.debug = bool(cfg.get("debug", False))
-        model_path = Path(cfg.get("model_path") or "voices/stop_keyword.onnx").expanduser()
+        default_model_path = (
+            Path(get_package_share_directory("conversational_client"))
+            / "voices"
+            / "stop_keyword.onnx"
+        )
+        model_path = Path(cfg.get("model_path") or default_model_path).expanduser()
 
         if self.sample_rate != 16000:
             raise ValueError("StopKeywordDetector necesită sample_rate = 16000 Hz pentru acest model.")
@@ -86,8 +92,8 @@ class StopKeywordDetector:
 
     def process_block(self, pcm_i16: np.ndarray) -> Optional[StopDetectionResult]:
         """
-        Primește un bloc PCM (int16) și rulează detectorul la fiecare hop.
-        Returnează StopDetectionResult doar când pragurile sunt atinse.
+        Accepts a PCM block (int16) and runs the detector at each hop.
+        Returns StopDetectionResult only when thresholds are met.
         """
         if pcm_i16.size == 0:
             return None

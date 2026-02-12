@@ -3,6 +3,7 @@ import os
 from glob import glob
 
 package_name = 'conversational_client'
+voice_files = glob('voices/*.onnx') + glob('voices/*.data')
 
 setup(
     name=package_name,
@@ -15,6 +16,8 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         # Modelele ONNX pentru wake word detection
         (os.path.join('share', package_name, 'models'), glob('models/*.onnx')),
+        # Resurse audio (ex: stop_keyword.onnx)
+        (os.path.join('share', package_name, 'voices'), voice_files),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

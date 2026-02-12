@@ -60,14 +60,14 @@ pip install --break-system-packages \
 
 ### 1. Clone the Repository
 ```bash
-cd ~/ros2_ws/src
+cd /path/to/ros2_ws/src
 git clone https://github.com/Delia63/voice_ros2.git
 ```
 
 ### 2. Configure Environment Variables
 Create a `.env` file in the `voice_ros2/` directory:
 ```bash
-cd ~/ros2_ws/src/voice_ros2
+cd /path/to/ros2_ws/src/voice_ros2
 nano .env
 ```
 
@@ -82,7 +82,7 @@ GROQ_API_KEY=your_api_key_here
 
 #### Piper TTS Models (Romanian + English)
 ```bash
-cd ~/ros2_ws/src/voice_ros2/conversational_server/models/piper
+cd /path/to/ros2_ws/src/voice_ros2/conversational_server/models/piper
 
 # Romanian voice
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/ro/ro_RO/mihai/medium/ro_RO-mihai-medium.onnx
@@ -101,7 +101,7 @@ The wake word models are already included in the repository:
 
 ### 4. Build the Workspace
 ```bash
-cd ~/ros2_ws
+cd /path/to/ros2_ws
 colcon build --symlink-install
 source install/setup.bash
 ```
@@ -110,7 +110,7 @@ source install/setup.bash
 
 ### Full System (Server + Client)
 ```bash
-source ~/ros2_ws/install/setup.bash
+source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py
 ```
 
@@ -130,14 +130,14 @@ ros2 launch conversational_client client_pipeline.launch.py
 
 ```bash
 # Înregistrează vocea (5 secunde)
-python3 ~/ros2_ws/src/voice_ros2/speaker_id/enroll_speaker.py
+python3 speaker_id/enroll_speaker.py
 ```
 
-Scriptul va cere numele și va salva amprenta vocală în `voices/enrollment/<nume>.wav`. Repetă pentru fiecare utilizator.
+Scriptul va cere numele și va salva amprenta vocală în `conversational_client/voices/enrollment/<nume>.wav`. Repetă pentru fiecare utilizator.
 
 Verifică baza de date:
 ```bash
-python3 ~/ros2_ws/src/voice_ros2/speaker_id/speaker_manager.py
+python3 speaker_id/speaker_manager.py
 ```
 
 După enrollment, `speaker_id_node` va identifica automat vorbitorul la pornirea sistemului și va comunica numele către LLM.
@@ -198,7 +198,7 @@ Edit `full_system.launch.py` and adjust:
 ### "GROQ_API_KEY not set" Error
 Make sure `.env` file exists and contains your API key:
 ```bash
-cat ~/ros2_ws/src/voice_ros2/.env
+cat /path/to/ros2_ws/src/voice_ros2/.env
 ```
 
 ### Microphone Not Working
@@ -211,7 +211,7 @@ pavucontrol
 ### Build Errors
 Clean and rebuild:
 ```bash
-cd ~/ros2_ws
+cd /path/to/ros2_ws
 rm -rf build/ install/ log/
 colcon build --symlink-install
 ```
@@ -243,11 +243,11 @@ voice_ros2/
 │   │   ├── barge_in_node.py
 │   │   ├── stop_keyword_node.py
 │   │   └── speaker_id_node.py     # Speaker identification
-│   └── models/                    # Wake word models
+│   ├── models/                    # Wake word models
+│   └── voices/                    # Stop keyword model + enrollment data
 ├── speaker_id/                     # Speaker fingerprint system
 │   ├── speaker_manager.py         # Voice database (SpeechBrain ECAPA)
 │   └── enroll_speaker.py          # Enrollment script
-├── voices/enrollment/              # Enrolled voice samples (.wav)
 ├── conversational_interfaces/      # ROS2 message definitions
 │   └── msg/
 │       ├── Audio.msg
