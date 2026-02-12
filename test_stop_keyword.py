@@ -6,15 +6,27 @@ Shows real-time scores for detecting the word "stop"
 import pyaudio
 import numpy as np
 import os
-from ament_index_python.packages import get_package_share_directory
+from pathlib import Path
 
 from conversational_client.stop_keyword_detector import StopKeywordDetector
 
 # Configuration
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 1600  # 100ms
-CLIENT_SHARE = get_package_share_directory('conversational_client')
-MODEL_PATH = os.path.join(CLIENT_SHARE, 'voices', 'stop_keyword.onnx')
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
+
+
+workspace_root = _find_workspace_root()
+voices_dir = os.path.join(
+    str(workspace_root) if workspace_root else os.getcwd(),
+    'voices'
+)
+MODEL_PATH = os.path.join(voices_dir, 'stop_keyword.onnx')
 
 class SimpleLogger:
     def info(self, msg): print(f"[INFO] {msg}")
