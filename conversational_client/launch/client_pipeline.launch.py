@@ -117,4 +117,12 @@ def generate_launch_description():
                 'similarity_threshold': 0.25,
             }]
         ),
+        
+        # Session Manager (Goodbye handling)
+        Node(
+            package='conversational_client',
+            executable='session_manager_node',
+            name='session_manager_node',
+            output='screen',
+        ),
     ])
