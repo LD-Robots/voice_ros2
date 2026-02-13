@@ -157,6 +157,15 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         # Istoricul conversației
         self.conversation_history = []
         
+        # Speaker identification — cine vorbește acum
+        self.current_speaker = "Unknown"
+        self.speaker_sub = self.create_subscription(
+            String,
+            '/speaker_id',
+            self._speaker_id_callback,
+            10
+        )
+        
         # Subscriber pentru transcriere
         self.transcription_sub = self.create_subscription(
             Transcription,
@@ -271,6 +280,12 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         )
         thread.start()
     
+    def _speaker_id_callback(self, msg: String):
+        """Actualizează vorbitorul curent pe baza amprentei vocale."""
+        if msg.data and msg.data != self.current_speaker:
+            self.current_speaker = msg.data
+            self.get_logger().info(f'🗣️ Speaker activ: {self.current_speaker}')
+    
     def _process_streaming(self, user_text: str, user_lang: str):
         """Procesează răspunsul LLM cu streaming."""
         session_id = str(uuid.uuid4())[:8]
@@ -279,7 +294,14 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             # Adaugă mesajul utilizatorului în istoric (cu instrucțiune de limbă)
             # Aceasta forțează modelul să răspundă în limba corectă
             lang_instruction = "[RESPOND IN ENGLISH]" if not user_lang.startswith('ro') else "[RĂSPUNDE ÎN ROMÂNĂ]"
-            user_message_with_lang = f"{lang_instruction} {user_text}"
+            
+            # Adaugă numele vorbitorului dacă e cunoscut
+            if self.current_speaker and self.current_speaker != "Unknown":
+                speaker_info = f"[Speaker: {self.current_speaker}] "
+            else:
+                speaker_info = ""
+            
+            user_message_with_lang = f"{lang_instruction} {speaker_info}{user_text}"
             
             self.conversation_history.append({
                 'role': 'user',
