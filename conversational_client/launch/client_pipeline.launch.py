@@ -62,7 +62,7 @@ def generate_launch_description():
             parameters=[{
                 'aggressiveness': 2,
                 'wake_word_enabled': True,
-                'session_timeout': 8.0,
+                'session_timeout': 30.0,
             }]
         ),
         
@@ -93,6 +93,8 @@ def generate_launch_description():
                 'stop_prob_threshold': 0.8,  # Increased to prevent false positives (was 0.9)
                 'stop_logit_margin': 0.2,
                 'stop_hits_required': 2,
+                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
             }]
         ),
         
@@ -101,6 +103,26 @@ def generate_launch_description():
             package='conversational_client',
             executable='audio_playback_node',
             name='audio_playback_node',
+            output='screen',
+        ),
+
+        # Speaker Identification (cine vorbește)
+        Node(
+            package='conversational_client',
+            executable='speaker_id_node',
+            name='speaker_id_node',
+            output='screen',
+            parameters=[{
+                'enrollment_dir': os.path.expanduser('~/voice_ros2/voices/enrollment/'),
+                'similarity_threshold': 0.25,
+            }]
+        ),
+        
+        # Session Manager (Goodbye handling)
+        Node(
+            package='conversational_client',
+            executable='session_manager_node',
+            name='session_manager_node',
             output='screen',
         ),
     ])

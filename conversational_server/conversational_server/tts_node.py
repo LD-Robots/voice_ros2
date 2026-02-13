@@ -25,6 +25,7 @@ import numpy as np
 import threading
 import queue
 import time
+import scipy.signal  # For resampling
 
 # Edge TTS pentru sinteză vocală (online)
 try:
@@ -93,6 +94,9 @@ class TTSNode(Node):
                 self.get_logger().error('soundfile not installed - required for edge-tts!')
                 raise RuntimeError('soundfile not available')
             self.get_logger().debug(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
+        
+        # Target sample rate (fix "horror voice" issues by standardizing on 16kHz)
+        self.target_sample_rate = 16000
         
         # === WAV CACHE - fraze comune pre-generate ===
         self.cache_dir = '/tmp/tts_cache'
@@ -209,6 +213,12 @@ class TTSNode(Node):
             try:
                 voice = self._pick_voice(lang)
                 audio_data, sample_rate = self._synthesize(text, voice)
+                
+                # Resample immediately for cache
+                if sample_rate != self.target_sample_rate:
+                     audio_data = self._resample(audio_data, sample_rate, self.target_sample_rate)
+                     sample_rate = self.target_sample_rate
+                
                 if len(audio_data.shape) > 1:
                     audio_data = audio_data[:, 0]
                 self.audio_cache[key] = (audio_data, sample_rate)
@@ -309,6 +319,11 @@ class TTSNode(Node):
                     
                     try:
                         audio_data, sample_rate = self._synthesize(text, voice)
+                        
+                        # Resample to target rate (16kHz)
+                        if sample_rate != self.target_sample_rate:
+                            audio_data = self._resample(audio_data, sample_rate, self.target_sample_rate)
+                            sample_rate = self.target_sample_rate
                         
                         # Asigură-te că e mono
                         if len(audio_data.shape) > 1:
@@ -433,6 +448,19 @@ class TTSNode(Node):
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+
+    def _resample(self, audio_data, original_rate, target_rate):
+        """Resample audio data to target rate."""
+        if original_rate == target_rate:
+            return audio_data
+        
+        # Calculate number of samples
+        number_of_samples = round(len(audio_data) * float(target_rate) / original_rate)
+        
+        # Resample using FFT (good for speech)
+        resampled_data = scipy.signal.resample(audio_data, number_of_samples)
+        
+        return resampled_data.astype(np.int16)
     
     def stop(self):
         """Oprește TTS-ul curent (pentru barge-in)."""
