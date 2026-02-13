@@ -260,13 +260,7 @@ class WakeWordNode(Node):
 
 
                     if self.audio_debug_count % 25 == 0:
-                        # Convert predictions to a flat dict for logging if needed
-                        scores_dict = {}
-                        for model, res in prediction.items():
-                            val = max(res.values()) if isinstance(res, dict) else res
-                            scores_dict[model] = float(val)
-                        
-                        scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in scores_dict.items()])
+                        scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in prediction.items()])
                         self.get_logger().debug(f'👀 Scores: {scores_str}')
                     
                 except Exception as e:
