@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """
-Test script pentru stop_keyword.onnx (PyTorch-based detector)
-Arată scorurile în timp real pentru detectarea cuvântului "stop"
+Test script for stop_keyword.onnx (PyTorch-based detector)
+Shows real-time scores for detecting the word "stop"
 """
 import pyaudio
 import numpy as np
-import sys
 import os
+from pathlib import Path
 
-# Adaugă calea la stop_keyword_detector
-sys.path.insert(0, '/home/delia/voice_ros2/conversational_client/conversational_client')
-from stop_keyword_detector import StopKeywordDetector
+from conversational_client.stop_keyword_detector import StopKeywordDetector
 
-# Configurație
+# Configuration
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 1600  # 100ms
-MODEL_PATH = '/home/delia/voice_ros2/conversational_client/models/stop_keyword.onnx'
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
+
+
+workspace_root = _find_workspace_root()
+voices_dir = os.path.join(
+    str(workspace_root) if workspace_root else os.getcwd(),
+    'voices'
+)
+MODEL_PATH = os.path.join(voices_dir, 'stop_keyword.onnx')
 
 class SimpleLogger:
     def info(self, msg): print(f"[INFO] {msg}")
@@ -26,7 +37,7 @@ def main():
     print("🎤 Test Stop Keyword Detector (PyTorch)")
     print("=" * 60)
     
-    # Verifică modelul
+    # Check model
     if not os.path.exists(MODEL_PATH):
         print(f"❌ Model nu există: {MODEL_PATH}")
         return
@@ -39,13 +50,13 @@ def main():
     print(f"✓ Model: {MODEL_PATH}")
     print(f"✓ Data: {data_path}")
     
-    # Inițializează detectorul
+    # Initialize detector
     logger = SimpleLogger()
     cfg = {
         'model_path': MODEL_PATH,
-        'prob_threshold': 0.7,  # Scăzut pentru testing
+        'prob_threshold': 0.7,  # Lowered for testing
         'logit_margin': 0.3,
-        'hits_required': 1,  # 1 pentru a vedea fiecare detectare
+        'hits_required': 1,  # 1 to see every detection
         'debug': True,
     }
     
@@ -75,11 +86,11 @@ def main():
     
     try:
         while True:
-            # Citește audio
+            # Read audio
             data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
             pcm = np.frombuffer(data, dtype=np.int16)
             
-            # Procesează prin detector
+            # Process through detector
             result = detector.process_block(pcm)
             
             if result:

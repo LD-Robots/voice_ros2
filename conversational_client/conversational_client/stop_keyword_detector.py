@@ -34,8 +34,8 @@ class StopDetectionResult:
 
 class StopKeywordDetector:
     """
-    Rulează modelul ONNX „stop” și emite un event când scorul depășește pragurile.
-    Fereastră: 1s, hop: 0.5s (configurabil).
+    Runs the ONNX "stop" model and emits an event when scores exceed thresholds.
+    Window: 1s, hop: 0.5s (configurable).
     """
 
     def __init__(self, cfg: dict, sample_rate: int, logger):
@@ -52,7 +52,11 @@ class StopKeywordDetector:
         self.prob_threshold = float(cfg.get("prob_threshold", 0.8))
         self.hits_required = max(1, int(cfg.get("hits_required", 1)))
         self.debug = bool(cfg.get("debug", False))
-        model_path = Path(cfg.get("model_path") or "voices/stop_keyword.onnx").expanduser()
+        default_model_path = (
+            self._find_workspace_root() / "voices" / "stop_keyword.onnx"
+            if self._find_workspace_root() else Path("voices/stop_keyword.onnx")
+        )
+        model_path = Path(cfg.get("model_path") or default_model_path).expanduser()
 
         if self.sample_rate != 16000:
             raise ValueError("StopKeywordDetector necesită sample_rate = 16000 Hz pentru acest model.")
@@ -84,10 +88,18 @@ class StopKeywordDetector:
         self._buf_filled = False
         self._filled = 0
 
+    @staticmethod
+    def _find_workspace_root() -> Path | None:
+        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+            for parent in [base] + list(base.parents):
+                if parent.name == 'voice_ros2':
+                    return parent
+        return None
+
     def process_block(self, pcm_i16: np.ndarray) -> Optional[StopDetectionResult]:
         """
-        Primește un bloc PCM (int16) și rulează detectorul la fiecare hop.
-        Returnează StopDetectionResult doar când pragurile sunt atinse.
+        Accepts a PCM block (int16) and runs the detector at each hop.
+        Returns StopDetectionResult only when thresholds are met.
         """
         if pcm_i16.size == 0:
             return None
