@@ -118,11 +118,17 @@ ros2 launch conversational_server full_system.launch.py
 ```bash
 ros2 launch conversational_server server_pipeline.launch.py
 ```
+corect:
+source ~/voice_ros2/install/setup.bash
+ros2 launch conversational_server server_pipeline.launch.py
 
 ### Client Only (on robot hardware)
 ```bash
 ros2 launch conversational_client client_pipeline.launch.py
 ```
+corect:
+source ~/voice_ros2/install/setup.bash
+ros2 launch conversational_client client_pipeline.launch.py
 
 ### 🎤 Speaker Enrollment (Voice Fingerprint)
 
