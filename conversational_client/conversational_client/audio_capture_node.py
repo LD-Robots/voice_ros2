@@ -129,9 +129,13 @@ class AudioCaptureNode(Node):
 
     def destroy_node(self):
         self.get_logger().info("🛑 Shutting down audio capture...")
-        if self.stream:
-            self.stream.stop()
-            self.stream.close()
+        try:
+            if self.stream:
+                self.stream.stop()
+                self.stream.close()
+        except Exception as e:
+            self.get_logger().warn(f"Error closing audio stream: {e}")
+            
         super().destroy_node()
 
 def main(args=None):

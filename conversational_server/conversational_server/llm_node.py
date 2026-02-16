@@ -83,7 +83,15 @@ OPINIONS: Neutral on ethics/politics/religion. BUT for fun topics (food, movies,
 
 HONESTY: Answer first, admit uncertainty casually ("Nu sunt sigur, dar..." / "Don't quote me on that"). For unknowable questions, react briefly in THE SAME LANGUAGE and STOP. EN: "Dude, nobody knows!" / RO: "Habar n-am, nimeni nu știe!" No estimates unless they insist.
 
-EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. If confused→simpler.'''
+EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. If confused→simpler.
+
+IDENTITY & PERSONALIZATION:
+You will receive the user's name in the format `[Speaker: Name]`.
+- If "Unknown", treat them as a new friend.
+- If "Delia": Be extra friendly, witty, and use emojis. She is your main developer/friend.
+- If "Valee": Be respectful, polite, and helpful.
+- If "Bogdan": Be casual and concise.
+- USE THE NAME SPARINGLY/RARELY. Do NOT use it in every sentence. Only use it for greetings or specific emphasis. Speak naturally.'''
         
         self.declare_parameter('system_prompt', default_system_prompt)
         
@@ -281,10 +289,49 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         thread.start()
     
     def _speaker_id_callback(self, msg: String):
-        """Update the current speaker based on voice fingerprint."""
-        if msg.data and msg.data != self.current_speaker:
-            self.current_speaker = msg.data
-            self.get_logger().info(f'🗣️ Speaker activ: {self.current_speaker}')
+        """
+        Actualizează vorbitorul curent pe baza amprentei vocale.
+        Folosește logică "Sticky Speaker" pentru a nu uita imediat cine vorbește
+        dacă apar segmente scurte "Unknown".
+        """
+        new_speaker = msg.data
+        if not new_speaker:
+            return
+
+        # Timpul curent
+        now = time.time()
+        
+        # Inițializează timestamp-ul ultimului speaker cunoscut dacă nu există
+        if not hasattr(self, 'last_known_speaker_time'):
+            self.last_known_speaker_time = 0
+            
+        # LOGICĂ STICKY:
+        # 1. Dacă e un speaker CUNOSCUT (nu Unknown), îl actualizăm imediat
+        if new_speaker != "Unknown":
+            if new_speaker != self.current_speaker:
+                self.get_logger().info(f'🗣️ Speaker schimbat: {self.current_speaker} -> {new_speaker}')
+                self.current_speaker = new_speaker
+            
+            # Actualizăm timpul ultimei identificări pozitive
+            self.last_known_speaker_time = now
+            
+        # 2. Dacă e UNKNOWN:
+        else:
+            # Dacă nu știm pe nimeni de dinainte, rămâne Unknown
+            if self.current_speaker == "Unknown":
+                pass
+                
+            # Dacă știm pe cineva, verificăm cât timp a trecut
+            else:
+                # Dacă au trecut mai puțin de 60 secunde de la ultima identificare,
+                # IGNORĂM "Unknown" și presupunem că e tot persoana anterioară.
+                time_since_last = now - self.last_known_speaker_time
+                if time_since_last < 60.0:
+                    self.get_logger().debug(f'ignor "Unknown" - păstrez {self.current_speaker} ({time_since_last:.1f}s)')
+                else:
+                    # A trecut prea mult timp, am uitat cine e
+                    self.get_logger().info(f'term timeout - reset la Unknown (au trecut {time_since_last:.1f}s)')
+                    self.current_speaker = "Unknown"
     
     def _process_streaming(self, user_text: str, user_lang: str):
         """Process the LLM response with streaming."""
