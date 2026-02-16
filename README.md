@@ -19,6 +19,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - **Barge-in Node** - Interrupt TTS when user speaks
 - **Stop Keyword Node** - Stop command detection
 - **Audio Segment Node** - Audio preprocessing
+- **Speaker ID Node** - Speaker identification via voice fingerprint (SpeechBrain ECAPA-TDNN)
 
 ### Message Interfaces
 - `Audio.msg` - Audio data chunks
@@ -39,7 +40,7 @@ https://docs.ros.org/en/humble/Installation.html
 
 ### Python Dependencies
 ```bash
-pip install \
+pip install --break-system-packages \
     faster-whisper \
     groq \
     piper-tts \
@@ -48,7 +49,11 @@ pip install \
     soundfile \
     python-dotenv \
     pyaudio \
-    numpy
+    numpy \
+    speechbrain \
+    torch \
+    torchaudio \
+    torchcodec
 ```
 
 ## 🔧 Setup
@@ -113,11 +118,35 @@ ros2 launch conversational_server full_system.launch.py
 ```bash
 ros2 launch conversational_server server_pipeline.launch.py
 ```
+corect:
+source ~/voice_ros2/install/setup.bash
+ros2 launch conversational_server server_pipeline.launch.py
 
 ### Client Only (on robot hardware)
 ```bash
 ros2 launch conversational_client client_pipeline.launch.py
 ```
+corect:
+source ~/voice_ros2/install/setup.bash
+ros2 launch conversational_client client_pipeline.launch.py
+
+### 🎤 Speaker Enrollment (Voice Fingerprint)
+
+Înainte de a folosi identificarea vocală, înregistrează vocea fiecărui utilizator:
+
+```bash
+# Înregistrează vocea (5 secunde)
+python3 ~/ros2_ws/src/voice_ros2/speaker_id/enroll_speaker.py
+```
+
+Scriptul va cere numele și va salva amprenta vocală în `voices/enrollment/<nume>.wav`. Repetă pentru fiecare utilizator.
+
+Verifică baza de date:
+```bash
+python3 ~/ros2_ws/src/voice_ros2/speaker_id/speaker_manager.py
+```
+
+După enrollment, `speaker_id_node` va identifica automat vorbitorul la pornirea sistemului și va comunica numele către LLM.
 
 ## ⚙️ Configuration
 
@@ -161,6 +190,7 @@ Edit `full_system.launch.py` and adjust:
 - ✅ **Conversation History** - Context-aware responses
 - ✅ **Backchannel** - "One moment..." for slow responses
 - ✅ **Fallback Responses** - Error handling
+- ✅ **Speaker Identification** - Voice fingerprint via SpeechBrain ECAPA-TDNN
 
 ### 🔄 Future Enhancements
 - Motor commands integration
@@ -205,7 +235,7 @@ voice_ros2/
 ├── conversational_server/          # Server-side nodes
 │   ├── conversational_server/
 │   │   ├── asr_node.py            # Speech recognition
-│   │   ├── llm_node.py            # Language model
+│   │   ├── llm_node.py            # Language model (+ speaker awareness)
 │   │   ├── tts_node.py            # Text-to-speech
 │   │   └── stream_shaper.py       # LLM streaming optimizer
 │   ├── models/piper/              # TTS models
@@ -217,8 +247,13 @@ voice_ros2/
 │   │   ├── wake_word_node.py
 │   │   ├── vad_node.py
 │   │   ├── barge_in_node.py
-│   │   └── stop_keyword_node.py
+│   │   ├── stop_keyword_node.py
+│   │   └── speaker_id_node.py     # Speaker identification
 │   └── models/                    # Wake word models
+├── speaker_id/                     # Speaker fingerprint system
+│   ├── speaker_manager.py         # Voice database (SpeechBrain ECAPA)
+│   └── enroll_speaker.py          # Enrollment script
+├── voices/enrollment/              # Enrolled voice samples (.wav)
 ├── conversational_interfaces/      # ROS2 message definitions
 │   └── msg/
 │       ├── Audio.msg
