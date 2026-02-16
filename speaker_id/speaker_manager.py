@@ -243,7 +243,11 @@ class SpeakerManager:
 if __name__ == '__main__':
     import sys
 
-    enrollment_path = os.path.expanduser('~/voice_ros2/voices/enrollment/')
+    # Use XDG standard path for user data: ~/.local/share/voice_ros2/enrollment
+    enrollment_path = os.path.join(
+        os.path.expanduser('~'),
+        '.local', 'share', 'voice_ros2', 'enrollment'
+    )
 
     if not os.path.isdir(enrollment_path):
         print(f"❌ Folderul de enrollment nu există: {enrollment_path}")

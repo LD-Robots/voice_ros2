@@ -25,7 +25,11 @@ import numpy as np
 SAMPLE_RATE = 16000           # Hz — standard pentru speech processing
 DURATION = 5                  # secunde de înregistrare
 CHANNELS = 1                  # mono
-ENROLLMENT_DIR = os.path.expanduser('~/voice_ros2/voices/enrollment/')
+# Use XDG standard path: ~/.local/share/voice_ros2/enrollment
+ENROLLMENT_DIR = os.path.join(
+    os.path.expanduser('~'),
+    '.local', 'share', 'voice_ros2', 'enrollment'
+)
 
 
 # ═══════════════════════════════════════════════════════════════════
