@@ -26,20 +26,11 @@ import numpy as np
 SAMPLE_RATE = 16000           # Hz — standard for speech processing
 DURATION = 5                  # recording seconds
 CHANNELS = 1                  # mono
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
-
-
-workspace_root = _find_workspace_root()
-VOICE_DIR = os.path.join(
-    str(workspace_root) if workspace_root else os.getcwd(),
-    'voices'
+# Use XDG standard path: ~/.local/share/voice_ros2/enrollment
+ENROLLMENT_DIR = os.path.join(
+    os.path.expanduser('~'),
+    '.local', 'share', 'voice_ros2', 'enrollment'
 )
-ENROLLMENT_DIR = os.path.join(VOICE_DIR, 'enrollment')
 
 
 # ═══════════════════════════════════════════════════════════════════

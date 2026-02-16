@@ -76,7 +76,7 @@ def generate_launch_description():
             parameters=[{
                 'aggressiveness': 2,
                 'wake_word_enabled': True,
-                'session_timeout': 8.0,
+                'session_timeout': 30.0,
             }]
         ),
         
@@ -103,8 +103,8 @@ def generate_launch_description():
                 'min_voice_ms': 600,
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
-                'stop_model_path': os.path.join(voices_dir, 'stop_keyword.onnx'),
-                'stop_prob_threshold': 0.95,
+                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
+                'stop_prob_threshold': 0.99,
                 'stop_logit_margin': 0.3,
                 'stop_hits_required': 2,
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
@@ -130,5 +130,13 @@ def generate_launch_description():
                 'enrollment_dir': os.path.join(voices_dir, 'enrollment'),
                 'similarity_threshold': 0.25,
             }]
+        ),
+        
+        # Session Manager (Goodbye handling)
+        Node(
+            package='conversational_client',
+            executable='session_manager_node',
+            name='session_manager_node',
+            output='screen',
         ),
     ])
