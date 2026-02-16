@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Stop Keyword Detector - Detectează comanda "stop" în timpul TTS.
+Stop Keyword Detector - Detects the "stop" command during TTS.
 
-Folosește model ONNX pentru a detecta când utilizatorul spune "stop".
-Rulează în paralel cu TTS și oprește imediat când detectează.
+Uses an ONNX model to detect when the user says "stop".
+Runs in parallel with TTS and stops immediately when detected.
 
 Subscribes to: /audio_raw (Audio)
 Publishes to: 
-  - /tts_stop (Bool) - oprește TTS
-  - /end_session (Bool) - terminare sesiune
+  - /tts_stop (Bool) - stop TTS
+  - /end_session (Bool) - end session
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ except ImportError:
     ONNX_AVAILABLE = False
     print("⚠️ onnxruntime not installed. Run: pip install onnxruntime")
 
-# Torch + Torchaudio pentru Mel Spectrogram
+# Torch + Torchaudio for Mel Spectrogram
 try:
     import torch
     import torchaudio
@@ -52,13 +52,13 @@ class StopDetectionResult:
 
 class StopKeywordNode(Node):
     """
-    Nod ROS2 pentru detectarea comenzii "stop" în timp real.
+    ROS2 node for real-time "stop" command detection.
     """
     
     def __init__(self):
         super().__init__('stop_keyword_node')
         
-        # Parametri
+        # Parameters
         self.declare_parameter('enabled', True)
         self.declare_parameter('model_path', '')
         self.declare_parameter('sample_rate', 16000)
@@ -93,7 +93,7 @@ class StopKeywordNode(Node):
             self.enabled = False
             return
         
-        # Verifică model path
+        # Check model path
         if not model_path_str:
             self.get_logger().warn('No model_path specified, stop keyword detector disabled')
             self.enabled = False
@@ -105,7 +105,7 @@ class StopKeywordNode(Node):
             self.enabled = False
             return
         
-        # Inițializare ONNX
+        # Initialize ONNX
         so = ort.SessionOptions()
         so.intra_op_num_threads = 1
         self.session = ort.InferenceSession(str(model_path), so)
@@ -118,7 +118,7 @@ class StopKeywordNode(Node):
         )
         self._db = torchaudio.transforms.AmplitudeToDB()
         
-        # Buffer și state
+        # Buffer and state
         self._buf = np.zeros(self.frame, dtype=np.float32)
         self._buf_filled = False
         self._filled = 0
@@ -143,11 +143,11 @@ class StopKeywordNode(Node):
         )
     
     def audio_callback(self, msg: Audio):
-        """Procesează audio pentru detectare stop keyword."""
+        """Process audio for stop keyword detection."""
         if not self.enabled:
             return
         
-        # Convertește la float32
+        # Convert to float32
         pcm_i16 = np.array(msg.data, dtype=np.int16)
         if pcm_i16.size == 0:
             return
@@ -168,7 +168,7 @@ class StopKeywordNode(Node):
         
         self._stride += len(chunk)
         
-        # Rulează detector la fiecare hop
+        # Run detector at each hop
         while self._stride >= self.hop:
             self._stride -= self.hop
             if not self._buf_filled:
@@ -180,7 +180,7 @@ class StopKeywordNode(Node):
                 break
     
     def _run_detector(self, chunk: np.ndarray) -> Optional[StopDetectionResult]:
-        """Rulează modelul ONNX pe chunk-ul audio."""
+        """Run the ONNX model on an audio chunk."""
         feats = self._featurize(chunk)
         logits = self.session.run(None, {self.input_name: feats})[0][0]
         
@@ -208,22 +208,22 @@ class StopKeywordNode(Node):
         return None
     
     def _on_stop_detected(self, result: StopDetectionResult):
-        """Acțiune când se detectează stop keyword."""
+        """Action when stop keyword is detected."""
         self.get_logger().info(f'🛑 STOP detected! prob={result.probability:.2f}')
         
-        # Oprește TTS imediat
+        # Stop TTS immediately
         stop_msg = Bool()
         stop_msg.data = True
         self.tts_stop_pub.publish(stop_msg)
         
-        # Trimite și end_session
+        # Also send end_session
         self.end_session_pub.publish(stop_msg)
         
         # Reset
         self.reset()
     
     def reset(self):
-        """Resetează starea detectorului."""
+        """Reset detector state."""
         self._stride = 0
         self._consecutive_hits = 0
         self._buf[:] = 0.0
@@ -231,7 +231,7 @@ class StopKeywordNode(Node):
         self._filled = 0
     
     def _featurize(self, chunk: np.ndarray) -> np.ndarray:
-        """Extrage features Mel Spectrogram pentru ONNX."""
+        """Extract Mel Spectrogram features for ONNX."""
         t = torch.from_numpy(chunk[np.newaxis, :])
         mel = self._mel(t)
         mel_db = self._db(mel)
@@ -242,7 +242,7 @@ class StopKeywordNode(Node):
     
     @staticmethod
     def _softmax2(a: float, b: float) -> Tuple[float, float]:
-        """Softmax pentru 2 valori."""
+        """Softmax for 2 values."""
         m = max(a, b)
         ea = math.exp(a - m)
         eb = math.exp(b - m)

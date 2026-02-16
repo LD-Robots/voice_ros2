@@ -1,11 +1,11 @@
 # conversational_server/conversational_server/stream_shaper.py
 """
-Stream Shaper - Netezire flux LLM → TTS
+Stream Shaper - Smoothing LLM → TTS stream
 
-Transformă tokenii LLM într-un stream de fraze complete pentru TTS mai natural:
-  - Prebuffer inițial pentru start lin
-  - Livrează la punctuație sau soft_max_chars
-  - Idle flush când nu mai vin tokeni
+Transforms LLM tokens into a stream of complete phrases for more natural TTS:
+  - Initial prebuffer for a smooth start
+  - Deliver at punctuation or soft_max_chars
+  - Idle flush when no tokens arrive
 """
 from __future__ import annotations
 import time
@@ -19,32 +19,32 @@ def _has_boundary(s: str) -> bool:
 
 
 def _cut_soft(s: str, soft_max_chars: int) -> tuple:
-    """Taie la ultimul spațiu înainte de soft_max."""
+    """Cut at the last space before soft_max."""
     if len(s) <= soft_max_chars:
         return s, ""
     cut = s.rfind(" ", 0, soft_max_chars)
-    if cut < 40:  # prea aproape de început? taie direct
+    if cut < 40:  # too close to the start? cut directly
         cut = soft_max_chars
     return s[:cut].rstrip(), s[cut:].lstrip()
 
 
 def shape_stream(
     token_iter: Iterable[str],
-    prebuffer_chars: int = 120,   # așteaptă puțin înainte de primul sunet => start mai lin
-    min_chunk_chars: int = 60,    # nu livra bucăți prea mici
-    soft_max_chars: int = 140,    # forțează flush dacă devine prea lung fără punctuație
-    max_idle_ms: int = 250,       # dacă nu vin tokeni o fracțiune de secundă, flushează ce ai
+    prebuffer_chars: int = 120,   # wait a bit before first sound => smoother start
+    min_chunk_chars: int = 60,    # don't deliver chunks that are too small
+    soft_max_chars: int = 140,    # force flush if too long without punctuation
+    max_idle_ms: int = 250,       # if no tokens arrive briefly, flush what you have
 ) -> Iterator[str]:
     """
-    Strânge tokenii în fraze stabile:
-      - pornește vorbirea doar după ~prebuffer_chars
-      - apoi livrează când găsește punctuație sau depășește soft_max_chars
-      - dacă nu mai vin tokeni o clipă, flushează ce ai (max_idle_ms)
+    Pack tokens into stable phrases:
+      - start speaking only after ~prebuffer_chars
+      - then deliver when punctuation appears or soft_max_chars is exceeded
+      - if tokens stop briefly, flush what you have (max_idle_ms)
     """
     buf = []
     buf_chars = 0
 
-    # 1) prebuffer inițial — evită startul în mijloc de propoziție
+    # 1) initial prebuffer — avoid starting mid-sentence
     t_last = time.monotonic()
     for tok in token_iter:
         buf.append(tok)
@@ -58,14 +58,14 @@ def shape_stream(
         buf = []
         buf_chars = 0
 
-    # 2) rulare normală — preferă propoziții complete, dar fără pauze lungi
+    # 2) normal flow — prefer complete sentences, but avoid long pauses
     carry = ""
     t_last = time.monotonic()
     for tok in token_iter:
         carry += tok
         now = time.monotonic()
         
-        # avem propoziție completă?
+        # do we have a complete sentence?
         if _has_boundary(carry) and len(carry) >= min_chunk_chars:
             out = carry
             carry = ""
@@ -73,7 +73,7 @@ def shape_stream(
             t_last = now
             continue
 
-        # prea lung fără punctuație? taie blând
+        # too long without punctuation? soft cut
         if len(carry) >= soft_max_chars:
             head, tail = _cut_soft(carry, soft_max_chars)
             if head:
@@ -82,12 +82,12 @@ def shape_stream(
             carry = tail
             continue
 
-        # idle flush (dacă nu mai vin tokeni)
+        # idle flush (if no tokens arrive)
         if (now - t_last) * 1000 >= max_idle_ms and carry:
             yield carry
             carry = ""
             t_last = now
 
-    # 3) finalizează restul
+    # 3) finalize the remainder
     if carry.strip():
         yield carry

@@ -1,34 +1,48 @@
 """
-Launch file pentru client-side nodes.
-Pornește toate nodurile client pentru conversație vocală.
+Launch file for client-side nodes.
+Starts all client nodes for voice conversation.
 """
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from pathlib import Path
+
+
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('conversational_client')
     models_dir = os.path.join(pkg_share, 'models')
+    workspace_root = _find_workspace_root()
+    voices_dir = os.path.join(
+        str(workspace_root) if workspace_root else os.getcwd(),
+        'voices'
+    )
     
-    # Construim string-ul pentru custom_models
+    # Build the custom_models string
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
-    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # testăm modelul original
+    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # test the original model
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
-    # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
+    # Define models: hello=wake, stop_robot_oww=barge_in (stop TTS only), goodbye=stop (bye bye)
     custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
-    # Threshold-uri individuale per model (stop_robot_oww mai mic pentru detectare mai bună)
-    # stop_robot_oww mai mic (0.25) pentru detectare chiar și când robotul vorbește
-    # stop_robot mai mic (0.15) pentru detectare chiar și când robotul vorbește
+    # Per-model thresholds (lower stop_robot_oww for better detection)
+    # Lower stop_robot_oww (0.25) to detect even when the robot is speaking
+    # Lower stop_robot (0.15) to detect even when the robot is speaking
     model_thresholds = "hello_robot:0.30,stop_robot:0.15,goodbye_robot:0.50"
 
     return LaunchDescription([
         
-        # Audio Capture (microfon)
+        # Audio Capture (microphone)
         Node(
             package='conversational_client',
             executable='audio_capture_node',
@@ -39,7 +53,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Wake Word (detectare "hello robot") + Stop Keyword ("stop")
+        # Wake Word (detect "hello robot") + Stop Keyword ("stop")
         Node(
             package='conversational_client',
             executable='wake_word_node',
@@ -66,7 +80,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Audio Segment (bufferează audio și trimite segment complet)
+        # Audio Segment (buffers audio and sends complete segment)
         Node(
             package='conversational_client',
             executable='audio_segment_node',
@@ -78,7 +92,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Barge-in (detectare voce + PyTorch stop keyword)
+        # Barge-in (voice detection + PyTorch stop keyword)
         Node(
             package='conversational_client',
             executable='barge_in_node',
@@ -98,7 +112,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Audio Playback (difuzor)
+        # Audio Playback (speaker)
         Node(
             package='conversational_client',
             executable='audio_playback_node',
@@ -106,14 +120,14 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # Speaker Identification (cine vorbește)
+        # Speaker Identification (who is speaking)
         Node(
             package='conversational_client',
             executable='speaker_id_node',
             name='speaker_id_node',
             output='screen',
             parameters=[{
-                'enrollment_dir': os.path.expanduser('~/voice_ros2/voices/enrollment/'),
+                'enrollment_dir': os.path.join(voices_dir, 'enrollment'),
                 'similarity_threshold': 0.25,
             }]
         ),

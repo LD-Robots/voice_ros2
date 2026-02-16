@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
 speaker_id_node.py
-Identifică vorbitorul (cine vorbește) pe baza segmentelor audio de la VAD.
+Identifies the speaker (who is talking) based on VAD audio segments.
 
-EXPLICAȚIE:
-- Ascultă /audio_segment de la audio_segment_node (audio deja segmentat de VAD)
-- Folosește SpeakerManager (de la Developer A) pentru a compara vocea cu baza de date
-- Publică numele vorbitorului pe /speaker_id ("Vale", "Delia", "Unknown")
+EXPLANATION:
+- Listens to /audio_segment from audio_segment_node (audio already segmented by VAD)
+- Uses SpeakerManager (from Developer A) to compare the voice against the database
+- Publishes the speaker name on /speaker_id ("Vale", "Delia", "Unknown")
 
-Dacă baza de date de enrollment e goală, publicat mereu "Unknown".
+If the enrollment database is empty, it always publishes "Unknown".
 """
 
 # ═══════════════════════════════════════════════════════════════════
-# IMPORTURI
+# IMPORTS
 # ═══════════════════════════════════════════════════════════════════
 
 import rclpy
@@ -21,42 +21,43 @@ from conversational_interfaces.msg import Audio
 from std_msgs.msg import String
 import numpy as np
 import os
-import sys
-
-# ─────────────────────────────────────────────────────────────────
-# Import SpeakerManager de la Developer A
-# Calea: ~/voice_ros2/speaker_id/speaker_manager.py
-# ─────────────────────────────────────────────────────────────────
-SPEAKER_ID_DIR = os.path.expanduser('~/voice_ros2/speaker_id')
-sys.path.insert(0, SPEAKER_ID_DIR)
+from pathlib import Path
 
 try:
-    from speaker_manager import SpeakerManager
+    from conversational_client.speaker_manager import SpeakerManager
     SPEAKER_MANAGER_AVAILABLE = True
 except ImportError:
     SPEAKER_MANAGER_AVAILABLE = False
 
 
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
+
+
 # ═══════════════════════════════════════════════════════════════════
-# CLASA NODULUI
+# NODE CLASS
 # ═══════════════════════════════════════════════════════════════════
 
 class SpeakerIdNode(Node):
     """
-    Nod ROS2 care identifică vorbitorul pe baza segmentelor audio.
+    ROS2 node that identifies the speaker based on audio segments.
 
-    Funcționare:
-    1. Primește segmente audio pe /audio_segment (de la audio_segment_node)
-    2. Convertește audio-ul în format compatibil cu SpeechBrain
-    3. Apelează speaker_manager.identify() pentru identificare
-    4. Publică rezultatul pe /speaker_id
+    Operation:
+    1. Receives audio segments on /audio_segment (from audio_segment_node)
+    2. Converts audio into a SpeechBrain-compatible format
+    3. Calls speaker_manager.identify() for identification
+    4. Publishes the result on /speaker_id
     """
 
     def __init__(self):
         super().__init__('speaker_id_node')
 
         # ─────────────────────────────────────────────────────────
-        # PARAMETRI
+        # PARAMETERS
         # ─────────────────────────────────────────────────────────
         # Use XDG standard path for user data: ~/.local/share/voice_ros2/enrollment
         default_enrollment_dir = os.path.join(
@@ -73,7 +74,7 @@ class SpeakerIdNode(Node):
         self.sample_rate = self.get_parameter('sample_rate').value
 
         # ─────────────────────────────────────────────────────────
-        # SPEAKER MANAGER (de la Developer A)
+        # SPEAKER MANAGER (from Developer A)
         # ─────────────────────────────────────────────────────────
         self.speaker_manager = None
         self.db_loaded = False
@@ -81,7 +82,7 @@ class SpeakerIdNode(Node):
         self._init_speaker_manager()
 
         # ─────────────────────────────────────────────────────────
-        # SUBSCRIBER — primește segmente audio de la VAD
+        # SUBSCRIBER — receives audio segments from VAD
         # ─────────────────────────────────────────────────────────
         self.segment_sub = self.create_subscription(
             Audio,
@@ -91,7 +92,7 @@ class SpeakerIdNode(Node):
         )
 
         # ─────────────────────────────────────────────────────────
-        # PUBLISHER — publică numele vorbitorului
+        # PUBLISHER — publishes speaker name
         # ─────────────────────────────────────────────────────────
         self.speaker_pub = self.create_publisher(String, '/speaker_id', 10)
 
@@ -104,21 +105,21 @@ class SpeakerIdNode(Node):
             )
 
     # ═══════════════════════════════════════════════════════════════════
-    # INIȚIALIZARE SPEAKER MANAGER
+    # SPEAKER MANAGER INITIALIZATION
     # ═══════════════════════════════════════════════════════════════════
 
     def _init_speaker_manager(self):
-        """Încearcă să inițializeze SpeakerManager de la Developer A."""
+        """Try to initialize SpeakerManager from Developer A."""
 
-        # Verifică dacă modulul e disponibil
+        # Check if module is available
         if not SPEAKER_MANAGER_AVAILABLE:
             self.get_logger().warn(
-                '⚠️ speaker_manager.py nu a fost găsit în '
-                f'{SPEAKER_ID_DIR}. Nodul funcționează în modul "Unknown".'
+                '⚠️ speaker_manager nu a fost importat. '
+                'Nodul funcționează în modul "Unknown".'
             )
             return
 
-        # Verifică dacă folderul de enrollment există și are fișiere
+        # Check if enrollment folder exists and has files
         if not os.path.isdir(self.enrollment_dir):
             self.get_logger().warn(
                 f'⚠️ Folderul de enrollment nu există: {self.enrollment_dir}'
@@ -132,7 +133,7 @@ class SpeakerIdNode(Node):
             )
             return
 
-        # Inițializează SpeakerManager
+        # Initialize SpeakerManager
         try:
             self.speaker_manager = SpeakerManager(self.enrollment_dir)
             self.db_loaded = True
@@ -144,19 +145,19 @@ class SpeakerIdNode(Node):
             self.get_logger().error(f'❌ Eroare la inițializarea SpeakerManager: {e}')
 
     # ═══════════════════════════════════════════════════════════════════
-    # CALLBACK — PROCESARE SEGMENT AUDIO
+    # CALLBACK — AUDIO SEGMENT PROCESSING
     # ═══════════════════════════════════════════════════════════════════
 
     def segment_callback(self, msg: Audio):
         """
-        Primește un segment audio complet (de la audio_segment_node)
-        și identifică vorbitorul.
+        Receives a full audio segment (from audio_segment_node)
+        and identifies the speaker.
         """
         if not msg.data:
             return
 
         # ─────────────────────────────────────────────────────────
-        # Convertește int16[] → float32 numpy (normalizat [-1, 1])
+        # Convert int16[] → float32 numpy (normalized [-1, 1])
         # ─────────────────────────────────────────────────────────
         audio_int16 = np.array(msg.data, dtype=np.int16)
         audio_float = audio_int16.astype(np.float32) / 32768.0
@@ -173,7 +174,7 @@ class SpeakerIdNode(Node):
         )
 
         # ─────────────────────────────────────────────────────────
-        # Identificare vorbitor
+        # Speaker identification
         # ─────────────────────────────────────────────────────────
         speaker_name = "Unknown"
 
@@ -200,7 +201,7 @@ class SpeakerIdNode(Node):
             )
 
         # ─────────────────────────────────────────────────────────
-        # Publică rezultatul
+        # Publish result
         # ─────────────────────────────────────────────────────────
         result_msg = String()
         result_msg.data = speaker_name
