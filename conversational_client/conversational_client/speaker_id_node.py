@@ -58,10 +58,13 @@ class SpeakerIdNode(Node):
         # ─────────────────────────────────────────────────────────
         # PARAMETRI
         # ─────────────────────────────────────────────────────────
-        self.declare_parameter(
-            'enrollment_dir',
-            os.path.expanduser('~/voice_ros2/voices/enrollment/')
+        # Use XDG standard path for user data: ~/.local/share/voice_ros2/enrollment
+        default_enrollment_dir = os.path.join(
+            os.path.expanduser('~'),
+            '.local', 'share', 'voice_ros2', 'enrollment'
         )
+        
+        self.declare_parameter('enrollment_dir', default_enrollment_dir)
         self.declare_parameter('similarity_threshold', 0.25)
         self.declare_parameter('sample_rate', 16000)
 
