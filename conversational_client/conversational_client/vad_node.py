@@ -21,6 +21,7 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool
 import numpy as np
+import array  # Used for efficient byte conversion
 
 # Încercăm să importăm WebRTC VAD (varianta simplă)
 try:
@@ -258,11 +259,20 @@ class VADNode(Node):
         # Nu procesa VAD când robotul vorbește (previne false positives)
         if self.is_robot_speaking:
             return
-        
-        audio = np.array(msg.data, dtype=np.int16)
+            
+        # ─────────────────────────────────────────────────────────
+        # OPTIMIZARE: Conversie rapidă în bytes fără numpy
+        # ─────────────────────────────────────────────────────────
+        # msg.data este o listă de int16. Conversia directă cu array este mult mai rapidă decât numpy.
+        try:
+            audio_array = array.array('h', msg.data)
+            audio_bytes = audio_array.tobytes()
+        except TypeError:
+            # Fallback în caz că msg.data e altceva (deși în ROS2 msg e list)
+            audio_bytes = b''
         
         # Detectează voce
-        has_voice = self._detect_voice(audio)
+        has_voice = self._detect_voice(audio_bytes)
         
         # Logică de debounce (evită flickering)
         if has_voice:
@@ -300,10 +310,10 @@ class VADNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     # DETECTARE VOCE
     # ═══════════════════════════════════════════════════════════════════
-    def _detect_voice(self, audio: np.ndarray) -> bool:
+    def _detect_voice(self, audio_bytes: bytes) -> bool:
         """
         Detectează dacă audio conține voce.
-        Folosește WebRTC VAD sau fallback pe energie.
+        Folosește WebRTC VAD pe bytes direct, sau fallback pe energie (cu conversie numpy).
         """
         
         if self.vad is not None:
@@ -312,28 +322,37 @@ class VADNode(Node):
             # ─────────────────────────────────────────────────────
             try:
                 # WebRTC VAD cere exact 10, 20 sau 30ms de audio
-                # La 16kHz: 160, 320 sau 480 samples
-                audio_bytes = audio.tobytes()
+                # La 16kHz (2 bytes/sample): 
+                # 10ms = 160 samples = 320 bytes
+                # 20ms = 320 samples = 640 bytes
+                # 30ms = 480 samples = 960 bytes
                 
-                # Ajustăm lungimea dacă e nevoie
-                frame_len = len(audio)
-                if frame_len == 320:  # 20ms la 16kHz
+                length = len(audio_bytes)
+                
+                if length in [320, 640, 960]: 
                     return self.vad.is_speech(audio_bytes, self.sample_rate)
                 else:
                     # Fallback pe energie pentru lungimi non-standard
-                    return self._energy_based_detection(audio)
+                    return self._energy_based_detection(audio_bytes)
             except Exception:
-                return self._energy_based_detection(audio)
+                return self._energy_based_detection(audio_bytes)
         else:
             # ─────────────────────────────────────────────────────
             # METODA 2: Energie RMS (fallback simplu)
             # ─────────────────────────────────────────────────────
-            return self._energy_based_detection(audio)
+            return self._energy_based_detection(audio_bytes)
     
-    def _energy_based_detection(self, audio: np.ndarray) -> bool:
+    def _energy_based_detection(self, audio_bytes: bytes) -> bool:
         """Detectare simplă bazată pe energia audio (RMS)."""
+        # Creăm numpy array doar dacă e absolut necesar (lazy creation)
+        # frombuffer este foarte rapid (copy-free)
+        audio_np = np.frombuffer(audio_bytes, dtype=np.int16)
+        
+        if len(audio_np) == 0:
+            return False
+            
         # Calculează RMS (Root Mean Square) = energie medie
-        rms = np.sqrt(np.mean(audio.astype(np.float32) ** 2))
+        rms = np.sqrt(np.mean(audio_np.astype(np.float32) ** 2))
         return rms > self.energy_threshold
 
 
