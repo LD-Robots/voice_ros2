@@ -60,11 +60,12 @@ def generate_launch_description():
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.8,  # Default threshold
+                'threshold': 0.5,  # Default threshold
                 'cooldown_ms': 1500,
                 'custom_models': custom_models,
                 'model_thresholds': model_thresholds,
-            }]
+            }],
+            arguments=['--ros-args', '--log-level', 'wake_word_node:=DEBUG']
         ),
         
         # VAD (Voice Activity Detection)
@@ -86,6 +87,7 @@ def generate_launch_description():
             executable='audio_segment_node',
             name='audio_segment_node',
             output='screen',
+            arguments=['--ros-args', '--log-level', 'audio_segment_node:=DEBUG'],
             parameters=[{
                 'min_segment_seconds': 0.5,
                 'max_segment_seconds': 30.0,
