@@ -128,6 +128,8 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         self.declare_parameter('fallback_timeout_ro', "Îmi ia mai mult decât de obicei. Te rog încearcă din nou.")
         self.declare_parameter('fallback_error_en', "I had a technical issue. Please try again.")
         self.declare_parameter('fallback_error_ro', "Am avut o problemă tehnică. Te rog încearcă din nou.")
+        self.declare_parameter('fallback_connection_en', "I can't connect to the internet right now. Please check the connection and try again.")
+        self.declare_parameter('fallback_connection_ro', "Nu am conexiune la internet momentan. Te rog verifică conexiunea și încearcă din nou.")
         self.declare_parameter('fallback_unknown_en', "That's outside my current knowledge.")
         self.declare_parameter('fallback_unknown_ro', "Nu am răspunsul încă, dar întrebări ca asta mă ajută să devin mai bun.")
         
@@ -136,6 +138,8 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             'timeout_ro': self.get_parameter('fallback_timeout_ro').value,
             'error_en': self.get_parameter('fallback_error_en').value,
             'error_ro': self.get_parameter('fallback_error_ro').value,
+            'connection_en': self.get_parameter('fallback_connection_en').value,
+            'connection_ro': self.get_parameter('fallback_connection_ro').value,
             'unknown_en': self.get_parameter('fallback_unknown_en').value,
             'unknown_ro': self.get_parameter('fallback_unknown_ro').value,
         }
@@ -408,12 +412,19 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         except Exception as e:
             self.get_logger().error(f'LLM streaming error: {e}')
             
-            # Publică fallback response pentru eroare
-            error_type = 'timeout' if 'timeout' in str(e).lower() else 'error'
+            # Detectează tipul erorii
+            error_str = str(e).lower()
+            if any(kw in error_str for kw in ['connection', 'connect', 'name resolution', 'unreachable', 'network']):
+                error_type = 'connection'
+            elif 'timeout' in error_str:
+                error_type = 'timeout'
+            else:
+                error_type = 'error'
+            
             fallback_msg = self._get_fallback(error_type, user_lang)
             
             if fallback_msg:
-                self.get_logger().debug(f'📢 Sending fallback response: {fallback_msg}')
+                self.get_logger().info(f'📢 Sending fallback ({error_type}): {fallback_msg}')
                 self._publish_chunk(fallback_msg, user_lang, True, session_id)
     
     def _publish_chunk(self, text: str, language: str, is_final: bool, session_id: str):
