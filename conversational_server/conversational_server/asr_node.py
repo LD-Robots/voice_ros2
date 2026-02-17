@@ -23,6 +23,7 @@ import tempfile
 import wave
 import os
 import time
+import io
 import re
 import unicodedata
 import soundfile as sf
@@ -142,86 +143,37 @@ class ASRNode(Node):
         
         self.get_logger().debug('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
     
-    def _ensure_warm(self):
-        """Încarcă complet modelul prin transcriere dummy."""
-        if not self.warmup_enabled or self._warmed_up:
-            return
-        try:
-            self.get_logger().debug("🔥 ASR warm-up start...")
-            start = time.perf_counter()
-            
-            # Creează fișier audio scurt (0.5s tăcere)
-            fd, temp_path = tempfile.mkstemp(suffix=".wav")
-            os.close(fd)
-            try:
-                silence = np.zeros(8000, dtype=np.float32)  # 0.5s @ 16kHz
-                sf.write(temp_path, silence, 16000)
-                
-                # Transcriere dummy
-                self.model.transcribe(temp_path, language="en", beam_size=1)
-            finally:
-                try:
-                    os.remove(temp_path)
-                except Exception:
-                    pass
-            
-            elapsed = time.perf_counter() - start
-            self._warmed_up = True
-            self.get_logger().debug(f"✅ ASR warm-up gata ({elapsed:.2f}s)")
-        except Exception as e:
-            self.get_logger().warning(f"ASR warm-up eșuat: {e}")
-    
-    def _run_once(self, wav_path: str, language, use_vad: bool):
-        """
-        Returnează: (text, lang_out, lang_prob, score)
-        score = medie(avg_logprob pe segmente) + 0.01 * len(text)
-        """
-        segments, info = self.model.transcribe(
-            str(wav_path),
-            language=language,
-            beam_size=self.beam_size,
-            temperature=0.0,
-            vad_filter=use_vad,
-            vad_parameters={"min_silence_duration_ms": self.vad_min_silence_ms} if use_vad else None,
-            no_speech_threshold=0.5,  # Lower = less likely to skip valid speech
-            log_prob_threshold=-0.7,  # Lower = accept lower confidence segments
-            condition_on_previous_text=False,
-        )
-        segs = list(segments)
-        text = "".join(s.text for s in segs).strip()
+    def audio_callback(self, msg: Audio):
+        """Bufferează audio în timpul vorbirii."""
+        self.sample_rate = msg.sample_rate
+        self.channels = msg.channels
         
-        # scor simplu și robust
-        if segs:
-            vals = [getattr(s, "avg_logprob", -5.0) if getattr(s, "avg_logprob", None) is not None else -5.0 for s in segs]
-            avg_lp = sum(vals) / len(vals)
+        # Bufferează audio când userul vorbește (sau puțin înainte)
+        if self.is_speaking:
+            self.audio_buffer.extend(msg.data)
         else:
-            avg_lp = -9.0
-        score = avg_lp + 0.01 * len(text)
-        out_lang = info.language or (language or "en")
-        prob = float(getattr(info, "language_probability", 0.0) or 0.0)
-        return text, out_lang, prob, score
-    
-    def _transcribe_ro_en(self, wav_path: str):
-        """
-        Transcriere strict EN/RO -> alegem cea mai bună.
-        Rulăm EN & RO cu VAD intern; dacă dă eroare, retry fără VAD.
-        """
-        def safe(lang):
-            try:
-                return self._run_once(wav_path, lang, use_vad=True)
-            except ValueError as e:
-                if "max() iterable argument is empty" in str(e):
-                    return self._run_once(wav_path, lang, use_vad=False)
-                raise
+            # Păstrează ultimele 0.5 secunde pentru context
+            max_pre_buffer = int(self.sample_rate * 0.5)
+            self.audio_buffer.extend(msg.data)
+            if len(self.audio_buffer) > max_pre_buffer:
+                self.audio_buffer = self.audio_buffer[-max_pre_buffer:]
+
+    def vad_callback(self, msg: Bool):
+        """Primește statusul VAD (vorbește/nu vorbește)."""
+        self.was_speaking = self.is_speaking
+        self.is_speaking = msg.data
         
-        en_text, _, _, en_score = safe("en")
-        ro_text, _, _, ro_score = safe("ro")
-        
-        if (ro_score > en_score) and ro_text:
-            return {"text": ro_text, "lang": "ro", "language_probability": 1.0}
-        else:
-            return {"text": en_text, "lang": "en", "language_probability": 1.0}
-    
+        # Când userul termină de vorbit, transcrie
+        if self.was_speaking and not self.is_speaking:
+            self.get_logger().debug(f'🔚 Speech ended, processing {len(self.audio_buffer)} frames...')
+            self._process_buffer()
+
+    def llm_response_callback(self, msg: Transcription):
+        """Stochează ultimul răspuns al robotului pentru anti-echo."""
+        if msg.text:
+            self.last_bot_reply = msg.text
+            self.get_logger().debug(f'📝 Stored bot reply for anti-echo: {msg.text[:50]}...')
+
     def _normalize_text(self, text: str) -> str:
         """
         Normalizează text pentru comparație anti-echo.
@@ -263,38 +215,7 @@ class ASRNode(Node):
             return True
         
         return False
-    
-    def llm_response_callback(self, msg: Transcription):
-        """Stochează ultimul răspuns al robotului pentru anti-echo."""
-        if msg.text:
-            self.last_bot_reply = msg.text
-            self.get_logger().debug(f'📝 Stored bot reply for anti-echo: {msg.text[:50]}...')
-    
-    def vad_callback(self, msg: Bool):
-        """Primește statusul VAD (vorbește/nu vorbește)."""
-        self.was_speaking = self.is_speaking
-        self.is_speaking = msg.data
-        
-        # Când userul termină de vorbit, transcrie
-        if self.was_speaking and not self.is_speaking:
-            self.get_logger().debug(f'🔚 Speech ended, processing {len(self.audio_buffer)} frames...')
-            self._process_buffer()
-    
-    def audio_callback(self, msg: Audio):
-        """Bufferează audio în timpul vorbirii."""
-        self.sample_rate = msg.sample_rate
-        self.channels = msg.channels
-        
-        # Bufferează audio când userul vorbește (sau puțin înainte)
-        if self.is_speaking:
-            self.audio_buffer.extend(msg.data)
-        else:
-            # Păstrează ultimele 0.5 secunde pentru context
-            max_pre_buffer = int(self.sample_rate * 0.5)
-            self.audio_buffer.extend(msg.data)
-            if len(self.audio_buffer) > max_pre_buffer:
-                self.audio_buffer = self.audio_buffer[-max_pre_buffer:]
-    
+
     def _process_buffer(self):
         """Procesează audio-ul bufferat și publică transcrierea."""
         if not self.audio_buffer:
@@ -314,31 +235,35 @@ class ASRNode(Node):
         # Convertește în numpy array
         audio_data = np.array(self.audio_buffer, dtype=np.int16)
         
-        # Salvează temporar ca WAV
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            temp_path = f.name
-            with wave.open(f.name, 'wb') as wav:
+        # Salvează în memorie (BytesIO) ca WAV
+        wav_io = io.BytesIO()
+        try:
+            with wave.open(wav_io, 'wb') as wav:
                 wav.setnchannels(self.channels)
                 wav.setsampwidth(2)  # 16-bit = 2 bytes
                 wav.setframerate(self.sample_rate)
                 wav.writeframes(audio_data.tobytes())
-        
-        try:
+            
+            # Reset cursor la începutul bufferului
+            wav_io.seek(0)
+            
             # Folosește detecție RO/EN dacă setat
             if self.language == 'ro_en':
-                result = self._transcribe_ro_en(temp_path)
+                # Pentru ro_en avem nevoie să citim de două ori, deci BytesIO e perfect (seek(0))
+                result = self._transcribe_ro_en(wav_io)
                 text = result["text"]
                 lang = result["lang"]
                 confidence = result["language_probability"]
             else:
                 # Transcrie cu Faster Whisper - cu fallback fără VAD
                 try:
-                    text, lang, confidence, _ = self._run_once(temp_path, self.language, use_vad=True)
+                    text, lang, confidence, _ = self._run_once(wav_io, self.language, use_vad=True)
                 except ValueError as e:
                     if "max() iterable argument is empty" in str(e):
                         self.get_logger().warn("VAD error, retrying without VAD filter...")
+                        wav_io.seek(0) # Reset pentru a doua încercare
                         fallback_lang = self.language or "en"
-                        text, lang, confidence, _ = self._run_once(temp_path, fallback_lang, use_vad=False)
+                        text, lang, confidence, _ = self._run_once(wav_io, fallback_lang, use_vad=False)
                     else:
                         raise
             
@@ -362,10 +287,89 @@ class ASRNode(Node):
         except Exception as e:
             self.get_logger().error(f'ASR error: {e}')
         finally:
-            # Cleanup
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
             self.audio_buffer = []
+
+    def _ensure_warm(self):
+        """Încarcă complet modelul prin transcriere dummy."""
+        if not self.warmup_enabled or self._warmed_up:
+            return
+        try:
+            self.get_logger().debug("🔥 ASR warm-up start...")
+            start = time.perf_counter()
+            
+            # Creează WAV scurt în memorie
+            wav_io = io.BytesIO()
+            silence = np.zeros(8000, dtype=np.int16)  # 0.5s @ 16kHz
+            with wave.open(wav_io, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(silence.tobytes())
+            wav_io.seek(0)
+
+            # Transcriere dummy
+            self.model.transcribe(wav_io, language="en", beam_size=1)
+            
+            elapsed = time.perf_counter() - start
+            self._warmed_up = True
+            self.get_logger().debug(f"✅ ASR warm-up gata ({elapsed:.2f}s)")
+        except Exception as e:
+            self.get_logger().warning(f"ASR warm-up eșuat: {e}")
+
+    def _run_once(self, audio_source, language, use_vad: bool):
+        """
+        Audio source poate fi path (str) sau file-like object (BytesIO).
+        Returnează: (text, lang_out, lang_prob, score)
+        """
+        # Dacă e stream, asigură-te că e la început
+        if hasattr(audio_source, 'seek'):
+            audio_source.seek(0)
+
+        segments, info = self.model.transcribe(
+            audio_source,
+            language=language,
+            beam_size=self.beam_size,
+            temperature=0.0,
+            vad_filter=use_vad,
+            vad_parameters={"min_silence_duration_ms": self.vad_min_silence_ms} if use_vad else None,
+            no_speech_threshold=0.5,
+            log_prob_threshold=-0.7,
+            condition_on_previous_text=False,
+        )
+        segs = list(segments)
+        text = "".join(s.text for s in segs).strip()
+        
+        if segs:
+            vals = [getattr(s, "avg_logprob", -5.0) if getattr(s, "avg_logprob", None) is not None else -5.0 for s in segs]
+            avg_lp = sum(vals) / len(vals)
+        else:
+            avg_lp = -9.0
+        score = avg_lp + 0.01 * len(text)
+        out_lang = info.language or (language or "en")
+        prob = float(getattr(info, "language_probability", 0.0) or 0.0)
+        return text, out_lang, prob, score
+
+    def _transcribe_ro_en(self, audio_source):
+        """
+        Transcriere strict EN/RO -> alegem cea mai bună.
+        Audio source trebuie să fie seekable (BytesIO).
+        """
+        def safe(lang):
+            try:
+                return self._run_once(audio_source, lang, use_vad=True)
+            except ValueError as e:
+                # Retry fără VAD
+                if "max() iterable argument is empty" in str(e):
+                    return self._run_once(audio_source, lang, use_vad=False)
+                raise
+        
+        en_text, _, _, en_score = safe("en")
+        ro_text, _, _, ro_score = safe("ro")
+        
+        if (ro_score > en_score) and ro_text:
+            return {"text": ro_text, "lang": "ro", "language_probability": 1.0}
+        else:
+            return {"text": en_text, "lang": "en", "language_probability": 1.0}
 
 
 def main(args=None):
