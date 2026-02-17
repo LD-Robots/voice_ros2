@@ -412,7 +412,7 @@ class TTSNode(Node):
             return self._synthesize_edge(text, voice)
     
     def _synthesize_edge(self, text: str, voice: str):
-        """Sintetizează cu Edge TTS (online)."""
+        """Sintetizează cu Edge TTS (online, complet în RAM)."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -420,22 +420,26 @@ class TTSNode(Node):
         finally:
             loop.close()
         
-        # Salvează temporar și citește cu soundfile
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
-            temp_path = f.name
-            f.write(audio_bytes)
+        # Folosește io.BytesIO direct în memorie
+        import io
+        mp3_io = io.BytesIO(audio_bytes)
         
-        try:
-            audio_data, sample_rate = sf.read(temp_path, dtype='int16')
-            return audio_data, sample_rate
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        # Citește MP3 direct din buffer-ul din memorie
+        audio_data, sample_rate = sf.read(mp3_io, dtype='int16')
+        return audio_data, sample_rate
     
     def _synthesize_pyttsx3(self, text: str):
         """Sintetizează cu pyttsx3 (offline)."""
-        # pyttsx3 salvează în fișier WAV
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+        # pyttsx3 necesită path fizic. Folosim /dev/shm (RAM disk) pe Linux pentru a evita SD cardul.
+        # Fallback la tempfile normal dacă /dev/shm nu există.
+        
+        if os.path.exists('/dev/shm'):
+             # RAM Disk
+             temp_dir = '/dev/shm'
+        else:
+             temp_dir = None # Default system temp
+             
+        with tempfile.NamedTemporaryFile(suffix='.wav', dir=temp_dir, delete=False) as f:
             temp_path = f.name
         
         try:
