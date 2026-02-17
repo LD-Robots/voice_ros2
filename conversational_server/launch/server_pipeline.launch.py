@@ -2,10 +2,12 @@
 Launch file pentru server-side pipeline.
 Pornește ASR, LLM și TTS nodes.
 """
+import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
@@ -64,6 +66,12 @@ def generate_launch_description():
             parameters=[{
                 'voice_en': 'en-GB-RyanNeural',
                 'voice_ro': 'ro-RO-EmilNeural',
+                'piper_model_en': os.path.join(
+                    get_package_share_directory('conversational_server'),
+                    'models', 'piper', 'en_US-amy-medium.onnx'),
+                'piper_model_ro': os.path.join(
+                    get_package_share_directory('conversational_server'),
+                    'models', 'piper', 'ro_RO-mihai-medium.onnx'),
             }]
         ),
     ])

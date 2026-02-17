@@ -4,7 +4,7 @@ TTS Node - Text to Speech with MULTIPLE BACKENDS, STREAMING and DOUBLE BUFFER.
 
 BACKENDS:
   - edge-tts (default) - Microsoft Edge TTS, requires internet
-  - pyttsx3 - Offline TTS fallback
+  - piper - Offline TTS fallback (high quality, ONNX models)
 
 DOUBLE BUFFER: Sintetizează next chunk în paralel cu playback-ul curent.
 
@@ -19,7 +19,6 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk, Audio
 from std_msgs.msg import Bool, String
 import asyncio
-import tempfile
 import os
 import numpy as np
 import threading
@@ -35,13 +34,13 @@ except ImportError:
     EDGE_TTS_AVAILABLE = False
     print("⚠️ edge-tts not installed. Run: pip install edge-tts")
 
-# pyttsx3 pentru sinteză vocală (offline fallback)
+# Piper TTS pentru sinteză vocală (offline fallback)
 try:
-    import pyttsx3
-    PYTTSX3_AVAILABLE = True
+    from piper import PiperVoice
+    PIPER_AVAILABLE = True
 except ImportError:
-    PYTTSX3_AVAILABLE = False
-    print("⚠️ pyttsx3 not installed. Run: pip install pyttsx3")
+    PIPER_AVAILABLE = False
+    print("⚠️ piper-tts not installed. Run: pip install piper-tts")
 
 # Soundfile pentru citirea audio
 try:
@@ -57,12 +56,16 @@ class TTSNode(Node):
         super().__init__('tts_node')
         
         # Parametri configurabili
-        self.declare_parameter('backend', 'edge')  # 'edge' sau 'pyttsx3'
+        self.declare_parameter('backend', 'edge')  # 'edge' sau 'piper'
         self.declare_parameter('voice_en', 'en-IE-EmilyNeural')
         self.declare_parameter('voice_ro', 'ro-RO-AlinaNeural')
         self.declare_parameter('rate', '+0%')
         self.declare_parameter('pitch', '+0Hz')
         self.declare_parameter('buffer_size', 2)  # Double buffer (2 chunks ahead)
+        
+        # Piper model paths
+        self.declare_parameter('piper_model_en', '')
+        self.declare_parameter('piper_model_ro', '')
         
         self.backend = self.get_parameter('backend').value
         self.voice_en = self.get_parameter('voice_en').value
@@ -70,30 +73,39 @@ class TTSNode(Node):
         self.rate = self.get_parameter('rate').value
         self.pitch = self.get_parameter('pitch').value
         self.buffer_size = self.get_parameter('buffer_size').value
+        self.piper_model_en_path = self.get_parameter('piper_model_en').value
+        self.piper_model_ro_path = self.get_parameter('piper_model_ro').value
+        
+        # Piper voices (pre-loaded)
+        self.piper_voice_en = None
+        self.piper_voice_ro = None
         
         # Selectează backend-ul
         if self.backend == 'edge':
             if not EDGE_TTS_AVAILABLE:
-                self.get_logger().warn('edge-tts not available, falling back to pyttsx3')
-                self.backend = 'pyttsx3'
+                self.get_logger().warn('edge-tts not available, falling back to piper')
+                self.backend = 'piper'
             elif not SOUNDFILE_AVAILABLE:
-                self.get_logger().warn('soundfile not available for edge-tts, falling back to pyttsx3')
-                self.backend = 'pyttsx3'
+                self.get_logger().warn('soundfile not available for edge-tts, falling back to piper')
+                self.backend = 'piper'
         
-        if self.backend == 'pyttsx3':
-            if not PYTTSX3_AVAILABLE:
-                self.get_logger().error('No TTS backend available!')
+        if self.backend == 'piper':
+            if not PIPER_AVAILABLE:
+                self.get_logger().error('No TTS backend available! Install piper-tts.')
                 raise RuntimeError('No TTS backend available')
-            # Inițializează pyttsx3
-            self.pyttsx3_engine = pyttsx3.init()
-            self.pyttsx3_engine.setProperty('rate', 170)
-            self.get_logger().debug('✅ TTS initialized with pyttsx3 (offline)')
+            self._load_piper_models()
+            self.get_logger().info('✅ TTS initialized with Piper (offline)')
         else:
             # Edge TTS necesită soundfile pt MP3
             if not SOUNDFILE_AVAILABLE:
                 self.get_logger().error('soundfile not installed - required for edge-tts!')
                 raise RuntimeError('soundfile not available')
-            self.get_logger().debug(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
+            # Pre-load Piper models for fallback if available
+            if PIPER_AVAILABLE:
+                self._load_piper_models()
+                self.get_logger().info(f'✅ TTS initialized with edge-tts (Piper fallback ready): EN={self.voice_en}, RO={self.voice_ro}')
+            else:
+                self.get_logger().info(f'✅ TTS initialized with edge-tts (no offline fallback): EN={self.voice_en}, RO={self.voice_ro}')
         
         # Target sample rate (fix "horror voice" issues by standardizing on 16kHz)
         self.target_sample_rate = 16000
@@ -404,12 +416,39 @@ class TTSNode(Node):
         
         return audio_data
     
+    def _load_piper_models(self):
+        """Pre-încarcă modelele Piper ONNX pentru EN și RO."""
+        if self.piper_model_en_path and os.path.exists(self.piper_model_en_path):
+            try:
+                self.piper_voice_en = PiperVoice.load(self.piper_model_en_path)
+                self.get_logger().info(f'🔊 Piper EN loaded: {os.path.basename(self.piper_model_en_path)}')
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to load Piper EN: {e}')
+        else:
+            self.get_logger().warn(f'⚠️ Piper EN model not found: {self.piper_model_en_path}')
+        
+        if self.piper_model_ro_path and os.path.exists(self.piper_model_ro_path):
+            try:
+                self.piper_voice_ro = PiperVoice.load(self.piper_model_ro_path)
+                self.get_logger().info(f'🔊 Piper RO loaded: {os.path.basename(self.piper_model_ro_path)}')
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to load Piper RO: {e}')
+        else:
+            self.get_logger().warn(f'⚠️ Piper RO model not found: {self.piper_model_ro_path}')
+    
     def _synthesize(self, text: str, voice: str):
         """Sintetizează text în audio folosind backend-ul selectat."""
-        if self.backend == 'pyttsx3':
-            return self._synthesize_pyttsx3(text)
+        if self.backend == 'piper':
+            return self._synthesize_piper(text, voice)
         else:
-            return self._synthesize_edge(text, voice)
+            try:
+                return self._synthesize_edge(text, voice)
+            except Exception as e:
+                # Fallback la Piper dacă edge-tts eșuează (ex: fără internet)
+                if self.piper_voice_en or self.piper_voice_ro:
+                    self.get_logger().warn(f'⚠️ Edge TTS failed ({e}), falling back to Piper')
+                    return self._synthesize_piper(text, voice)
+                raise
     
     def _synthesize_edge(self, text: str, voice: str):
         """Sintetizează cu Edge TTS (online, complet în RAM)."""
@@ -428,30 +467,30 @@ class TTSNode(Node):
         audio_data, sample_rate = sf.read(mp3_io, dtype='int16')
         return audio_data, sample_rate
     
-    def _synthesize_pyttsx3(self, text: str):
-        """Sintetizează cu pyttsx3 (offline)."""
-        # pyttsx3 necesită path fizic. Folosim /dev/shm (RAM disk) pe Linux pentru a evita SD cardul.
-        # Fallback la tempfile normal dacă /dev/shm nu există.
-        
-        if os.path.exists('/dev/shm'):
-             # RAM Disk
-             temp_dir = '/dev/shm'
+    def _synthesize_piper(self, text: str, voice: str):
+        """Sintetizează cu Piper TTS (offline, complet în RAM)."""
+        # Alege modelul Piper bazat pe limba vocii
+        lang = voice.lower() if voice else 'en'
+        if lang.startswith('ro') or 'ro-' in lang.lower():
+            piper_voice = self.piper_voice_ro or self.piper_voice_en
         else:
-             temp_dir = None # Default system temp
-             
-        with tempfile.NamedTemporaryFile(suffix='.wav', dir=temp_dir, delete=False) as f:
-            temp_path = f.name
+            piper_voice = self.piper_voice_en or self.piper_voice_ro
         
-        try:
-            self.pyttsx3_engine.save_to_file(text, temp_path)
-            self.pyttsx3_engine.runAndWait()
-            
-            # Citește WAV
-            audio_data, sample_rate = sf.read(temp_path, dtype='int16')
-            return audio_data, sample_rate
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        if piper_voice is None:
+            raise RuntimeError('No Piper voice loaded!')
+        
+        # Sintetizează — returnează chunks de audio int16
+        audio_chunks = list(piper_voice.synthesize(text))
+        
+        if not audio_chunks:
+            raise RuntimeError('Piper returned no audio')
+        
+        # Concatenează toate chunk-urile într-un singur array
+        all_audio = b''.join(chunk.audio_int16_bytes for chunk in audio_chunks)
+        audio_data = np.frombuffer(all_audio, dtype=np.int16)
+        sample_rate = audio_chunks[0].sample_rate
+        
+        return audio_data, sample_rate
 
     def _resample(self, audio_data, original_rate, target_rate):
         """Resample audio data to target rate."""
