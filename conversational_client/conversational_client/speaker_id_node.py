@@ -24,14 +24,10 @@ import os
 import sys
 
 # ─────────────────────────────────────────────────────────────────
-# Import SpeakerManager de la Developer A
-# Calea: ~/voice_ros2/speaker_id/speaker_manager.py
+# Import SpeakerManager (acum parte din pachet)
 # ─────────────────────────────────────────────────────────────────
-SPEAKER_ID_DIR = os.path.expanduser('~/voice_ros2/speaker_id')
-sys.path.insert(0, SPEAKER_ID_DIR)
-
 try:
-    from speaker_manager import SpeakerManager
+    from .speaker_manager import SpeakerManager
     SPEAKER_MANAGER_AVAILABLE = True
 except ImportError:
     SPEAKER_MANAGER_AVAILABLE = False
@@ -58,10 +54,18 @@ class SpeakerIdNode(Node):
         # ─────────────────────────────────────────────────────────
         # PARAMETRI
         # ─────────────────────────────────────────────────────────
-        self.declare_parameter(
-            'enrollment_dir',
-            os.path.expanduser('~/voice_ros2/voices/enrollment/')
-        )
+        # Cale default conform XDG Base Directory (~/.local/share/voice_ros2/voices/enrollment)
+        default_enrollment_dir = os.path.expanduser('~/.local/share/voice_ros2/voices/enrollment/')
+        
+        # Creăm folderul dacă nu există
+        if not os.path.exists(default_enrollment_dir):
+            try:
+                os.makedirs(default_enrollment_dir, exist_ok=True)
+                self.get_logger().info(f'📂 Created enrollment directory: {default_enrollment_dir}')
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to create enrollment directory: {e}')
+
+        self.declare_parameter('enrollment_dir', default_enrollment_dir)
         self.declare_parameter('similarity_threshold', 0.25)
         self.declare_parameter('sample_rate', 16000)
 
@@ -70,7 +74,7 @@ class SpeakerIdNode(Node):
         self.sample_rate = self.get_parameter('sample_rate').value
 
         # ─────────────────────────────────────────────────────────
-        # SPEAKER MANAGER (de la Developer A)
+        # SPEAKER MANAGER
         # ─────────────────────────────────────────────────────────
         self.speaker_manager = None
         self.db_loaded = False
@@ -105,13 +109,12 @@ class SpeakerIdNode(Node):
     # ═══════════════════════════════════════════════════════════════════
 
     def _init_speaker_manager(self):
-        """Încearcă să inițializeze SpeakerManager de la Developer A."""
+        """Încearcă să inițializeze SpeakerManager."""
 
         # Verifică dacă modulul e disponibil
         if not SPEAKER_MANAGER_AVAILABLE:
             self.get_logger().warn(
-                '⚠️ speaker_manager.py nu a fost găsit în '
-                f'{SPEAKER_ID_DIR}. Nodul funcționează în modul "Unknown".'
+                '⚠️ speaker_manager module not found. Node will publish "Unknown".'
             )
             return
 
@@ -125,13 +128,13 @@ class SpeakerIdNode(Node):
         wav_files = [f for f in os.listdir(self.enrollment_dir) if f.endswith('.wav')]
         if not wav_files:
             self.get_logger().warn(
-                f'⚠️ Folderul de enrollment e gol: {self.enrollment_dir}'
+                f'⚠️ Folderul de enrollment e gol: {self.enrollment_dir} (Add .wav files here)'
             )
             return
 
         # Inițializează SpeakerManager
         try:
-            self.speaker_manager = SpeakerManager(self.enrollment_dir)
+            self.speaker_manager = SpeakerManager(self.enrollment_dir, threshold=self.similarity_threshold)
             self.db_loaded = True
             self.get_logger().info(
                 f'✅ Speaker database loaded: {len(wav_files)} voci '
