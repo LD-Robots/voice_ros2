@@ -1,6 +1,6 @@
 """
-Launch file pentru server-side pipeline.
-Pornește ASR, LLM și TTS nodes.
+Launch file for the server-side pipeline.
+Starts ASR, LLM, and TTS nodes.
 """
 from launch import LaunchDescription
 from launch_ros.actions import Node
@@ -10,7 +10,7 @@ from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     return LaunchDescription([
-        # Declară argumente
+        # Declare arguments
         DeclareLaunchArgument(
             'asr_model_size',
             default_value='small',
