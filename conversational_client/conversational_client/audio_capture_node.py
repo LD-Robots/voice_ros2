@@ -54,12 +54,12 @@ class AudioCaptureNode(Node):
                 device = self.device_index
                 self.get_logger().info(f"🎤 Using explicit device index: {device}")
             else:
-                # Folosim DISPOZITIVUL DEFAULT al sistemului (care știm că merge cu arecord)
-                # Nu mai căutăm explicit 'pulse' sau 'pipewire' pentru că poate cauza probleme cu indexul
+                # Use the system DEFAULT device (we know it works with arecord)
+                # Do not explicitly search 'pulse' or 'pipewire' to avoid index issues
                 device = None 
                 self.get_logger().info("🎤 Using OS Default Input Device (sounddevice default)")
                 
-                # Debug: arătăm ce dispozitiv consideră sounddevice ca fiind default
+                # Debug: show which device sounddevice considers default
                 try:
                     default_dev = sd.query_devices(kind='input')
                     self.get_logger().info(f"ℹ️ Default device info: {default_dev['name']}")
@@ -129,9 +129,13 @@ class AudioCaptureNode(Node):
 
     def destroy_node(self):
         self.get_logger().info("🛑 Shutting down audio capture...")
-        if self.stream:
-            self.stream.stop()
-            self.stream.close()
+        try:
+            if self.stream:
+                self.stream.stop()
+                self.stream.close()
+        except Exception as e:
+            self.get_logger().warn(f"Error closing audio stream: {e}")
+            
         super().destroy_node()
 
 def main(args=None):

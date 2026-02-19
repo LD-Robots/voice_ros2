@@ -2,9 +2,9 @@
 """
 LLM Node - Language Model processing using Groq API with STREAMING.
 
-FEATURES (sincronizat cu Conversational_Robot Python):
-  - Web search via Groq Compound model pentru întrebări actuale
-  - Keyword detection pentru știri, vreme, prețuri, alegeri, etc.
+FEATURES (synced with Conversational_Robot Python):
+  - Web search via Groq Compound model for current questions
+  - Keyword detection for news, weather, prices, elections, etc.
 
 Subscribes to: /transcription (Transcription)
 Publishes to: 
@@ -23,16 +23,16 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-# Încarcă variabilele din .env
+# Load variables from .env
 try:
     from dotenv import load_dotenv
-    # Caută fișierul .env în voice_ros2/ (funcționează din install/ sau src/)
+    # Search for the .env file in voice_ros2/ (works from install/ or src/)
     current_path = Path(__file__).resolve()
-    # Mergi în sus până găsești directorul care conține conversational_server
+    # Walk up until we find the voice_ros2 directory
     while current_path.name != 'voice_ros2' and current_path != current_path.parent:
         current_path = current_path.parent
     
-    # Dacă nu găsim voice_ros2, încercăm să mergem 3 niveluri în sus de la fișier
+    # If we don't find voice_ros2, try going 3 levels up from this file
     if current_path.name != 'voice_ros2':
         current_path = Path(__file__).resolve().parents[3]
     
@@ -45,7 +45,7 @@ try:
 except ImportError:
     print("⚠️ python-dotenv not installed. Run: pip install python-dotenv")
 
-# Groq pentru LLM
+# Groq for LLM
 try:
     from groq import Groq
     GROQ_AVAILABLE = True
@@ -53,7 +53,7 @@ except ImportError:
     GROQ_AVAILABLE = False
     print("⚠️ groq not installed. Run: pip install groq")
 
-# Regex pentru a detecta sfârșitul unei propoziții
+# Regex to detect the end of a sentence
 SENTENCE_END = re.compile(r'[.!?;:]\s*$')
 
 
@@ -65,7 +65,7 @@ class LLMNode(Node):
         self.declare_parameter('model', 'llama-3.1-8b-instant')
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
-        self.declare_parameter('min_chunk_chars', 40)  # Min caractere per chunk
+        self.declare_parameter('min_chunk_chars', 40)  # Min chars per chunk
         
         # System prompt - can be overridden via parameter
         # Default: Enhanced prompt with personality, language rules, teasing, opinions
@@ -73,7 +73,7 @@ class LLMNode(Node):
 
 LANGUAGE (CRITICAL): Always respond in the SAME language as user's latest message. English→100% English. Romanian→100% Romanian. Never mix. No RO slang in EN, no EN slang in RO.
 
-STYLE: 1-2 sentences max. No markdown. Be warm, casual, genuine. Don't announce actions ("Let me try..."), just do them. Don't end with questions constantly. "Mișto!" or "That's cool" is enough sometimes.
+STYLE: 1-2 sentences max. No markdown, no emojis. Be warm, casual, genuine. Don't announce actions ("Let me try..."), just do them. Don't end with questions constantly. "Mișto!" or "That's cool" is enough sometimes.
 
 FRIENDSHIP: Show interest, remember context, celebrate wins, be supportive. Don't offer alternatives or ask "Want me to...?" - just continue naturally.
 
@@ -83,7 +83,14 @@ OPINIONS: Neutral on ethics/politics/religion. BUT for fun topics (food, movies,
 
 HONESTY: Answer first, admit uncertainty casually ("Nu sunt sigur, dar..." / "Don't quote me on that"). For unknowable questions, react briefly in THE SAME LANGUAGE and STOP. EN: "Dude, nobody knows!" / RO: "Habar n-am, nimeni nu știe!" No estimates unless they insist.
 
-EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. If confused→simpler.'''
+EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. If confused→simpler.
+
+IDENTITY & PERSONALIZATION:
+You will receive the user's name in the format `[Speaker: Name]`.
+- If "Unknown", treat them as a new friend.
+- If "Delia": Be playful, witty, and teasing. She loves banter and sarcasm.
+- If "Valee": Be warm, chill, and supportive. She prefers a relaxed, straightforward vibe.
+- USE THE NAME SPARINGLY/RARELY. Do NOT use it in every sentence. Only use it for greetings or specific emphasis. Speak naturally.'''
         
         self.declare_parameter('system_prompt', default_system_prompt)
         
@@ -140,7 +147,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             'unknown_ro': self.get_parameter('fallback_unknown_ro').value,
         }
         
-        # Verifică API key
+        # Check API key
         self.api_key = os.environ.get('GROQ_API_KEY')
         if not self.api_key:
             self.get_logger().error('GROQ_API_KEY environment variable not set!')
@@ -150,14 +157,14 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             self.get_logger().error('groq package not installed!')
             raise RuntimeError('groq not available')
         
-        # Inițializează client Groq
+        # Initialize Groq client
         self.client = Groq(api_key=self.api_key)
         self.get_logger().debug(f'✅ Groq client initialized with model: {self.model}')
         
-        # Istoricul conversației
+        # Conversation history
         self.conversation_history = []
         
-        # Speaker identification — cine vorbește acum
+        # Speaker identification — who is speaking now
         self.current_speaker = "Unknown"
         self.speaker_sub = self.create_subscription(
             String,
@@ -166,7 +173,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             10
         )
         
-        # Subscriber pentru transcriere
+        # Subscriber for transcription
         self.transcription_sub = self.create_subscription(
             Transcription,
             '/transcription',
@@ -174,21 +181,21 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             10
         )
         
-        # Publisher pentru streaming chunks
+        # Publisher for streaming chunks
         self.stream_pub = self.create_publisher(
             TextChunk,
             '/llm_stream',
             10
         )
         
-        # Publisher pentru răspunsul complet (compatibilitate)
+        # Publisher for full response (compatibility)
         self.response_pub = self.create_publisher(
             Transcription,
             '/llm_response',
             10
         )
         
-        # Publisher pentru TTS command (backchannel)
+        # Publisher for TTS command (backchannel)
         self.tts_cmd_pub = self.create_publisher(
             String,
             '/tts_command',
@@ -198,23 +205,23 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         self.get_logger().debug(f'LLM Node started with STREAMING + BACKCHANNEL! websearch={self.websearch_enabled}')
     
     def _get_system_prompt_with_date(self) -> str:
-        """Returnează system prompt cu data curentă injectată."""
+        """Return system prompt with the current date injected."""
         date_str = datetime.now().strftime("%A, %B %d, %Y")
         return f"Today is {date_str}.\n\n{self.system_prompt}"
     
     def _get_fallback(self, key: str, lang: str) -> str:
-        """Returnează mesajul de fallback pentru cheie și limbă."""
+        """Return the fallback message for key and language."""
         suffix = '_ro' if str(lang).lower().startswith('ro') else '_en'
         return self.fallback.get(f"{key}{suffix}", "")
     
     def _needs_websearch(self, text: str) -> bool:
-        """Detectează dacă întrebarea necesită informații actuale de pe web."""
+        """Detect whether the question needs up-to-date web info."""
         if not self.websearch_enabled:
             return False
         
         text_lower = text.lower()
         
-        # Cuvinte cheie care indică nevoie de info actuală
+        # Keywords that indicate a need for current info
         current_info_keywords = [
             # English - time-sensitive
             "news", "today", "latest", "current", "recent", "now",
@@ -262,7 +269,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         return False
     
     def transcription_callback(self, msg: Transcription):
-        """Procesează transcrierea și publică răspunsul LLM în streaming."""
+        """Process transcription and publish the LLM response in streaming."""
         user_text = msg.text.strip()
         user_lang = msg.language
         
@@ -272,7 +279,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         
         self.get_logger().info(f'💬 User [{user_lang}]: {user_text}')
         
-        # Procesează în thread separat pentru a nu bloca ROS2
+        # Process in a separate thread to avoid blocking ROS2
         thread = threading.Thread(
             target=self._process_streaming,
             args=(user_text, user_lang),
@@ -281,21 +288,60 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         thread.start()
     
     def _speaker_id_callback(self, msg: String):
-        """Actualizează vorbitorul curent pe baza amprentei vocale."""
-        if msg.data and msg.data != self.current_speaker:
-            self.current_speaker = msg.data
-            self.get_logger().info(f'🗣️ Speaker activ: {self.current_speaker}')
+        """
+        Actualizează vorbitorul curent pe baza amprentei vocale.
+        Folosește logică "Sticky Speaker" pentru a nu uita imediat cine vorbește
+        dacă apar segmente scurte "Unknown".
+        """
+        new_speaker = msg.data
+        if not new_speaker:
+            return
+
+        # Timpul curent
+        now = time.time()
+        
+        # Inițializează timestamp-ul ultimului speaker cunoscut dacă nu există
+        if not hasattr(self, 'last_known_speaker_time'):
+            self.last_known_speaker_time = 0
+            
+        # LOGICĂ STICKY:
+        # 1. Dacă e un speaker CUNOSCUT (nu Unknown), îl actualizăm imediat
+        if new_speaker != "Unknown":
+            if new_speaker != self.current_speaker:
+                self.get_logger().info(f'🗣️ Speaker schimbat: {self.current_speaker} -> {new_speaker}')
+                self.current_speaker = new_speaker
+            
+            # Actualizăm timpul ultimei identificări pozitive
+            self.last_known_speaker_time = now
+            
+        # 2. Dacă e UNKNOWN:
+        else:
+            # Dacă nu știm pe nimeni de dinainte, rămâne Unknown
+            if self.current_speaker == "Unknown":
+                pass
+                
+            # Dacă știm pe cineva, verificăm cât timp a trecut
+            else:
+                # Dacă au trecut mai puțin de 60 secunde de la ultima identificare,
+                # IGNORĂM "Unknown" și presupunem că e tot persoana anterioară.
+                time_since_last = now - self.last_known_speaker_time
+                if time_since_last < 60.0:
+                    self.get_logger().debug(f'ignor "Unknown" - păstrez {self.current_speaker} ({time_since_last:.1f}s)')
+                else:
+                    # A trecut prea mult timp, am uitat cine e
+                    self.get_logger().info(f'term timeout - reset la Unknown (au trecut {time_since_last:.1f}s)')
+                    self.current_speaker = "Unknown"
     
     def _process_streaming(self, user_text: str, user_lang: str):
-        """Procesează răspunsul LLM cu streaming."""
+        """Process the LLM response with streaming."""
         session_id = str(uuid.uuid4())[:8]
         
         try:
-            # Adaugă mesajul utilizatorului în istoric (cu instrucțiune de limbă)
-            # Aceasta forțează modelul să răspundă în limba corectă
+            # Add the user's message to history (with language instruction)
+            # This forces the model to respond in the correct language
             lang_instruction = "[RESPOND IN ENGLISH]" if not user_lang.startswith('ro') else "[RĂSPUNDE ÎN ROMÂNĂ]"
             
-            # Adaugă numele vorbitorului dacă e cunoscut
+            # Add speaker name if known
             if self.current_speaker and self.current_speaker != "Unknown":
                 speaker_info = f"[Speaker: {self.current_speaker}] "
             else:
@@ -308,15 +354,15 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                 'content': user_message_with_lang
             })
             
-            # Construiește mesajele pentru API
+            # Build messages for the API
             messages = [
                 {'role': 'system', 'content': self._get_system_prompt_with_date()}
             ] + self.conversation_history
             
-            # Detectează dacă întrebarea necesită web search
+            # Detect if the question needs web search
             needs_websearch = self._needs_websearch(user_text)
             
-            # Selectează model și max_tokens în funcție de web search
+            # Select model and max_tokens based on web search
             if needs_websearch:
                 model_to_use = self.websearch_model
                 max_tokens_to_use = self.websearch_max_tokens
@@ -325,7 +371,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                 model_to_use = self.model
                 max_tokens_to_use = self.max_tokens
             
-            # Apel Groq API cu STREAMING
+            # Groq API call with STREAMING
             stream = self.client.chat.completions.create(
                 model=model_to_use,
                 messages=messages,
@@ -334,7 +380,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                 stream=True  # STREAMING!
             )
             
-            # Buffer și state pentru stream shaper
+            # Buffer and state for stream shaper
             buffer = ""
             full_response = ""
             chunk_count = 0
@@ -342,20 +388,20 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             start_time = time.time()
             backchannel_sent = False
             
-            # Generator pentru tokeni cu backchannel
+            # Token generator with backchannel
             def token_generator():
                 nonlocal first_token_time, backchannel_sent
                 for chunk in stream:
                     if chunk.choices[0].delta.content:
                         token = chunk.choices[0].delta.content
                         
-                        # Backchannel: dacă prima token întârzie > delay_ms
+                        # Backchannel: if first token is delayed > delay_ms
                         if first_token_time is None:
                             first_token_time = time.time()
                             ttft_ms = (first_token_time - start_time) * 1000
                             self.get_logger().debug(f'⏱️ Time to first token: {ttft_ms:.0f}ms')
                             
-                            # Trimite backchannel dacă a durat prea mult
+                            # Send backchannel if it took too long
                             if self.backchannel_enabled and ttft_ms > self.backchannel_delay_ms and not backchannel_sent:
                                 backchannel_sent = True
                                 phrase = self.backchannel_phrase_ro if user_lang.startswith('ro') else self.backchannel_phrase_en
@@ -366,7 +412,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                         
                         yield token
             
-            # Procesează tokenii cu stream shaper logic
+            # Process tokens with stream shaper logic
             from .stream_shaper import shape_stream
             shaped_tokens = shape_stream(
                 token_generator(),
@@ -376,29 +422,29 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                 max_idle_ms=self.max_idle_ms
             )
             
-            # Publică chunk-urile netezite
+            # Publish smoothed chunks
             for shaped_chunk in shaped_tokens:
                 full_response += shaped_chunk
                 self._publish_chunk(shaped_chunk.strip(), user_lang, False, session_id)
                 chunk_count += 1
             
-            # Trimite final marker
+            # Send final marker
             self._publish_chunk("", user_lang, True, session_id)
             
-            # Actualizează istoricul
+            # Update history
             if full_response:
                 self.conversation_history.append({
                     'role': 'assistant',
                     'content': full_response
                 })
                 
-                # Limitează istoricul
+                # Limit history
                 if len(self.conversation_history) > 10:
                     self.conversation_history = self.conversation_history[-10:]
                 
                 self.get_logger().info(f'🤖 Bot ({chunk_count} chunks): {full_response}')
                 
-                # Publică și răspunsul complet pentru compatibilitate
+                # Also publish the full response for compatibility
                 out = Transcription()
                 out.text = full_response
                 out.language = user_lang
@@ -408,7 +454,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
         except Exception as e:
             self.get_logger().error(f'LLM streaming error: {e}')
             
-            # Publică fallback response pentru eroare
+            # Publish fallback response for error
             error_type = 'timeout' if 'timeout' in str(e).lower() else 'error'
             fallback_msg = self._get_fallback(error_type, user_lang)
             
@@ -417,7 +463,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
                 self._publish_chunk(fallback_msg, user_lang, True, session_id)
     
     def _publish_chunk(self, text: str, language: str, is_final: bool, session_id: str):
-        """Publică un chunk de text."""
+        """Publish a text chunk."""
         chunk = TextChunk()
         chunk.text = text
         chunk.language = language
@@ -429,7 +475,7 @@ EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. I
             self.get_logger().debug(f'📤 Chunk: "{text[:30]}..." (final={is_final})')
     
     def clear_history(self):
-        """Șterge istoricul conversației."""
+        """Clear the conversation history."""
         self.conversation_history = []
         self.get_logger().debug('Conversation history cleared')
 
