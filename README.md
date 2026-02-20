@@ -10,6 +10,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - **ASR Node** - Automatic Speech Recognition (Faster-Whisper)
 - **LLM Node** - Language Model processing (Groq API with streaming)
 - **TTS Node** - Text-to-Speech (Piper TTS)
+- **Robot Command Node** - Extracts action commands from speech (e.g., raise hand, move, dance)
 
 ### Client Nodes (Robot Hardware)
 - **Audio Capture Node** - Microphone input
@@ -25,6 +26,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - `Audio.msg` - Audio data chunks
 - `Transcription.msg` - Speech transcription results
 - `TextChunk.msg` - Streaming LLM responses
+- `RobotCommand.msg` - Structured robot actions from voice commands
 
 ## 📋 Prerequisites
 
@@ -178,6 +180,15 @@ Edit `full_system.launch.py` and adjust:
 'threshold': 0.5,  # Lower = more sensitive (0.0-1.0)
 ```
 
+### Robot Commands
+The `robot_command_node` parses actionable phrases from `/transcription` and publishes `RobotCommand` on `/robot_command`.
+
+Examples:
+- `raise hand` / `ridica mana`
+- `go 10 meters` / `mergi 10 metri`
+- `dance` / `danseaza`
+- `stop`
+
 ## 🎯 Features
 
 ### ✅ Implemented
@@ -191,9 +202,9 @@ Edit `full_system.launch.py` and adjust:
 - ✅ **Backchannel** - "One moment..." for slow responses
 - ✅ **Fallback Responses** - Error handling
 - ✅ **Speaker Identification** - Voice fingerprint via SpeechBrain ECAPA-TDNN
+- ✅ **Robot Command Extraction** - Parses commands like "raise hand", "go 10 meters", "dance"
 
 ### 🔄 Future Enhancements
-- Motor commands integration
 - Intent classification
 - Multi-turn clarification
 - Emotion detection
@@ -237,6 +248,7 @@ voice_ros2/
 │   │   ├── asr_node.py            # Speech recognition
 │   │   ├── llm_node.py            # Language model (+ speaker awareness)
 │   │   ├── tts_node.py            # Text-to-speech
+│   │   ├── robot_command_node.py  # Voice command extraction
 │   │   └── stream_shaper.py       # LLM streaming optimizer
 │   ├── models/piper/              # TTS models
 │   └── launch/                    # Launch files
@@ -258,7 +270,8 @@ voice_ros2/
 │   └── msg/
 │       ├── Audio.msg
 │       ├── Transcription.msg
-│       └── TextChunk.msg
+│       ├── TextChunk.msg
+│       └── RobotCommand.msg
 ├── .env                           # API keys (not in git)
 └── .gitignore
 ```

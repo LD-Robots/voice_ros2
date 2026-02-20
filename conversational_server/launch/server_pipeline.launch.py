@@ -66,4 +66,18 @@ def generate_launch_description():
                 'voice_ro': 'ro-RO-EmilNeural',
             }]
         ),
+
+        # Robot command extraction from transcription
+        Node(
+            package='conversational_server',
+            executable='robot_command_node',
+            name='robot_command_node',
+            output='screen',
+            parameters=[{
+                'enabled': True,
+                'min_asr_confidence': 0.50,
+                'require_session_active': False,
+                'stop_ends_session': True,
+            }]
+        ),
     ])

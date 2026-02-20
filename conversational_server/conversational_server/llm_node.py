@@ -22,6 +22,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from .robot_command_parser import parse_robot_command
 
 # Load variables from .env
 try:
@@ -93,6 +94,7 @@ You will receive the user's name in the format `[Speaker: Name]`.
 - USE THE NAME SPARINGLY/RARELY. Do NOT use it in every sentence. Only use it for greetings or specific emphasis. Speak naturally.'''
         
         self.declare_parameter('system_prompt', default_system_prompt)
+        self.declare_parameter('ignore_robot_commands', True)
         
         # Web search parameters
         self.declare_parameter('websearch_enabled', True)
@@ -104,6 +106,7 @@ You will receive the user's name in the format `[Speaker: Name]`.
         self.temperature = self.get_parameter('temperature').value
         self.min_chunk_chars = self.get_parameter('min_chunk_chars').value
         self.system_prompt = self.get_parameter('system_prompt').value
+        self.ignore_robot_commands = self.get_parameter('ignore_robot_commands').value
         
         # Web search
         self.websearch_enabled = self.get_parameter('websearch_enabled').value
@@ -276,6 +279,14 @@ You will receive the user's name in the format `[Speaker: Name]`.
         if not user_text:
             self.get_logger().warn('Empty transcription received, skipping')
             return
+
+        if self.ignore_robot_commands:
+            parsed_command, _ = parse_robot_command(user_text)
+            if parsed_command is not None:
+                self.get_logger().debug(
+                    f'🧠 Ignoring robot command in LLM path: action={parsed_command.action}'
+                )
+                return
         
         self.get_logger().info(f'💬 User [{user_lang}]: {user_text}')
         
