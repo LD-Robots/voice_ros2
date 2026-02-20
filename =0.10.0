@@ -1,6 +1,0 @@
-Defaulting to user installation because normal site-packages is not writeable
-Collecting torchcodec
-  Using cached torchcodec-0.10.0-cp312-cp312-manylinux_2_28_x86_64.whl.metadata (11 kB)
-Using cached torchcodec-0.10.0-cp312-cp312-manylinux_2_28_x86_64.whl (2.1 MB)
-Installing collected packages: torchcodec
-Successfully installed torchcodec-0.10.0

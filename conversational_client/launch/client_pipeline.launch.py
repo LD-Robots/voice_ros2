@@ -6,43 +6,29 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from pathlib import Path
-
-
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('conversational_client')
     models_dir = os.path.join(pkg_share, 'models')
-    workspace_root = _find_workspace_root()
-    voices_dir = os.path.join(
-        str(workspace_root) if workspace_root else os.getcwd(),
-        'voices'
-    )
     
-    # Build the custom_models string
+    # Build the string for custom_models
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
-    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # test the original model
+    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # testăm modelul original
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
-    # Define models: hello=wake, stop_robot_oww=barge_in (stop TTS only), goodbye=stop (bye bye)
+    # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
     custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
-    # Per-model thresholds (lower stop_robot_oww for better detection)
-    # Lower stop_robot_oww (0.25) to detect even when the robot is speaking
-    # Lower stop_robot (0.15) to detect even when the robot is speaking
-    model_thresholds = "hello_robot:0.30,stop_robot:0.15,goodbye_robot:0.50"
+    # Individual thresholds per model (stop_robot_oww lower for better detection)
+    # stop_robot_oww lower (0.25) for detection even when the robot is speaking
+    # stop_robot lower (0.15) for detection even when the robot is speaking
+    model_thresholds = "hello_robot:0.10,goodbye_robot:0.50"
 
     return LaunchDescription([
         
-        # Audio Capture (microphone)
+        # Audio Capture (microfon)
         Node(
             package='conversational_client',
             executable='audio_capture_node',
@@ -53,7 +39,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Wake Word (detect "hello robot") + Stop Keyword ("stop")
+        # Wake Word (detectare "hello robot") + Stop Keyword ("stop")
         Node(
             package='conversational_client',
             executable='wake_word_node',
@@ -94,7 +80,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Barge-in (voice detection + PyTorch stop keyword)
+        # Barge-in (detectare voce + PyTorch stop keyword)
         Node(
             package='conversational_client',
             executable='barge_in_node',
@@ -106,15 +92,15 @@ def generate_launch_description():
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
                 'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
-                'stop_prob_threshold': 0.99,
-                'stop_logit_margin': 0.3,
-                'stop_hits_required': 2,
+                'stop_prob_threshold': 0.95,  # Increased to prevent false positives
+                'stop_logit_margin': 0.5,
+                'stop_hits_required': 2,      # Remote suggests 2, safer
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
                 'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
             }]
         ),
         
-        # Audio Playback (speaker)
+        # Audio Playback (difuzor)
         Node(
             package='conversational_client',
             executable='audio_playback_node',
@@ -122,14 +108,14 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # Speaker Identification (who is speaking)
+        # Speaker Identification (cine vorbește)
         Node(
             package='conversational_client',
             executable='speaker_id_node',
             name='speaker_id_node',
             output='screen',
             parameters=[{
-                'enrollment_dir': os.path.join(voices_dir, 'enrollment'),
+                'enrollment_dir': os.path.expanduser('~/voice_ros2/voices/enrollment/'),
                 'similarity_threshold': 0.25,
             }]
         ),
