@@ -1,6 +1,6 @@
 """
-Launch file pentru sistemul complet (server + client).
-Pornește toate nodurile pentru testare locală.
+Launch file for the full system (server + client).
+Starts all nodes for local testing.
 """
 from launch import LaunchDescription
 from launch_ros.actions import Node
@@ -106,7 +106,7 @@ def generate_launch_description():
             output='screen',
         ),
         
-        # Barge-in (întrerupe TTS când vorbește userul)
+        # Barge-in (interrupts TTS when the user speaks)
         Node(
             package='conversational_client',
             executable='barge_in_node',
@@ -134,7 +134,7 @@ def generate_launch_description():
             parameters=[{
                 'threshold': 0.5,  # Default threshold
                 'cooldown_ms': 1500,
-                # Format: "path:kind" - 'wake' pentru activare, 'barge_in' pentru stop TTS, 'stop' pentru end session
+                # Format: "path:kind" - \'wake\' for activation, \'barge_in\' for stopping TTS, \'stop\' for ending session
                 'custom_models': ','.join([
                     os.path.expanduser('~/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
                     os.path.expanduser('~/voice_ros2/conversational_client/models/stop_robot.onnx:barge_in'),
@@ -145,7 +145,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Stop Keyword Node (DISABLED - folosim OpenWakeWord în wake_word_node)
+        # Stop Keyword Node (DISABLED - using OpenWakeWord in wake_word_node)
         # Node(
         #     package='conversational_client',
         #     executable='stop_keyword_node',

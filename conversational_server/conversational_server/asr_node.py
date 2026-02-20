@@ -3,9 +3,9 @@
 ASR Node - Speech to Text using Faster Whisper (Standalone).
 
 FEATURES (sincronizat cu Conversational_Robot Python):
-  - Warmup la start pentru încărcare completă model
+  - Warmup at start for full model loading
   - Detecție RO/EN cu alegere best score
-  - Fallback fără VAD pentru erori
+  - Fallback without VAD for errors
 
 Subscribes to: 
   - /audio_raw (Audio) - audio frames
@@ -28,7 +28,7 @@ import re
 import unicodedata
 import soundfile as sf
 
-# RapidFuzz pentru anti-echo textual
+# RapidFuzz for textual anti-echo
 try:
     from rapidfuzz import fuzz
     RAPIDFUZZ_AVAILABLE = True
@@ -36,7 +36,7 @@ except ImportError:
     RAPIDFUZZ_AVAILABLE = False
     print("⚠️ rapidfuzz not installed. Anti-echo disabled. Run: pip install rapidfuzz")
 
-# Faster Whisper pentru ASR
+# Faster Whisper for ASR
 try:
     from faster_whisper import WhisperModel
     WHISPER_AVAILABLE = True
@@ -95,17 +95,17 @@ class ASRNode(Node):
         self._warmed_up = False
         self._ensure_warm()
         
-        # Buffer pentru audio
+        # Buffer for audio
         self.audio_buffer = []
         self.sample_rate = 16000
         self.channels = 1
         self.is_speaking = False
         self.was_speaking = False
         
-        # Anti-echo: ultimul răspuns al robotului
+        # Anti-echo: last robot response
         self.last_bot_reply = ""
         
-        # Subscriber pentru audio
+        # Audio subscriber
         self.audio_sub = self.create_subscription(
             Audio,
             '/audio_raw',
@@ -113,7 +113,7 @@ class ASRNode(Node):
             10
         )
         
-        # Subscriber pentru VAD
+        # VAD subscriber
         self.vad_sub = self.create_subscription(
             Bool,
             '/voice_activity',
@@ -121,7 +121,7 @@ class ASRNode(Node):
             10
         )
         
-        # Subscriber pentru răspunsul LLM (anti-echo)
+        # LLM response subscriber (anti-echo)
         self.llm_response_sub = self.create_subscription(
             Transcription,
             '/llm_response',
@@ -129,7 +129,7 @@ class ASRNode(Node):
             10
         )
         
-        # Publisher pentru transcriere
+        # Transcription publisher
         self.transcription_pub = self.create_publisher(
             Transcription,
             '/transcription',
@@ -144,15 +144,15 @@ class ASRNode(Node):
         self.get_logger().debug('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
     
     def audio_callback(self, msg: Audio):
-        """Bufferează audio în timpul vorbirii."""
+        """Buffers audio during speech."""
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
-        # Bufferează audio când userul vorbește (sau puțin înainte)
+        # Buffers audio when the user is speaking (or slightly before)
         if self.is_speaking:
             self.audio_buffer.extend(msg.data)
         else:
-            # Păstrează ultimele 0.5 secunde pentru context
+            # Keep the last 0.5 seconds for context
             max_pre_buffer = int(self.sample_rate * 0.5)
             self.audio_buffer.extend(msg.data)
             if len(self.audio_buffer) > max_pre_buffer:
@@ -169,15 +169,15 @@ class ASRNode(Node):
             self._process_buffer()
 
     def llm_response_callback(self, msg: Transcription):
-        """Stochează ultimul răspuns al robotului pentru anti-echo."""
+        """Store the last robot response for anti-echo."""
         if msg.text:
             self.last_bot_reply = msg.text
             self.get_logger().debug(f'📝 Stored bot reply for anti-echo: {msg.text[:50]}...')
 
     def _normalize_text(self, text: str) -> str:
         """
-        Normalizează text pentru comparație anti-echo.
-        Elimină diacritice, punctuație, spații extra și face lowercase.
+        Normalize text for anti-echo comparison.
+        Remove diacritics, punctuation, extra spaces and make lowercase.
         """
         if not text:
             return ""
@@ -186,7 +186,7 @@ class ASRNode(Node):
         # Elimină diacritice (ă->a, î->i, etc.)
         text = unicodedata.normalize('NFD', text)
         text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
-        # Elimină punctuație și caractere speciale
+        # Remove punctuation and special characters
         text = re.sub(r'[^a-z0-9\s]', '', text)
         # Normalizează spații
         text = ' '.join(text.split())
@@ -194,8 +194,8 @@ class ASRNode(Node):
     
     def _is_echo(self, transcription: str) -> bool:
         """
-        Verifică dacă transcripția e echo de la TTS.
-        Returnează True dacă trebuie ignorată.
+        Check if the transcription is an echo from TTS.
+        Return True if it should be ignored.
         """
         if not self.echo_enabled or not self.last_bot_reply:
             return False
@@ -203,7 +203,7 @@ class ASRNode(Node):
         user_norm = self._normalize_text(transcription)
         bot_norm = self._normalize_text(self.last_bot_reply)
         
-        # Verifică doar dacă ambele sunt suficient de lungi
+        # Only check if both are long enough
         if len(user_norm) < self.echo_min_length or len(bot_norm) < self.echo_min_length:
             return False
         
@@ -217,7 +217,7 @@ class ASRNode(Node):
         return False
 
     def _process_buffer(self):
-        """Procesează audio-ul bufferat și publică transcrierea."""
+        """Process the buffered audio and publish the transcription."""
         if not self.audio_buffer:
             self.get_logger().warn('Empty audio buffer, skipping')
             self.audio_buffer = []
@@ -232,10 +232,10 @@ class ASRNode(Node):
         
         self.get_logger().info(f'🎤 Processing {audio_length:.2f}s of audio...')
         
-        # Convertește în numpy array
+        # Convert to numpy array
         audio_data = np.array(self.audio_buffer, dtype=np.int16)
         
-        # Salvează în memorie (BytesIO) ca WAV
+        # Save in memory (BytesIO) as WAV
         wav_io = io.BytesIO()
         try:
             with wave.open(wav_io, 'wb') as wav:
@@ -244,10 +244,10 @@ class ASRNode(Node):
                 wav.setframerate(self.sample_rate)
                 wav.writeframes(audio_data.tobytes())
             
-            # Reset cursor la începutul bufferului
+            # Reset cursor to the beginning of the buffer
             wav_io.seek(0)
             
-            # Folosește detecție RO/EN dacă setat
+            # Use RO/EN detection if set
             if self.language == 'ro_en':
                 # Pentru ro_en avem nevoie să citim de două ori, deci BytesIO e perfect (seek(0))
                 result = self._transcribe_ro_en(wav_io)
@@ -261,7 +261,7 @@ class ASRNode(Node):
                 except ValueError as e:
                     if "max() iterable argument is empty" in str(e):
                         self.get_logger().warn("VAD error, retrying without VAD filter...")
-                        wav_io.seek(0) # Reset pentru a doua încercare
+                        wav_io.seek(0) # Reset for the second attempt
                         fallback_lang = self.language or "en"
                         text, lang, confidence, _ = self._run_once(wav_io, fallback_lang, use_vad=False)
                     else:
@@ -270,7 +270,7 @@ class ASRNode(Node):
             if text:
                 self.get_logger().info(f'🧏 [{lang}] {text}')
                 
-                # Anti-echo: verifică dacă e echo de la TTS
+                # Anti-echo: check if it is an echo from TTS
                 if self._is_echo(text):
                     self.audio_buffer = []
                     return
@@ -297,7 +297,7 @@ class ASRNode(Node):
             self.get_logger().debug("🔥 ASR warm-up start...")
             start = time.perf_counter()
             
-            # Creează WAV scurt în memorie
+            # Create short WAV in memory
             wav_io = io.BytesIO()
             silence = np.zeros(8000, dtype=np.int16)  # 0.5s @ 16kHz
             with wave.open(wav_io, 'wb') as wav:
@@ -321,7 +321,7 @@ class ASRNode(Node):
         Audio source poate fi path (str) sau file-like object (BytesIO).
         Returnează: (text, lang_out, lang_prob, score)
         """
-        # Dacă e stream, asigură-te că e la început
+        # If it is a stream, make sure it is at the beginning
         if hasattr(audio_source, 'seek'):
             audio_source.seek(0)
 

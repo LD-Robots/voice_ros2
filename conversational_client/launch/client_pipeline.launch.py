@@ -1,6 +1,6 @@
 """
-Launch file pentru client-side nodes.
-Pornește toate nodurile client pentru conversație vocală.
+Launch file for client-side nodes.
+Starts all client nodes for voice conversation.
 """
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -12,7 +12,7 @@ def generate_launch_description():
     pkg_share = get_package_share_directory('conversational_client')
     models_dir = os.path.join(pkg_share, 'models')
     
-    # Construim string-ul pentru custom_models
+    # Build the string for custom_models
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
     stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # testăm modelul original
@@ -21,9 +21,9 @@ def generate_launch_description():
     # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
     custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
-    # Threshold-uri individuale per model (stop_robot_oww mai mic pentru detectare mai bună)
-    # stop_robot_oww mai mic (0.25) pentru detectare chiar și când robotul vorbește
-    # stop_robot mai mic (0.15) pentru detectare chiar și când robotul vorbește
+    # Individual thresholds per model (stop_robot_oww lower for better detection)
+    # stop_robot_oww lower (0.25) for detection even when the robot is speaking
+    # stop_robot lower (0.15) for detection even when the robot is speaking
     model_thresholds = "hello_robot:0.10,goodbye_robot:0.50"
 
     return LaunchDescription([
@@ -67,7 +67,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Audio Segment (bufferează audio și trimite segment complet)
+        # Audio Segment (buffers audio and sends complete segment)
         Node(
             package='conversational_client',
             executable='audio_segment_node',

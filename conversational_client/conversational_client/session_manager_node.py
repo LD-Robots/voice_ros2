@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-session_manager_node.py - Gestionează starea sesiunii și închiderea la "Goodbye"
+session_manager_node.py - Manages session state and closing on "Goodbye"
 
 Acest nod ascultă transcrierea și decide când să închidă sesiunea.
 """
@@ -33,15 +33,15 @@ class SessionManagerNode(Node):
         self.get_logger().info('✅ Session Manager started. Listening for Goodbye...')
 
     def transcription_callback(self, msg: Transcription):
-        """Verifică dacă textul conține cuvinte de goodbye."""
+        """Check if text contains goodbye words."""
         text = msg.text.lower().strip()
         
-        # Verificăm dacă userul a zis ceva de genul goodbye
+        # Checkm dacă userul a zis ceva de genul goodbye
         for kw in self.goodbye_keywords:
             if kw in text:
                 self.get_logger().info(f'👋 Goodbye detected in text: "{kw}". Closing session.')
                 
-                # Trimite semnal de închidere
+                # Send semnal de închidere
                 end_msg = Bool()
                 end_msg.data = True
                 self.session_pub.publish(end_msg)
