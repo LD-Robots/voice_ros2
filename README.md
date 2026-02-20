@@ -211,8 +211,12 @@ Edit `full_system.launch.py` and adjust:
 
 Supported commands (EN/RO):
 - Raise hands / arms (`raise hands`, `hands up`, `ridică mâinile`)
+- Lower hands / arms (`lower hands`, `hands down`, `coboară mâinile`)
 - Move forward/backward by steps (`move forward`, `5 steps back`, `mergi 3 pași înapoi`)
+- Turn left/right (`turn left 90 degrees`, `rotește dreapta 45 grade`)
+- Wave (`wave`, `fă cu mâna`)
 - Dance (`dance`, `dansează`)
+- Stop (`stop`, `oprește`)
 
 Inspect detected commands:
 ```bash
@@ -220,20 +224,125 @@ ros2 topic echo /robot_command
 ```
 
 Example output fields:
-- `intent`: `raise_hands` | `move` | `dance`
-- `direction`: `forward` | `backward` | `none`
+- `intent`: `stop` | `move` | `turn` | `raise_hands` | `lower_hands` | `wave` | `dance`
+- `direction`: `forward` | `backward` | `left` | `right` | `none`
 - `steps`: step count for move commands
 - `parameters_json`: extensible JSON payload for actuator/planner projects
 
 `robot_command_executor_node` consumes `/robot_command` and executes:
 - Move commands via `geometry_msgs/Twist` on `/cmd_vel`
-- Behavior commands (`raise_hands`, `dance`) via `/robot_behavior_command` (`std_msgs/String`)
+- Turn commands via `geometry_msgs/Twist` (`angular.z`) on `/cmd_vel`
+- Behavior commands (`raise_hands`, `lower_hands`, `wave`, `dance`) via `/robot_behavior_command` (`std_msgs/String`)
 
 Execution state features in `robot_command_executor_node`:
 - Preemption: new command interrupts current execution
 - Voice cancel: `stop/cancel/opreste/anuleaza` cancels active command
-- Risky-command confirmation: large/backward moves require `yes/confirm` or `da/confirma` within timeout
+- Risky-command confirmation: large/backward moves, large turns, and sit-down can require `yes/confirm` or `da/confirma` within timeout
 - Status topic: `/robot_command_status`
+
+## 🧪 Testing Voice Commands
+
+### 1) Build and source
+```bash
+source /opt/ros/jazzy/setup.bash
+cd ~/voice_ros2
+colcon build --packages-select conversational_interfaces conversational_client conversational_server --symlink-install
+source install/setup.bash
+```
+
+### 2) Start command nodes only (no microphone required)
+Terminal A:
+```bash
+ros2 run conversational_client voice_command_node
+```
+
+Terminal B:
+```bash
+ros2 run conversational_client robot_command_executor_node
+```
+
+### 3) Monitor command and execution topics
+Terminal C:
+```bash
+ros2 topic echo /robot_command
+```
+
+Terminal D:
+```bash
+ros2 topic echo /robot_command_status
+```
+
+Optional (controller outputs):
+```bash
+ros2 topic echo /cmd_vel
+ros2 topic echo /robot_behavior_command
+```
+
+### 4) Inject test transcription messages
+Set active speaker (optional):
+```bash
+ros2 topic pub /speaker_id std_msgs/msg/String "{data: 'Delia'}" -1
+```
+
+Move command:
+```bash
+ros2 topic pub /transcription conversational_interfaces/msg/Transcription "{text: 'move forward 2 steps', language: 'en', confidence: 0.95}" -1
+```
+
+Dance command:
+```bash
+ros2 topic pub /transcription conversational_interfaces/msg/Transcription "{text: 'dance', language: 'en', confidence: 0.95}" -1
+```
+
+Risky command (requires confirmation with current defaults):
+```bash
+ros2 topic pub /transcription conversational_interfaces/msg/Transcription "{text: 'move backward 6 steps', language: 'en', confidence: 0.95}" -1
+```
+
+Turn command:
+```bash
+ros2 topic pub /transcription conversational_interfaces/msg/Transcription "{text: 'turn left 90 degrees', language: 'en', confidence: 0.95}" -1
+```
+
+Wave command:
+```bash
+ros2 topic pub /transcription conversational_interfaces/msg/Transcription "{text: 'wave', language: 'en', confidence: 0.95}" -1
+```
+
+Confirm:
+```bash
+ros2 topic pub /transcription conversational_interfaces/msg/Transcription "{text: 'yes', language: 'en', confidence: 0.95}" -1
+```
+
+Cancel:
+```bash
+ros2 topic pub /transcription conversational_interfaces/msg/Transcription "{text: 'stop', language: 'en', confidence: 0.95}" -1
+```
+
+### 5) What confirms the robot will execute commands
+- `/robot_command` receives parsed intents (`move`, `turn`, `raise_hands`, `lower_hands`, `wave`, `dance`, `stop`)
+- `/robot_command_status` shows transitions like:
+  - `queued:move`
+  - `executed_move:forward:2`
+  - `confirmation_required`
+  - `confirmation_accepted`
+  - `canceled`
+- `/cmd_vel` publishes non-zero `linear.x` while move is active, then zero stop message
+- `/robot_behavior_command` publishes behavior intents such as `raise_hands`, `wave`, `dance`
+
+If your actuator project subscribes to `/cmd_vel` and `/robot_behavior_command`, your robot should physically execute these commands.
+
+### 6) End-to-end test with full pipeline
+```bash
+ros2 launch conversational_server full_system.launch.py
+```
+Say commands naturally:
+- "Move forward two steps"
+- "Move backward six steps" then "Yes"
+- "Turn left ninety degrees"
+- "Wave"
+- "Dance"
+- "Stop"
 
 ## 🐛 Troubleshooting
 

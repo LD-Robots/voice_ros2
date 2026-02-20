@@ -5,6 +5,7 @@ Robot Command Executor Node.
 Consumes normalized voice commands and executes controller-side actions.
 """
 import queue
+import json
 import re
 import threading
 import time
@@ -31,12 +32,16 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('move_topic', '/robot_move_command')
         self.declare_parameter('step_length_m', 0.25)
         self.declare_parameter('linear_speed_mps', 0.15)
+        self.declare_parameter('angular_speed_rps', 0.80)
         self.declare_parameter('control_rate_hz', 20.0)
         self.declare_parameter('max_move_duration_s', 20.0)
+        self.declare_parameter('max_turn_duration_s', 12.0)
 
         self.declare_parameter('behavior_mode', 'topic')  # topic | service | both
         self.declare_parameter('behavior_topic', '/robot_behavior_command')
         self.declare_parameter('raise_hands_service', '/raise_hands')
+        self.declare_parameter('lower_hands_service', '/lower_hands')
+        self.declare_parameter('wave_service', '/wave')
         self.declare_parameter('dance_service', '/dance')
         self.declare_parameter('service_timeout_s', 3.0)
 
@@ -50,6 +55,7 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('confirmation_reject_words', 'no,reject,nu,anuleaza')
         self.declare_parameter('risky_steps_threshold', 5)
         self.declare_parameter('risky_backward_steps_threshold', 3)
+        self.declare_parameter('risky_turn_angle_deg', 150.0)
         self.declare_parameter('require_confirmation_for_dance', False)
         self.declare_parameter('require_confirmation_for_raise_hands', False)
 
@@ -62,12 +68,16 @@ class RobotCommandExecutorNode(Node):
         self.move_topic = str(self.get_parameter('move_topic').value)
         self.step_length_m = float(self.get_parameter('step_length_m').value)
         self.linear_speed_mps = float(self.get_parameter('linear_speed_mps').value)
+        self.angular_speed_rps = float(self.get_parameter('angular_speed_rps').value)
         self.control_rate_hz = float(self.get_parameter('control_rate_hz').value)
         self.max_move_duration_s = float(self.get_parameter('max_move_duration_s').value)
+        self.max_turn_duration_s = float(self.get_parameter('max_turn_duration_s').value)
 
         self.behavior_mode = str(self.get_parameter('behavior_mode').value)
         self.behavior_topic = str(self.get_parameter('behavior_topic').value)
         self.raise_hands_service = str(self.get_parameter('raise_hands_service').value)
+        self.lower_hands_service = str(self.get_parameter('lower_hands_service').value)
+        self.wave_service = str(self.get_parameter('wave_service').value)
         self.dance_service = str(self.get_parameter('dance_service').value)
         self.service_timeout_s = float(self.get_parameter('service_timeout_s').value)
 
@@ -77,6 +87,7 @@ class RobotCommandExecutorNode(Node):
         self.confirmation_timeout_s = float(self.get_parameter('confirmation_timeout_s').value)
         self.risky_steps_threshold = int(self.get_parameter('risky_steps_threshold').value)
         self.risky_backward_steps_threshold = int(self.get_parameter('risky_backward_steps_threshold').value)
+        self.risky_turn_angle_deg = float(self.get_parameter('risky_turn_angle_deg').value)
         self.require_confirmation_for_dance = bool(
             self.get_parameter('require_confirmation_for_dance').value
         )
@@ -114,7 +125,15 @@ class RobotCommandExecutorNode(Node):
         self.status_pub = self.create_publisher(String, '/robot_command_status', 10)
 
         self.raise_hands_client = self.create_client(Trigger, self.raise_hands_service)
+        self.lower_hands_client = self.create_client(Trigger, self.lower_hands_service)
+        self.wave_client = self.create_client(Trigger, self.wave_service)
         self.dance_client = self.create_client(Trigger, self.dance_service)
+        self.behavior_clients = {
+            'raise_hands': self.raise_hands_client,
+            'lower_hands': self.lower_hands_client,
+            'wave': self.wave_client,
+            'dance': self.dance_client,
+        }
 
         self._queue = queue.Queue(maxsize=self.max_pending_commands)
         self._cancel_event = threading.Event()
@@ -227,10 +246,18 @@ class RobotCommandExecutorNode(Node):
 
     def _execute(self, msg: RobotCommand):
         intent = msg.intent.strip().lower()
+        if intent == 'stop':
+            self._cancel_active_execution('stop intent')
+            self._clear_queue()
+            self._publish_status('stopped')
+            return
         if intent == 'move':
             self._execute_move(msg)
             return
-        if intent in ('raise_hands', 'dance'):
+        if intent == 'turn':
+            self._execute_turn(msg)
+            return
+        if intent in ('raise_hands', 'lower_hands', 'wave', 'dance'):
             self._execute_behavior(intent)
             return
         self.get_logger().warn(f'Unsupported intent: {intent}')
@@ -290,6 +317,55 @@ class RobotCommandExecutorNode(Node):
         self.get_logger().info(f'Executed move: direction={direction}, steps={steps}, duration={duration:.2f}s')
         self._publish_status(f'executed_move:{direction}:{steps}')
 
+    def _execute_turn(self, msg: RobotCommand):
+        direction = msg.direction.strip().lower()
+        if direction not in ('left', 'right'):
+            self.get_logger().warn(f'Invalid turn direction: {direction}')
+            return
+
+        angle_deg = self._extract_angle_deg(msg.parameters_json)
+        if self.move_mode == 'topic':
+            payload = String()
+            payload.data = f'turn:{direction}:{int(angle_deg)}'
+            self.move_topic_pub.publish(payload)
+            self.get_logger().info(f'Published turn topic command: {payload.data}')
+            self._publish_status(f'executed_turn_topic:{direction}:{int(angle_deg)}')
+            return
+
+        angular_speed = abs(self.angular_speed_rps)
+        if angular_speed <= 0.0:
+            self.get_logger().warn('angular_speed_rps must be > 0. Turn ignored.')
+            return
+
+        angle_rad = angle_deg * 3.141592653589793 / 180.0
+        duration = min(self.max_turn_duration_s, angle_rad / angular_speed)
+        if duration <= 0.0:
+            self.get_logger().warn('Computed turn duration is 0. Turn ignored.')
+            return
+
+        rate_hz = max(1.0, self.control_rate_hz)
+        period = 1.0 / rate_hz
+        end_t = time.monotonic() + duration
+
+        if self.cmd_vel_pub.get_subscription_count() == 0:
+            self.get_logger().warn(f'No subscribers on {self.cmd_vel_topic}. Command may not move the robot.')
+
+        cmd = Twist()
+        cmd.angular.z = angular_speed if direction == 'left' else -angular_speed
+
+        while self._running and time.monotonic() < end_t and not self._cancel_event.is_set():
+            self.cmd_vel_pub.publish(cmd)
+            time.sleep(period)
+
+        self._stop_motion()
+        if self._cancel_event.is_set():
+            self.get_logger().info(f'Turn canceled: direction={direction}, angle={angle_deg}')
+            self._publish_status('turn_canceled')
+            return
+
+        self.get_logger().info(f'Executed turn: direction={direction}, angle={angle_deg}, duration={duration:.2f}s')
+        self._publish_status(f'executed_turn:{direction}:{int(angle_deg)}')
+
     def _execute_behavior(self, intent: str):
         mode = self.behavior_mode.lower()
 
@@ -301,7 +377,10 @@ class RobotCommandExecutorNode(Node):
             self._publish_status(f'executed_behavior_topic:{intent}')
 
         if mode in ('service', 'both'):
-            client = self.raise_hands_client if intent == 'raise_hands' else self.dance_client
+            client = self.behavior_clients.get(intent)
+            if client is None:
+                self.get_logger().warn(f'No service client configured for behavior: {intent}')
+                return
             if not client.wait_for_service(timeout_sec=0.5):
                 self.get_logger().warn(f'Service unavailable for {intent}.')
                 return
@@ -373,6 +452,9 @@ class RobotCommandExecutorNode(Node):
             return True
         if intent == 'raise_hands' and self.require_confirmation_for_raise_hands:
             return True
+        if intent == 'turn':
+            angle_deg = self._extract_angle_deg(msg.parameters_json)
+            return angle_deg >= max(5.0, self.risky_turn_angle_deg)
         if intent != 'move':
             return False
 
@@ -430,6 +512,17 @@ class RobotCommandExecutorNode(Node):
         msg = String()
         msg.data = status
         self.status_pub.publish(msg)
+
+    @staticmethod
+    def _extract_angle_deg(parameters_json: str) -> float:
+        if not parameters_json:
+            return 90.0
+        try:
+            payload = json.loads(parameters_json)
+            value = float(payload.get('angle_deg', 90.0))
+            return max(5.0, min(360.0, value))
+        except Exception:
+            return 90.0
 
     @staticmethod
     def _parse_words(text: str):
