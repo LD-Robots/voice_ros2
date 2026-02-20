@@ -229,6 +229,12 @@ Example output fields:
 - Move commands via `geometry_msgs/Twist` on `/cmd_vel`
 - Behavior commands (`raise_hands`, `dance`) via `/robot_behavior_command` (`std_msgs/String`)
 
+Execution state features in `robot_command_executor_node`:
+- Preemption: new command interrupts current execution
+- Voice cancel: `stop/cancel/opreste/anuleaza` cancels active command
+- Risky-command confirmation: large/backward moves require `yes/confirm` or `da/confirma` within timeout
+- Status topic: `/robot_command_status`
+
 ## 🐛 Troubleshooting
 
 ### "GROQ_API_KEY not set" Error

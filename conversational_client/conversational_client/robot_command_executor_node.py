@@ -5,12 +5,14 @@ Robot Command Executor Node.
 Consumes normalized voice commands and executes controller-side actions.
 """
 import queue
+import re
 import threading
 import time
+import unicodedata
 
 import rclpy
 from rclpy.node import Node
-from conversational_interfaces.msg import RobotCommand
+from conversational_interfaces.msg import RobotCommand, Transcription
 from geometry_msgs.msg import Twist
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
@@ -38,6 +40,19 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('dance_service', '/dance')
         self.declare_parameter('service_timeout_s', 3.0)
 
+        # Command-state handling
+        self.declare_parameter('preempt_on_new_command', True)
+        self.declare_parameter('enable_voice_cancel', True)
+        self.declare_parameter('cancel_words', 'stop,cancel,halt,opreste,anuleaza')
+        self.declare_parameter('enable_risky_confirmation', True)
+        self.declare_parameter('confirmation_timeout_s', 6.0)
+        self.declare_parameter('confirmation_accept_words', 'yes,confirm,ok,da,confirma')
+        self.declare_parameter('confirmation_reject_words', 'no,reject,nu,anuleaza')
+        self.declare_parameter('risky_steps_threshold', 5)
+        self.declare_parameter('risky_backward_steps_threshold', 3)
+        self.declare_parameter('require_confirmation_for_dance', False)
+        self.declare_parameter('require_confirmation_for_raise_hands', False)
+
         self.execution_enabled = bool(self.get_parameter('execution_enabled').value)
         self.min_command_confidence = float(self.get_parameter('min_command_confidence').value)
         self.max_pending_commands = int(self.get_parameter('max_pending_commands').value)
@@ -56,37 +71,81 @@ class RobotCommandExecutorNode(Node):
         self.dance_service = str(self.get_parameter('dance_service').value)
         self.service_timeout_s = float(self.get_parameter('service_timeout_s').value)
 
+        self.preempt_on_new_command = bool(self.get_parameter('preempt_on_new_command').value)
+        self.enable_voice_cancel = bool(self.get_parameter('enable_voice_cancel').value)
+        self.enable_risky_confirmation = bool(self.get_parameter('enable_risky_confirmation').value)
+        self.confirmation_timeout_s = float(self.get_parameter('confirmation_timeout_s').value)
+        self.risky_steps_threshold = int(self.get_parameter('risky_steps_threshold').value)
+        self.risky_backward_steps_threshold = int(self.get_parameter('risky_backward_steps_threshold').value)
+        self.require_confirmation_for_dance = bool(
+            self.get_parameter('require_confirmation_for_dance').value
+        )
+        self.require_confirmation_for_raise_hands = bool(
+            self.get_parameter('require_confirmation_for_raise_hands').value
+        )
+        self.cancel_words = self._parse_words(self.get_parameter('cancel_words').value)
+        self.confirm_accept_words = self._parse_words(self.get_parameter('confirmation_accept_words').value)
+        self.confirm_reject_words = self._parse_words(self.get_parameter('confirmation_reject_words').value)
+
+        self.current_speaker = 'Unknown'
+
         self.command_sub = self.create_subscription(
             RobotCommand,
             '/robot_command',
             self._command_callback,
             10
         )
+        self.transcription_sub = self.create_subscription(
+            Transcription,
+            '/transcription',
+            self._transcription_callback,
+            10
+        )
+        self.speaker_sub = self.create_subscription(
+            String,
+            '/speaker_id',
+            self._speaker_callback,
+            10
+        )
 
         self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
         self.move_topic_pub = self.create_publisher(String, self.move_topic, 10)
         self.behavior_pub = self.create_publisher(String, self.behavior_topic, 10)
+        self.status_pub = self.create_publisher(String, '/robot_command_status', 10)
 
         self.raise_hands_client = self.create_client(Trigger, self.raise_hands_service)
         self.dance_client = self.create_client(Trigger, self.dance_service)
 
         self._queue = queue.Queue(maxsize=self.max_pending_commands)
+        self._cancel_event = threading.Event()
+        self._pending_confirmation = None
+        self._pending_confirmation_speaker = 'Unknown'
+        self._pending_confirmation_deadline = 0.0
+        self._pending_lock = threading.Lock()
+
         self._running = True
         self._worker = threading.Thread(target=self._worker_loop, daemon=True, name='robot-command-worker')
         self._worker.start()
+        self._confirm_timer = self.create_timer(0.25, self._confirmation_timer_callback)
 
         self.get_logger().info(
             'Robot Command Executor started: '
-            f'execution_enabled={self.execution_enabled}, move_mode={self.move_mode}, behavior_mode={self.behavior_mode}'
+            f'execution_enabled={self.execution_enabled}, move_mode={self.move_mode}, behavior_mode={self.behavior_mode}, '
+            f'preempt_on_new_command={self.preempt_on_new_command}, risky_confirmation={self.enable_risky_confirmation}'
         )
 
     def destroy_node(self):
         self._running = False
+        self._cancel_active_execution('shutdown')
         try:
             self._queue.put_nowait(None)
         except queue.Full:
             pass
         return super().destroy_node()
+
+    def _speaker_callback(self, msg: String):
+        speaker = msg.data.strip()
+        self.current_speaker = speaker if speaker else 'Unknown'
 
     def _command_callback(self, msg: RobotCommand):
         if not self.execution_enabled:
@@ -98,10 +157,57 @@ class RobotCommandExecutorNode(Node):
             )
             return
 
-        try:
-            self._queue.put_nowait(msg)
-        except queue.Full:
-            self.get_logger().warn('Command queue is full. Dropping command.')
+        if self._requires_confirmation(msg):
+            if self.preempt_on_new_command:
+                self._cancel_active_execution('preempted by risky command awaiting confirmation')
+                self._clear_queue()
+            self._set_pending_confirmation(msg)
+            return
+
+        self._clear_pending_confirmation('replaced by a new command')
+        self._enqueue_command(msg, preempt=self.preempt_on_new_command)
+
+    def _transcription_callback(self, msg: Transcription):
+        text = self._normalize_text(msg.text)
+        if not text:
+            return
+
+        if self.enable_voice_cancel and self._contains_any(text, self.cancel_words):
+            self._clear_pending_confirmation('canceled by voice')
+            self._cancel_active_execution('voice cancel')
+            self._clear_queue()
+            self._publish_status('canceled')
+            return
+
+        pending = self._get_pending_confirmation()
+        if pending is None:
+            return
+
+        pending_msg, pending_speaker, deadline = pending
+        if time.monotonic() > deadline:
+            self._clear_pending_confirmation('confirmation timeout')
+            self._publish_status('confirmation_timeout')
+            return
+
+        if (
+            pending_speaker
+            and pending_speaker != 'Unknown'
+            and self.current_speaker
+            and self.current_speaker != 'Unknown'
+            and self.current_speaker != pending_speaker
+        ):
+            return
+
+        if self._contains_any(text, self.confirm_accept_words):
+            self._clear_pending_confirmation('confirmed')
+            self._enqueue_command(pending_msg, preempt=True)
+            self._publish_status('confirmation_accepted')
+            return
+
+        if self._contains_any(text, self.confirm_reject_words):
+            self._clear_pending_confirmation('rejected')
+            self._publish_status('confirmation_rejected')
+            return
 
     def _worker_loop(self):
         while self._running:
@@ -114,6 +220,7 @@ class RobotCommandExecutorNode(Node):
                 continue
 
             try:
+                self._cancel_event.clear()
                 self._execute(msg)
             except Exception as exc:
                 self.get_logger().error(f'Command execution failed: {exc}')
@@ -146,6 +253,7 @@ class RobotCommandExecutorNode(Node):
             payload.data = f'{direction}:{steps}'
             self.move_topic_pub.publish(payload)
             self.get_logger().info(f'Published move topic command: {payload.data}')
+            self._publish_status(f'executed_move_topic:{payload.data}')
             return
 
         speed = abs(self.linear_speed_mps)
@@ -169,12 +277,18 @@ class RobotCommandExecutorNode(Node):
         cmd = Twist()
         cmd.linear.x = sign * speed
 
-        while self._running and time.monotonic() < end_t:
+        while self._running and time.monotonic() < end_t and not self._cancel_event.is_set():
             self.cmd_vel_pub.publish(cmd)
             time.sleep(period)
 
-        self.cmd_vel_pub.publish(Twist())
+        self._stop_motion()
+        if self._cancel_event.is_set():
+            self.get_logger().info(f'Move canceled: direction={direction}, steps={steps}')
+            self._publish_status('move_canceled')
+            return
+
         self.get_logger().info(f'Executed move: direction={direction}, steps={steps}, duration={duration:.2f}s')
+        self._publish_status(f'executed_move:{direction}:{steps}')
 
     def _execute_behavior(self, intent: str):
         mode = self.behavior_mode.lower()
@@ -184,6 +298,7 @@ class RobotCommandExecutorNode(Node):
             msg.data = intent
             self.behavior_pub.publish(msg)
             self.get_logger().info(f'Published behavior command: {intent}')
+            self._publish_status(f'executed_behavior_topic:{intent}')
 
         if mode in ('service', 'both'):
             client = self.raise_hands_client if intent == 'raise_hands' else self.dance_client
@@ -194,8 +309,18 @@ class RobotCommandExecutorNode(Node):
             req = Trigger.Request()
             future = client.call_async(req)
             end_t = time.monotonic() + max(0.1, self.service_timeout_s)
-            while self._running and (not future.done()) and time.monotonic() < end_t:
+            while (
+                self._running
+                and not self._cancel_event.is_set()
+                and (not future.done())
+                and time.monotonic() < end_t
+            ):
                 time.sleep(0.05)
+
+            if self._cancel_event.is_set():
+                self.get_logger().info(f'Behavior canceled while waiting for service result: {intent}')
+                self._publish_status('behavior_canceled')
+                return
 
             if not future.done():
                 self.get_logger().warn(f'Service call timeout for {intent}.')
@@ -208,8 +333,130 @@ class RobotCommandExecutorNode(Node):
 
             if result.success:
                 self.get_logger().info(f'Service execution succeeded for {intent}: {result.message}')
+                self._publish_status(f'executed_behavior_service:{intent}:ok')
             else:
                 self.get_logger().warn(f'Service execution failed for {intent}: {result.message}')
+                self._publish_status(f'executed_behavior_service:{intent}:failed')
+
+    def _enqueue_command(self, msg: RobotCommand, preempt: bool):
+        if preempt:
+            self._cancel_active_execution('preempted by new command')
+            self._clear_queue()
+
+        try:
+            self._queue.put_nowait(msg)
+            self._publish_status(f'queued:{msg.intent}')
+        except queue.Full:
+            self.get_logger().warn('Command queue is full. Dropping command.')
+
+    def _cancel_active_execution(self, reason: str):
+        self._cancel_event.set()
+        self._stop_motion()
+        self.get_logger().info(f'Active execution canceled: {reason}')
+
+    def _stop_motion(self):
+        self.cmd_vel_pub.publish(Twist())
+
+    def _clear_queue(self):
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+
+    def _requires_confirmation(self, msg: RobotCommand) -> bool:
+        if not self.enable_risky_confirmation:
+            return False
+
+        intent = (msg.intent or '').strip().lower()
+        if intent == 'dance' and self.require_confirmation_for_dance:
+            return True
+        if intent == 'raise_hands' and self.require_confirmation_for_raise_hands:
+            return True
+        if intent != 'move':
+            return False
+
+        steps = int(msg.steps) if msg.steps > 0 else 1
+        direction = (msg.direction or '').strip().lower()
+
+        if steps >= max(1, self.risky_steps_threshold):
+            return True
+        if direction == 'backward' and steps >= max(1, self.risky_backward_steps_threshold):
+            return True
+        return False
+
+    def _set_pending_confirmation(self, msg: RobotCommand):
+        deadline = time.monotonic() + max(1.0, self.confirmation_timeout_s)
+        speaker = msg.speaker if msg.speaker else 'Unknown'
+        with self._pending_lock:
+            self._pending_confirmation = msg
+            self._pending_confirmation_speaker = speaker
+            self._pending_confirmation_deadline = deadline
+        self.get_logger().info(
+            f'Confirmation required for risky command: intent={msg.intent}, '
+            f'direction={msg.direction}, steps={msg.steps}, speaker={speaker}'
+        )
+        self._publish_status('confirmation_required')
+
+    def _get_pending_confirmation(self):
+        with self._pending_lock:
+            if self._pending_confirmation is None:
+                return None
+            return (
+                self._pending_confirmation,
+                self._pending_confirmation_speaker,
+                self._pending_confirmation_deadline,
+            )
+
+    def _clear_pending_confirmation(self, reason: str):
+        with self._pending_lock:
+            had_pending = self._pending_confirmation is not None
+            self._pending_confirmation = None
+            self._pending_confirmation_speaker = 'Unknown'
+            self._pending_confirmation_deadline = 0.0
+        if had_pending:
+            self.get_logger().info(f'Pending confirmation cleared: {reason}')
+
+    def _confirmation_timer_callback(self):
+        pending = self._get_pending_confirmation()
+        if pending is None:
+            return
+        _, _, deadline = pending
+        if time.monotonic() > deadline:
+            self._clear_pending_confirmation('timeout')
+            self._publish_status('confirmation_timeout')
+
+    def _publish_status(self, status: str):
+        msg = String()
+        msg.data = status
+        self.status_pub.publish(msg)
+
+    @staticmethod
+    def _parse_words(text: str):
+        if not text:
+            return set()
+        return {item.strip().lower() for item in str(text).split(',') if item.strip()}
+
+    @staticmethod
+    def _contains_any(text: str, words):
+        tokens = set(text.split())
+        for word in words:
+            if ' ' in word:
+                if word in text:
+                    return True
+            elif word in tokens:
+                return True
+        return False
+
+    @staticmethod
+    def _normalize_text(text: str):
+        if not text:
+            return ''
+        text = str(text).strip().lower()
+        text = unicodedata.normalize('NFD', text)
+        text = ''.join(ch for ch in text if unicodedata.category(ch) != 'Mn')
+        text = re.sub(r'[^a-z0-9\s]', ' ', text)
+        return ' '.join(text.split())
 
 
 def main(args=None):
