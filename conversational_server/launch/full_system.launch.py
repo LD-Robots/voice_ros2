@@ -6,10 +6,36 @@ from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
+from ament_index_python.packages import get_package_share_directory
 import os
+from pathlib import Path
+
+
+def _find_workspace_root():
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
 
 
 def generate_launch_description():
+    client_share = get_package_share_directory('conversational_client')
+    models_dir = os.path.join(client_share, 'models')
+    workspace_root = _find_workspace_root()
+    voices_dir = os.path.join(
+        str(workspace_root) if workspace_root else os.getcwd(),
+        'voices'
+    )
+
+    stop_model_path = os.path.join(voices_dir, 'stop_keyword.onnx')
+    if not os.path.exists(stop_model_path):
+        stop_model_path = os.path.join(models_dir, 'stop_keyword.onnx')
+
+    hello_model_path = os.path.join(models_dir, 'hello_robot.onnx')
+    stop_model_path_oww = os.path.join(models_dir, 'stop_robot.onnx')
+    goodbye_model_path = os.path.join(models_dir, 'goodbye_robot.onnx')
+
     return LaunchDescription([
         # ========== ARGUMENTE ==========
         DeclareLaunchArgument(
@@ -114,7 +140,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
-                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
+                'stop_model_path': stop_model_path,
                 'stop_enabled': True,  # ACTIVAT - la cererea userului
                 'stop_prob_threshold': 0.95,
                 'stop_logit_margin': 0.3,
@@ -136,9 +162,9 @@ def generate_launch_description():
                 'cooldown_ms': 1500,
                 # Format: "path:kind" - \'wake\' for activation, \'barge_in\' for stopping TTS, \'stop\' for ending session
                 'custom_models': ','.join([
-                    os.path.expanduser('~/voice_ros2/conversational_client/models/hello_robot.onnx:wake'),
-                    os.path.expanduser('~/voice_ros2/conversational_client/models/stop_robot.onnx:barge_in'),
-                    os.path.expanduser('~/voice_ros2/conversational_client/models/goodbye_robot.onnx:stop'),
+                    f'{hello_model_path}:wake',
+                    f'{stop_model_path_oww}:barge_in',
+                    f'{goodbye_model_path}:stop',
                 ]),
                 # Threshold-uri individuale per model
                 'model_thresholds': 'hello_robot:0.30,stop_robot:0.25,goodbye_robot:0.40',
