@@ -2,15 +2,27 @@
 """
 Compatibility wrapper for SpeakerManager.
 """
+import os
+from pathlib import Path
+
 from conversational_client.speaker_manager import SpeakerManager, main  # noqa: F401
+
+
+def _find_workspace_root() -> Path | None:
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
 
 if __name__ == '__main__':
     import sys
 
-    # Use XDG standard path for user data: ~/.local/share/voice_ros2/enrollment
+    workspace_root = _find_workspace_root()
     enrollment_path = os.path.join(
-        os.path.expanduser('~'),
-        '.local', 'share', 'voice_ros2', 'enrollment'
+        str(workspace_root) if workspace_root else os.getcwd(),
+        'voices',
+        'enrollment'
     )
 
     if not os.path.isdir(enrollment_path):

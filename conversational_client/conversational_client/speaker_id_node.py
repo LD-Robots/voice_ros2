@@ -59,10 +59,12 @@ class SpeakerIdNode(Node):
         # ─────────────────────────────────────────────────────────
         # PARAMETERS
         # ─────────────────────────────────────────────────────────
-        # Use XDG standard path for user data: ~/.local/share/voice_ros2/enrollment
+        # Canonical enrollment path: <workspace>/voices/enrollment
+        workspace_root = _find_workspace_root()
         default_enrollment_dir = os.path.join(
-            os.path.expanduser('~'),
-            '.local', 'share', 'voice_ros2', 'enrollment'
+            str(workspace_root) if workspace_root else os.getcwd(),
+            'voices',
+            'enrollment'
         )
         
         self.declare_parameter('enrollment_dir', default_enrollment_dir)
