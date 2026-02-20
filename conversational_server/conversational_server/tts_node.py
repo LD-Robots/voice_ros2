@@ -6,12 +6,12 @@ BACKENDS:
   - edge-tts (default) - Microsoft Edge TTS, requires internet
   - piper - Offline TTS fallback (high quality, ONNX models)
 
-DOUBLE BUFFER: Sintetizează next chunk în paralel cu playback-ul curent.
+DOUBLE BUFFER: Synthesize next chunk in parallel with current playback.
 
 Subscribes to: 
   - /llm_stream (TextChunk) - streaming chunks (PREFERRED)
   - /llm_response (Transcription) - complete response (fallback)
-  - /tts_command (String) - comenzi pentru cache playback
+  - /tts_command (String) - commands for cache playback
 Publishes to: /audio_out (Audio)
 """
 import rclpy
@@ -26,7 +26,7 @@ import queue
 import time
 import scipy.signal  # For resampling
 
-# Edge TTS pentru sinteză vocală (online)
+# Edge TTS for voice synthesis (online)
 try:
     import edge_tts
     EDGE_TTS_AVAILABLE = True
@@ -34,7 +34,7 @@ except ImportError:
     EDGE_TTS_AVAILABLE = False
     print("⚠️ edge-tts not installed. Run: pip install edge-tts")
 
-# Piper TTS pentru sinteză vocală (offline fallback)
+# Piper TTS for voice synthesis (offline fallback)
 try:
     from piper import PiperVoice
     PIPER_AVAILABLE = True
@@ -42,7 +42,7 @@ except ImportError:
     PIPER_AVAILABLE = False
     print("⚠️ piper-tts not installed. Run: pip install piper-tts")
 
-# Soundfile pentru citirea audio
+# Soundfile for audio reading
 try:
     import soundfile as sf
     SOUNDFILE_AVAILABLE = True
@@ -114,7 +114,7 @@ class TTSNode(Node):
         self.cache_dir = '/tmp/tts_cache'
         os.makedirs(self.cache_dir, exist_ok=True)
         
-        # Fraze comune pentru cache
+        # Common phrases for cache
         self.cache_phrases = {
             'ack_en': ('Yes, I am listening.', 'en'),
             'ack_ro': ('Da, te ascult.', 'ro'),
@@ -123,18 +123,18 @@ class TTSNode(Node):
             'goodbye_en': ('Goodbye! Have a great day!', 'en'),
             'goodbye_ro': ('La revedere! O zi frumoasă!', 'ro'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
-            'error_ro': ('Scuze, am întâlnit o eroare.', 'ro'),
+            'error_ro': ('Sorry, I encountered an error.', 'ro'),
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
-        # Pre-generează cache-ul în background
+        # Pre-generate the cache in the background
         self.cache_thread = threading.Thread(target=self._precache, daemon=True, name="TTS-Cache")
         self.cache_thread.start()
         
         # === DOUBLE BUFFER QUEUES ===
-        # Queue pentru text chunks incoming
+        # Queue for incoming text chunks
         self.text_queue = queue.Queue()
-        # Queue pentru audio pre-sintetizat (double buffer) - max 2 chunks pre-sintetizate
+        # Queue for pre-synthesized audio (double buffer) - max 2 pre-synthesized chunks
         self.audio_queue = queue.Queue(maxsize=self.buffer_size)
         
         self.is_speaking = False
@@ -142,7 +142,7 @@ class TTSNode(Node):
         self.stop_requested = False
         self.stop_epoch = 0  # Epoch counter - increments on stop(), chunks with old epoch are skipped
         
-        # Subscriber pentru comenzi cache (ack, goodbye, etc)
+        # Subscriber for cache commands (ack, goodbye, etc)
         from std_msgs.msg import String
         self.command_sub = self.create_subscription(
             String,
@@ -151,7 +151,7 @@ class TTSNode(Node):
             10
         )
         
-        # Subscriber pentru STREAMING chunks (PREFERRED)
+        # Subscriber for STREAMING chunks (PREFERRED)
         self.stream_sub = self.create_subscription(
             TextChunk,
             '/llm_stream',
@@ -159,7 +159,7 @@ class TTSNode(Node):
             10
         )
         
-        # Subscriber pentru răspunsul complet (FALLBACK)
+        # Subscriber for complete response (FALLBACK)
         self.response_sub = self.create_subscription(
             Transcription,
             '/llm_response',
@@ -167,14 +167,14 @@ class TTSNode(Node):
             10
         )
         
-        # Publisher pentru audio sintetizat
+        # Publisher for synthesized audio
         self.audio_pub = self.create_publisher(
             Audio,
             '/audio_out',
             10
         )
         
-        # Publisher pentru status speaking
+        # Publisher for speaking status
         from std_msgs.msg import Bool
         self.speaking_pub = self.create_publisher(
             Bool,
@@ -182,7 +182,7 @@ class TTSNode(Node):
             10
         )
         
-        # Subscriber pentru stop TTS
+        # Subscriber for stop TTS
         self.stop_sub = self.create_subscription(
             Bool,
             '/tts_stop',
@@ -190,13 +190,13 @@ class TTSNode(Node):
             10
         )
         
-        # Timer pentru a publica starea is_speaking periodic
+        # Timer to periodically publish the is_speaking state
         self.speaking_timer = self.create_timer(0.2, self._publish_speaking_status)
         
         # === DOUBLE BUFFER THREADS ===
         self.running = True
         
-        # Thread PRODUCER: citeste text chunks, sintetizează audio, pune în audio_queue
+        # PRODUCER Thread: read text chunks, synthesize audio, put in audio_queue
         self.producer_thread = threading.Thread(target=self._producer_loop, daemon=True, name="TTS-Producer")
         self.producer_thread.start()
         
@@ -219,7 +219,7 @@ class TTSNode(Node):
             self.stop()
     
     def _precache(self):
-        """Pre-generează audio pentru frazele comune."""
+        """Pre-generate audio for common phrases."""
         self.get_logger().debug('🔄 Pre-generating cached phrases...')
         for key, (text, lang) in self.cache_phrases.items():
             try:
@@ -240,7 +240,7 @@ class TTSNode(Node):
         self.get_logger().debug(f'✅ Cached {len(self.audio_cache)} phrases')
     
     def say_cached(self, key: str) -> bool:
-        """Redă o frază din cache. Returnează True dacă a reușit."""
+        """Play a cached phrase. Returns True if successful."""
         if key not in self.audio_cache:
             self.get_logger().warn(f'Cache miss: {key}')
             return False
@@ -258,7 +258,7 @@ class TTSNode(Node):
         return True
     
     def command_callback(self, msg):
-        """Procesează comenzi pentru TTS (play cached phrases)."""
+        """Process TTS commands (play cached phrases)."""
         command = msg.data.strip()
         
         # Dacă e un key din cache, îl redă
@@ -268,7 +268,7 @@ class TTSNode(Node):
             self.get_logger().warn(f'Unknown TTS command: {command}')
     
     def _pick_voice(self, lang: str) -> str:
-        """Alege vocea - română sau engleză (default pentru orice altceva)."""
+        """Choose the voice - Romanian or English (default for anything else)."""
         lang = lang.lower() if lang else 'en'
         if lang.startswith('ro'):
             return self.voice_ro
@@ -281,7 +281,7 @@ class TTSNode(Node):
         if self.current_session and msg.session_id != self.current_session:
             if not msg.is_final:
                 self.current_session = msg.session_id
-                self.stop_requested = True  # Oprește ce e în curs
+                self.stop_requested = True  # Stop what is currently playing
                 # Golim queue-urile
                 self._clear_queues()
                 self.stop_requested = False
@@ -293,11 +293,11 @@ class TTSNode(Node):
             self.get_logger().debug(f'📥 Stream chunk: "{msg.text[:40]}..." (final={msg.is_final})')
             self.text_queue.put((msg.text, msg.language, msg.is_final, msg.session_id))
         elif msg.is_final:
-            # Mesaj gol cu is_final - semnalizează sfârșitul
+            # Empty message with is_final - signals the end
             self.text_queue.put(("", "", True, msg.session_id))
     
     def response_callback(self, msg: Transcription):
-        """Fallback pentru răspunsuri complete (non-streaming)."""
+        """Fallback for complete responses (non-streaming)."""
         pass  # Dezactivat - folosim doar streaming
     
     def _clear_queues(self):
@@ -315,8 +315,8 @@ class TTSNode(Node):
     
     def _producer_loop(self):
         """
-        PRODUCER: Citește text din text_queue, sintetizează, pune în audio_queue.
-        Rulează în paralel - mereu încearcă să aibă 1-2 chunks pre-sintetizate.
+        PRODUCER: Read text from text_queue, synthesize, put in audio_queue.
+        Run in parallel - always try to have 1-2 pre-synthesized chunks.
         """
         while self.running:
             try:
@@ -341,7 +341,7 @@ class TTSNode(Node):
                         if len(audio_data.shape) > 1:
                             audio_data = audio_data[:, 0]
                         
-                        # Pune în audio_queue CU EPOCH (va bloca dacă e plin = double buffer full)
+                        # Put in audio_queue WITH EPOCH (will block if full = double buffer full)
                         current_epoch = self.stop_epoch
                         if not self.stop_requested:
                             self.audio_queue.put((audio_data, sample_rate, is_final, session_id, current_epoch), timeout=5.0)
@@ -351,7 +351,7 @@ class TTSNode(Node):
                         self.get_logger().error(f'Synthesis error: {e}')
                 
                 elif is_final:
-                    # Semnalizează sfârșitul în audio_queue (cu epoch)
+                    # Signal the end in audio_queue (with epoch)
                     try:
                         self.audio_queue.put((None, 0, True, session_id, self.stop_epoch), timeout=1.0)
                     except queue.Full:
@@ -401,7 +401,7 @@ class TTSNode(Node):
                 self.get_logger().error(f'Consumer error: {e}')
     
     async def _synthesize_async(self, text: str, voice: str) -> bytes:
-        """Sintetizează text în audio folosind Edge TTS."""
+        """Synthesize text to audio using Edge TTS."""
         communicate = edge_tts.Communicate(
             text,
             voice,
@@ -417,7 +417,7 @@ class TTSNode(Node):
         return audio_data
     
     def _load_piper_models(self):
-        """Pre-încarcă modelele Piper ONNX pentru EN și RO."""
+        """Pre-load Piper ONNX models for EN and RO."""
         if self.piper_model_en_path and os.path.exists(self.piper_model_en_path):
             try:
                 self.piper_voice_en = PiperVoice.load(self.piper_model_en_path)
@@ -437,21 +437,21 @@ class TTSNode(Node):
             self.get_logger().warn(f'⚠️ Piper RO model not found: {self.piper_model_ro_path}')
     
     def _synthesize(self, text: str, voice: str):
-        """Sintetizează text în audio folosind backend-ul selectat."""
+        """Synthesize text to audio using the selected backend."""
         if self.backend == 'piper':
             return self._synthesize_piper(text, voice)
         else:
             try:
                 return self._synthesize_edge(text, voice)
             except Exception as e:
-                # Fallback la Piper dacă edge-tts eșuează (ex: fără internet)
+                # Fallback to Piper if edge-tts fails (e.g., no internet)
                 if self.piper_voice_en or self.piper_voice_ro:
                     self.get_logger().warn(f'⚠️ Edge TTS failed ({e}), falling back to Piper')
                     return self._synthesize_piper(text, voice)
                 raise
     
     def _synthesize_edge(self, text: str, voice: str):
-        """Sintetizează cu Edge TTS (online, complet în RAM)."""
+        """Synthesize with Edge TTS (online, entirely in RAM)."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -459,7 +459,7 @@ class TTSNode(Node):
         finally:
             loop.close()
         
-        # Folosește io.BytesIO direct în memorie
+        # Use io.BytesIO directly in memory
         import io
         mp3_io = io.BytesIO(audio_bytes)
         
@@ -468,7 +468,7 @@ class TTSNode(Node):
         return audio_data, sample_rate
     
     def _synthesize_piper(self, text: str, voice: str):
-        """Sintetizează cu Piper TTS (offline, complet în RAM)."""
+        """Synthesize with Piper TTS (offline, entirely in RAM)."""
         # Alege modelul Piper bazat pe limba vocii
         lang = voice.lower() if voice else 'en'
         if lang.startswith('ro') or 'ro-' in lang.lower():
@@ -485,7 +485,7 @@ class TTSNode(Node):
         if not audio_chunks:
             raise RuntimeError('Piper returned no audio')
         
-        # Concatenează toate chunk-urile într-un singur array
+        # Concatenate all chunks into a single array
         all_audio = b''.join(chunk.audio_int16_bytes for chunk in audio_chunks)
         audio_data = np.frombuffer(all_audio, dtype=np.int16)
         sample_rate = audio_chunks[0].sample_rate
@@ -506,7 +506,7 @@ class TTSNode(Node):
         return resampled_data.astype(np.int16)
     
     def stop(self):
-        """Oprește TTS-ul curent (pentru barge-in)."""
+        """Stop current TTS (for barge-in)."""
         # INCREMENT EPOCH FIRST - all queued chunks become invalid
         self.stop_epoch += 1
         self.stop_requested = True
@@ -516,7 +516,7 @@ class TTSNode(Node):
         self.stop_requested = False
     
     def destroy_node(self):
-        """Cleanup la închidere."""
+        """Cleanup on exit."""
         self.running = False
         super().destroy_node()
 
