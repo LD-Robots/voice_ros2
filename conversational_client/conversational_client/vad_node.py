@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
 vad_node.py
-Voice Activity Detection - detectează când vorbește utilizatorul.
+Voice Activity Detection - detects when the user is speaking.
 
-EXPLICAȚIE:
-- Primește audio pe /audio_raw
-- Analizează dacă audio conține voce (nu doar zgomot/tăcere)
-- Publică True/False pe /voice_activity
-- Folosit de alte noduri pentru:
-  - A ști când să trimită audio la server (doar când vorbește)
-  - Barge-in (oprește TTS când user vorbește)
+EXPLANATION:
+- Receives audio on /audio_raw
+- Analyzes whether the audio contains voice (not just noise/silence)
+- Publishes True/False on /voice_activity
+- Used by other nodes to:
+  - Know when to send audio to the server (only when speaking)
+  - Barge-in (stop TTS when the user speaks)
 """
 
 # ═══════════════════════════════════════════════════════════════════
-# IMPORTURI
+# IMPORTS
 # ═══════════════════════════════════════════════════════════════════
 
 import rclpy
@@ -21,9 +21,8 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool
 import numpy as np
-import array  # Used for efficient byte conversion
 
-# Încercăm să importăm WebRTC VAD (varianta simplă)
+# Try to import WebRTC VAD (simple variant)
 try:
     import webrtcvad
     WEBRTCVAD_AVAILABLE = True
@@ -33,28 +32,28 @@ except ImportError:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# CLASA NODULUI
+# NODE CLASS
 # ═══════════════════════════════════════════════════════════════════
 
 class VADNode(Node):
     """
-    Nod ROS2 pentru Voice Activity Detection.
+    ROS2 node for Voice Activity Detection.
     
-    Funcționare:
-    1. Primește audio pe /audio_raw
-    2. Analizează dacă conține voce (energie + frecvențe tipice vocii)
-    3. Publică True/False pe /voice_activity
+    Operation:
+    1. Receives audio on /audio_raw
+    2. Analyzes whether it contains voice (energy + typical voice frequencies)
+    3. Publishes True/False on /voice_activity
     """
     
     def __init__(self):
         super().__init__('vad_node')
         
         # ─────────────────────────────────────────────────────────
-        # PARAMETRI
+        # PARAMETERS
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('aggressiveness', 2)  # 0-3, 3 = mai agresiv
-        self.declare_parameter('energy_threshold', 500)  # Prag energie RMS
+        self.declare_parameter('aggressiveness', 2)  # 0-3, 3 = more aggressive
+        self.declare_parameter('energy_threshold', 500)  # RMS energy threshold
         self.declare_parameter('wake_word_enabled', True)
         self.declare_parameter('session_timeout', 8.0)
 
@@ -66,14 +65,14 @@ class VADNode(Node):
         self.session_timeout = self.get_parameter('session_timeout').value
         
         # ─────────────────────────────────────────────────────────
-        # STARE
+        # STATE
         # ─────────────────────────────────────────────────────────
-        self.is_speaking = False          # Starea curentă
-        self.speech_frames = 0            # Câte frame-uri consecutive cu voce
-        self.silence_frames = 0           # Câte frame-uri consecutive fără voce
-        self.min_speech_frames = 5        # Câte frame-uri pentru a confirma voce (mărit pentru mai puține false positives)
-        self.min_silence_frames = 10      # Câte frame-uri pentru a confirma tăcere
-        self.is_robot_speaking = False    # True când robotul vorbește (TTS playback)
+        self.is_speaking = False          # Current state
+        self.speech_frames = 0            # Consecutive frames with voice
+        self.silence_frames = 0           # Consecutive frames without voice
+        self.min_speech_frames = 5        # Frames to confirm voice (raised to reduce false positives)
+        self.min_silence_frames = 10      # Frames to confirm silence
+        self.is_robot_speaking = False    # True when the robot is speaking (TTS playback)
         self.is_gate_open = not self.wake_word_enabled
         self.session_timer = None
         self.is_speaking = False
@@ -88,7 +87,7 @@ class VADNode(Node):
             10
         )
         
-        # Starea TTS - când robotul vorbește, ignorăm VAD
+        # TTS state - when the robot is speaking, ignore VAD
         self.robot_speaking_sub = self.create_subscription(
             Bool,
             '/is_speaking',
@@ -103,7 +102,7 @@ class VADNode(Node):
             10
         )
         
-        # Subscriber pentru starea sesiunii (de la wake_word_node)
+        # Subscriber for session state (from wake_word_node)
         self.session_sub = self.create_subscription(
             Bool,
             '/session_active',
@@ -118,7 +117,7 @@ class VADNode(Node):
         self.end_session_pub = self.create_publisher(Bool, '/end_session_external', 10)
         
         # ─────────────────────────────────────────────────────────
-        # INIȚIALIZARE WEBRTC VAD
+        # WEBRTC VAD INITIALIZATION
         # ─────────────────────────────────────────────────────────
         self.vad = None
         if WEBRTCVAD_AVAILABLE:
@@ -135,43 +134,43 @@ class VADNode(Node):
         
         self.frame_count = 0
         
-        # Timer pentru reminder "READY TO LISTEN"
+        # Timer for the "READY TO LISTEN" reminder
         self.reminder_timer = None
     
     def _start_reminder_timer(self):
-        """Pornește timer-ul de reminder periodic."""
+        """Start the periodic reminder timer."""
         if self.reminder_timer:
             self.reminder_timer.cancel()
-        # Reminder la fiecare 3 secunde
+        # Reminder every 3 seconds
         self.reminder_timer = self.create_timer(3.0, self._on_reminder)
-        # Log imediat prima dată
+        # Log immediately the first time
         self.get_logger().info('🎤 READY TO LISTEN - speak now!')
     
     def _stop_reminder_timer(self):
-        """Oprește timer-ul de reminder."""
+        """Stop the reminder timer."""
         if self.reminder_timer:
             self.reminder_timer.cancel()
             self.reminder_timer = None
     
     def _on_reminder(self):
-        """Callback pentru reminder periodic."""
-        # Doar dacă poarta e deschisă și robotul nu vorbește
+        """Callback for the periodic reminder."""
+        # Only if the gate is open and the robot is not speaking
         if self.is_gate_open and not self.is_robot_speaking and not self.is_speaking:
             self.get_logger().info('🎤 READY TO LISTEN - speak now!')
         else:
-            # Oprește timer-ul dacă condițiile nu mai sunt îndeplinite
+            # Stop the timer if conditions are no longer met
             self._stop_reminder_timer()
     
     # ═══════════════════════════════════════════════════════════════════
-    # CALLBACK AUDIO
+    # AUDIO CALLBACKS
     # ═══════════════════════════════════════════════════════════════════
     
     def robot_speaking_callback(self, msg: Bool):
-        """Callback pentru starea TTS playback."""
+        """Callback for TTS playback state."""
         was_speaking = self.is_robot_speaking
         self.is_robot_speaking = msg.data
         
-        # Când robotul începe să vorbească, oprim timer-ul de timeout și reminder-ul
+        # When the robot starts speaking, stop the timeout timer and reminder
         if self.is_robot_speaking and not was_speaking:
             self._stop_reminder_timer()
             if self.session_timer:
@@ -179,14 +178,14 @@ class VADNode(Node):
                 self.session_timer = None
             self.get_logger().debug('🤖 Robot is SPEAKING - please wait...')
         
-        # Când robotul termină de vorbit, repornim timer-ul și reminder-ul
+        # When the robot finishes speaking, restart the timer and reminder
         elif not self.is_robot_speaking and was_speaking:
             if self.is_gate_open:
                 self._reset_session_timer()
                 self._start_reminder_timer()
 
     def session_callback(self, msg: Bool):
-        """Callback pentru starea sesiunii (de la wake_word_node)."""
+        """Callback for session state (from wake_word_node)."""
         if msg.data:
             # Session active - open gate
             if not self.is_gate_open:
@@ -213,34 +212,34 @@ class VADNode(Node):
                 self.vad_pub.publish(msg_out)
 
     def wake_word_callback(self, msg: WakeWord):
-        # Deschide poarta cand aude "hello robot"
+        # Open the gate when "hello robot" is detected
         self.get_logger().debug(f"🔓 Wake Word Detected: '{msg.word}' - Opening Gate!")
         self.is_gate_open = True
         self._reset_session_timer()
 
     def _reset_session_timer(self):
-        # Reseteaza cronometrul sesiunii
+        # Reset the session timer
         if self.session_timer:
             self.session_timer.cancel()
         self.session_timer = self.create_timer(self.session_timeout, self._on_session_timeout)
 
     def _on_session_timeout(self):
-        # Nu închide poarta dacă robotul vorbește
+        # Do not close the gate if the robot is speaking
         if self.is_robot_speaking:
             self.get_logger().debug('⏳ Session timeout skipped (robot still speaking)')
             return
             
-        # Inchide poarta cand expira timpul
+        # Close the gate when time expires
         self.get_logger().info("🔒 Session Timeout - Closing Gate.")
         self.is_gate_open = False
         self.is_speaking = False
 
-        # Anuntam ca s-a terminat vorbirea
+        # Notify that speech ended
         msg = Bool()
         msg.data = False
         self.vad_pub.publish(msg)
 
-        # Notifică wake_word_node să reseteze session_active
+        # Notify wake_word_node to reset session_active
         end_msg = Bool()
         end_msg.data = True
         self.end_session_pub.publish(end_msg)
@@ -250,57 +249,48 @@ class VADNode(Node):
             self.session_timer = None
     
     def audio_callback(self, msg: Audio):
-        """Analizează fiecare chunk de audio pentru activitate vocală."""
+        """Analyze each audio chunk for voice activity."""
 
-        # Daca poarta e inchisa, ignoram tot
+        # If the gate is closed, ignore everything
         if not self.is_gate_open:
             return
         
-        # Nu procesa VAD când robotul vorbește (previne false positives)
+        # Do not process VAD when the robot is speaking (prevents false positives)
         if self.is_robot_speaking:
             return
-            
-        # ─────────────────────────────────────────────────────────
-        # OPTIMIZARE: Conversie rapidă în bytes fără numpy
-        # ─────────────────────────────────────────────────────────
-        # msg.data este o listă de int16. Conversia directă cu array este mult mai rapidă decât numpy.
-        try:
-            audio_array = array.array('h', msg.data)
-            audio_bytes = audio_array.tobytes()
-        except TypeError:
-            # Fallback în caz că msg.data e altceva (deși în ROS2 msg e list)
-            audio_bytes = b''
         
-        # Detectează voce
-        has_voice = self._detect_voice(audio_bytes)
+        audio = np.array(msg.data, dtype=np.int16)
         
-        # Logică de debounce (evită flickering)
+        # Detect voice
+        has_voice = self._detect_voice(audio)
+        
+        # Debounce logic (avoid flickering)
         if has_voice:
             self.speech_frames += 1
             self.silence_frames = 0
 
-            # Daca vorbim, resetam timer-ul
+            # If speaking, reset the timer
             if self.is_gate_open:
                 self._reset_session_timer()
         else:
             self.silence_frames += 1
             self.speech_frames = 0
         
-        # Schimbă starea doar după câteva frame-uri consecutive
+        # Change state only after a few consecutive frames
         old_state = self.is_speaking
         
         if not self.is_speaking and self.speech_frames >= self.min_speech_frames:
             self.is_speaking = True
-            self._stop_reminder_timer()  # Oprește reminder când user vorbește
+            self._stop_reminder_timer()  # Stop reminder when the user speaks
             self.get_logger().debug('🗣️ Voice DETECTED - user is speaking')
         elif self.is_speaking and self.silence_frames >= self.min_silence_frames:
             self.is_speaking = False
             self.get_logger().debug('🤫 Voice ENDED - silence detected')
-            # Repornește reminder-ul dacă suntem încă în modul listening
+            # Restart reminder if still in listening mode
             if self.is_gate_open and not self.is_robot_speaking:
                 self._start_reminder_timer()
         
-        # Publică starea
+        # Publish state
         msg_out = Bool()
         msg_out.data = self.is_speaking
         self.vad_pub.publish(msg_out)
@@ -308,51 +298,42 @@ class VADNode(Node):
         self.frame_count += 1
     
     # ═══════════════════════════════════════════════════════════════════
-    # DETECTARE VOCE
+    # VOICE DETECTION
     # ═══════════════════════════════════════════════════════════════════
-    def _detect_voice(self, audio_bytes: bytes) -> bool:
+    def _detect_voice(self, audio: np.ndarray) -> bool:
         """
-        Detectează dacă audio conține voce.
-        Folosește WebRTC VAD pe bytes direct, sau fallback pe energie (cu conversie numpy).
+        Detect whether audio contains voice.
+        Uses WebRTC VAD or falls back to energy.
         """
         
         if self.vad is not None:
             # ─────────────────────────────────────────────────────
-            # METODA 1: WebRTC VAD (mai precisă)
+            # METHOD 1: WebRTC VAD (more accurate)
             # ─────────────────────────────────────────────────────
             try:
-                # WebRTC VAD cere exact 10, 20 sau 30ms de audio
-                # La 16kHz (2 bytes/sample): 
-                # 10ms = 160 samples = 320 bytes
-                # 20ms = 320 samples = 640 bytes
-                # 30ms = 480 samples = 960 bytes
+                # WebRTC VAD requires exactly 10, 20, or 30ms of audio
+                # At 16kHz: 160, 320, or 480 samples
+                audio_bytes = audio.tobytes()
                 
-                length = len(audio_bytes)
-                
-                if length in [320, 640, 960]: 
+                # Adjust length if needed
+                frame_len = len(audio)
+                if frame_len == 320:  # 20ms la 16kHz
                     return self.vad.is_speech(audio_bytes, self.sample_rate)
                 else:
-                    # Fallback pe energie pentru lungimi non-standard
-                    return self._energy_based_detection(audio_bytes)
+                    # Energy fallback for non-standard lengths
+                    return self._energy_based_detection(audio)
             except Exception:
-                return self._energy_based_detection(audio_bytes)
+                return self._energy_based_detection(audio)
         else:
             # ─────────────────────────────────────────────────────
-            # METODA 2: Energie RMS (fallback simplu)
+            # METHOD 2: RMS Energy (simple fallback)
             # ─────────────────────────────────────────────────────
-            return self._energy_based_detection(audio_bytes)
+            return self._energy_based_detection(audio)
     
-    def _energy_based_detection(self, audio_bytes: bytes) -> bool:
-        """Detectare simplă bazată pe energia audio (RMS)."""
-        # Creăm numpy array doar dacă e absolut necesar (lazy creation)
-        # frombuffer este foarte rapid (copy-free)
-        audio_np = np.frombuffer(audio_bytes, dtype=np.int16)
-        
-        if len(audio_np) == 0:
-            return False
-            
-        # Calculează RMS (Root Mean Square) = energie medie
-        rms = np.sqrt(np.mean(audio_np.astype(np.float32) ** 2))
+    def _energy_based_detection(self, audio: np.ndarray) -> bool:
+        """Simple detection based on audio energy (RMS)."""
+        # Compute RMS (Root Mean Square) = average energy
+        rms = np.sqrt(np.mean(audio.astype(np.float32) ** 2))
         return rms > self.energy_threshold
 
 
