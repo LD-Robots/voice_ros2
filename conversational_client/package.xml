@@ -9,6 +9,8 @@
 
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>ament_index_python</depend>
   <depend>conversational_interfaces</depend>
 

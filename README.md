@@ -25,6 +25,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - `Audio.msg` - Audio data chunks
 - `Transcription.msg` - Speech transcription results
 - `TextChunk.msg` - Streaming LLM responses
+- `RobotCommand.msg` - Normalized robot action intents from voice
 
 ## 📋 Prerequisites
 
@@ -191,13 +192,42 @@ Edit `full_system.launch.py` and adjust:
 - ✅ **Backchannel** - "One moment..." for slow responses
 - ✅ **Fallback Responses** - Error handling
 - ✅ **Speaker Identification** - Voice fingerprint via SpeechBrain ECAPA-TDNN
+- ✅ **Voice Command Intents** - Detects commands like raise hands, move steps, dance
 
 ### 🔄 Future Enhancements
-- Motor commands integration
+- Motor commands execution adapters (per robot platform)
 - Intent classification
 - Multi-turn clarification
 - Emotion detection
 - Custom wake words
+
+## 🤖 Voice Robot Commands
+
+`voice_command_node` parses `/transcription` and publishes normalized commands on:
+
+```bash
+/robot_command
+```
+
+Supported commands (EN/RO):
+- Raise hands / arms (`raise hands`, `hands up`, `ridică mâinile`)
+- Move forward/backward by steps (`move forward`, `5 steps back`, `mergi 3 pași înapoi`)
+- Dance (`dance`, `dansează`)
+
+Inspect detected commands:
+```bash
+ros2 topic echo /robot_command
+```
+
+Example output fields:
+- `intent`: `raise_hands` | `move` | `dance`
+- `direction`: `forward` | `backward` | `none`
+- `steps`: step count for move commands
+- `parameters_json`: extensible JSON payload for actuator/planner projects
+
+`robot_command_executor_node` consumes `/robot_command` and executes:
+- Move commands via `geometry_msgs/Twist` on `/cmd_vel`
+- Behavior commands (`raise_hands`, `dance`) via `/robot_behavior_command` (`std_msgs/String`)
 
 ## 🐛 Troubleshooting
 
@@ -248,7 +278,9 @@ voice_ros2/
 │   │   ├── vad_node.py
 │   │   ├── barge_in_node.py
 │   │   ├── stop_keyword_node.py
-│   │   └── speaker_id_node.py     # Speaker identification
+│   │   ├── speaker_id_node.py     # Speaker identification
+│   │   ├── voice_command_node.py  # Voice command intent extraction
+│   │   └── robot_command_executor_node.py  # Command-to-controller bridge
 │   ├── models/                    # Wake word models
 │   └── voices/                    # Stop keyword model + enrollment data
 ├── speaker_id/                     # Speaker fingerprint system
@@ -257,6 +289,7 @@ voice_ros2/
 ├── conversational_interfaces/      # ROS2 message definitions
 │   └── msg/
 │       ├── Audio.msg
+│       ├── RobotCommand.msg
 │       ├── Transcription.msg
 │       └── TextChunk.msg
 ├── .env                           # API keys (not in git)
