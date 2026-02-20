@@ -2,21 +2,21 @@
 """
 barge_in_node.py - INTELLIGENT Barge-in Detection
 
-Features (ca în proiectul original):
-- RMS dBFS - măsoară volumul pentru a ignora sunetele slabe
-- High-pass filter - elimină zgomote joase (bătăi în masă)
-- Zero-Crossing Rate (ZCR) - detectează voce umană vs zgomot impulsiv
-- Anti-echo (leak baseline) - ignoră ecoul TTS/difuzor
-- Voice hold - menține detecția pentru drop-uri scurte
-- Timere: min_voice_ms, debounce, cooldown, arm_after
+Features (as in the original project):
+- RMS dBFS - measures volume to ignore weak sounds
+- High-pass filter - removes low-frequency noise (desk thumps)
+- Zero-Crossing Rate (ZCR) - detects human voice vs impulsive noise
+- Anti-echo (leak baseline) - ignores TTS/speaker echo
+- Voice hold - keeps detection during short dropouts
+- Timers: min_voice_ms, debounce, cooldown, arm_after
 
 Subscribes to:
-  - /audio_raw (Audio) - pentru analiză directă
-  - /tts_speaking (Bool) - starea TTS
+  - /audio_raw (Audio) - direct analysis
+  - /tts_speaking (Bool) - TTS state
 
 Publishes to:
-  - /barge_in (Bool) - semnal de întrerupere
-  - /tts_stop (Bool) - comandă stop TTS
+  - /barge_in (Bool) - interruption signal
+  - /tts_stop (Bool) - stop TTS command
 """
 
 import rclpy
@@ -36,11 +36,11 @@ except ImportError as e:
     _STOP_DETECTOR_ERROR = str(e)
 
 # ═══════════════════════════════════════════════════════════════════
-# FUNCȚII HELPER
+# HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
 
 def _rms_dbfs(pcm_i16: np.ndarray) -> float:
-    """Calculează RMS în dBFS."""
+    """Compute RMS in dBFS."""
     if pcm_i16.size == 0:
         return -120.0
     xf = pcm_i16.astype(np.float32) / 32768.0
@@ -49,8 +49,8 @@ def _rms_dbfs(pcm_i16: np.ndarray) -> float:
 
 def _highpass_filter(pcm_i16: np.ndarray, cutoff_hz: float, sr: int) -> np.ndarray:
     """
-    Filtru high-pass simplu (first-order IIR) pentru a tăia frecvențele joase.
-    Elimină zgomotele de tip bătăi în masă (~50-200 Hz).
+    Simple high-pass filter (first-order IIR) to cut low frequencies.
+    Removes desk-thump noise (~50-200 Hz).
     """
     if cutoff_hz <= 0:
         return pcm_i16
@@ -73,10 +73,10 @@ def _highpass_filter(pcm_i16: np.ndarray, cutoff_hz: float, sr: int) -> np.ndarr
 
 def _zero_crossing_rate(pcm_i16: np.ndarray) -> float:
     """
-    Calculează rata de treceri prin zero (ZCR).
-    Vocea umană: ZCR moderat (~0.05-0.3)
-    Zgomote impulsive: ZCR foarte mare (>0.4)
-    Zgomote joase constante: ZCR foarte mic (<0.02)
+    Compute the zero-crossing rate (ZCR).
+    Human voice: moderate ZCR (~0.05-0.3)
+    Impulsive noise: very high ZCR (>0.4)
+    Steady low-frequency noise: very low ZCR (<0.02)
     """
     if len(pcm_i16) < 2:
         return 0.0
@@ -86,42 +86,42 @@ def _zero_crossing_rate(pcm_i16: np.ndarray) -> float:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# CLASA NODULUI
+# NODE CLASS
 # ═══════════════════════════════════════════════════════════════════
 
 class BargeInNode(Node):
     """
-    Nod ROS2 pentru barge-in detection INTELIGENT.
+    ROS2 node for INTELLIGENT barge-in detection.
     
-    Nu detectează doar că există sunet, ci verifică dacă e VOCE UMANĂ:
-    - Nu bătăi în masă
-    - Nu ecoul robotului
-    - Nu zgomote impulsive
+    It doesn't just detect sound, it verifies HUMAN VOICE:
+    - No desk thumps
+    - No robot echo
+    - No impulsive noise
     """
     
     def __init__(self):
         super().__init__('barge_in_node')
         
         # ─────────────────────────────────────────────────────────
-        # PARAMETRI
+        # PARAMETERS
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('min_voice_ms', 600)      # Cât să vorbească pentru barge-in
-        self.declare_parameter('debounce_ms', 150)       # Debounce între verificări
-        self.declare_parameter('cooldown_ms', 800)       # Cooldown după barge-in
-        self.declare_parameter('arm_after_ms', 400)      # Delay inițial (anti-scurgeri)
-        self.declare_parameter('voice_hold_ms', 200)     # Menține detecție pentru drop-uri
-        self.declare_parameter('voice_drop_ms', 20)      # Cât se pierde per frame fără voce
+        self.declare_parameter('min_voice_ms', 600)      # How long to speak for barge-in
+        self.declare_parameter('debounce_ms', 150)       # Debounce between checks
+        self.declare_parameter('cooldown_ms', 800)       # Cooldown after barge-in
+        self.declare_parameter('arm_after_ms', 400)      # Initial delay (anti-leak)
+        self.declare_parameter('voice_hold_ms', 200)     # Hold detection for dropouts
+        self.declare_parameter('voice_drop_ms', 20)      # Decay per frame without voice
         
-        # Praguri audio
-        self.declare_parameter('min_rms_dbfs', -28.0)    # Prag volum minim
-        self.declare_parameter('highpass_hz', 300.0)     # Filtru pentru bătăi joase
-        self.declare_parameter('zcr_min', 0.05)          # ZCR minim pentru voce
-        self.declare_parameter('zcr_max', 0.35)          # ZCR maxim pentru voce
+        # Audio thresholds
+        self.declare_parameter('min_rms_dbfs', -28.0)    # Minimum volume threshold
+        self.declare_parameter('highpass_hz', 300.0)     # Filter for low thumps
+        self.declare_parameter('zcr_min', 0.05)          # Min ZCR for voice
+        self.declare_parameter('zcr_max', 0.35)          # Max ZCR for voice
         
         # Anti-echo
-        self.declare_parameter('leak_margin_db', 3.0)    # Marjă peste ecou
-        self.declare_parameter('leak_decay_ms', 1200)    # Cât durează până expiră baseline
+        self.declare_parameter('leak_margin_db', 3.0)    # Margin above echo
+        self.declare_parameter('leak_decay_ms', 1200)    # How long until baseline expires
         
         # Stop keyword detector (PyTorch)
         self.declare_parameter('stop_model_path', '')
@@ -149,12 +149,12 @@ class BargeInNode(Node):
         self.leak_decay_ms = self.get_parameter('leak_decay_ms').value
         
         # ─────────────────────────────────────────────────────────
-        # STARE
+        # STATE
         # ─────────────────────────────────────────────────────────
         self.is_tts_speaking = False
-        self.voiced_ms = 0  # Acumulare voce continuă
-        self.last_voice_ms = 0  # Ultimul moment cu voce
-        self.last_trigger_ms = 0  # Ultimul barge-in
+        self.voiced_ms = 0  # Accumulated continuous voice
+        self.last_voice_ms = 0  # Last moment with voice
+        self.last_trigger_ms = 0  # Last barge-in
         self.start_ms = int(time.time() * 1000)
         
         # Anti-echo baseline
@@ -191,7 +191,7 @@ class BargeInNode(Node):
         # SUBSCRIBERS
         # ─────────────────────────────────────────────────────────
         
-        # Audio raw pentru analiză proprieteară
+        # Raw audio for local analysis
         self.audio_sub = self.create_subscription(
             Audio,
             '/audio_raw',
@@ -199,10 +199,10 @@ class BargeInNode(Node):
             10
         )
         
-        # Starea TTS
+        # TTS state
         self.tts_sub = self.create_subscription(
             Bool,
-            '/is_speaking',  # De la audio_playback_node (starea reală a playback-ului)
+            '/is_speaking',  # From audio_playback_node (actual playback state)
             self.tts_callback,
             10
         )
@@ -224,35 +224,35 @@ class BargeInNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     
     def tts_callback(self, msg: Bool):
-        """Actualizează starea TTS."""
+        """Update TTS state."""
         was_speaking = self.is_tts_speaking
         self.is_tts_speaking = msg.data
         
-        # Când TTS începe să vorbească, resetăm baseline pentru anti-echo
+        # When TTS starts speaking, reset the anti-echo baseline
         if msg.data and not was_speaking:
             self.leak_baseline_dbfs = None
     
     def audio_callback(self, msg: Audio):
-        """Procesează audio pentru detectare stop keyword."""
+        """Process audio for stop keyword detection."""
         now_ms = int(time.time() * 1000)
         
-        # Arm delay - ignoră la început
+        # Arm delay - ignore at the beginning
         if (now_ms - self.start_ms) < self.arm_after_ms:
             return
         
-        # Nu procesăm dacă TTS nu vorbește
+        # Do not process if TTS is not speaking
         if not self.is_tts_speaking:
             return
         
-        # Debounce - ignoră detecții duble
+        # Debounce - ignore duplicate detections
         if (now_ms - self.last_trigger_ms) < 2000:
             return
         
-        # Convertește la int16
+        # Convert to int16
         pcm = np.array(msg.data, dtype=np.int16)
         
         # ══════════════════════════════════════════════════════════
-        # STOP KEYWORD DETECTOR (doar când TTS vorbește)
+        # STOP KEYWORD DETECTOR (only when TTS is speaking)
         # ══════════════════════════════════════════════════════════
         if self.stop_detector:
             try:
@@ -266,7 +266,7 @@ class BargeInNode(Node):
                 self.get_logger().warning(f'Stop detector error: {e}')
         
         # ══════════════════════════════════════════════════════════
-        # VOCE UMANĂ (Barge-in standard) - DEZACTIVAT (User request)
+        # HUMAN VOICE (standard barge-in) - DISABLED (User request)
         # ══════════════════════════════════════════════════════════
         # if self._is_human_voice(pcm, now_ms):
         #     self.voiced_ms += 20
@@ -279,15 +279,15 @@ class BargeInNode(Node):
         #     self._trigger_barge_in()
     
     # ═══════════════════════════════════════════════════════════════════
-    # DETECȚIE VOCE UMANĂ
+    # HUMAN VOICE DETECTION
     # ═══════════════════════════════════════════════════════════════════
     
     def _is_human_voice(self, pcm_i16: np.ndarray, now_ms: int) -> bool:
         """
-        Verifică dacă PCM-ul conține voce umană (nu zgomot/eco):
-        1. RMS peste prag (vocea e mai tare decât TTS leak)
-        2. High-pass filter (elimină bătăi joase)
-        3. Zero-crossing rate în interval vocii umane
+        Check whether PCM contains human voice (not noise/echo):
+        1. RMS above threshold (voice louder than TTS leak)
+        2. High-pass filter (removes low thumps)
+        3. Zero-crossing rate within human voice range
         """
         # Decay leak baseline
         self._maybe_decay_leak(now_ms)
@@ -295,7 +295,7 @@ class BargeInNode(Node):
         # 1) RMS check
         rms = _rms_dbfs(pcm_i16)
         
-        # Prag dinamic bazat pe ecou
+        # Dynamic threshold based on echo
         rms_threshold = self.min_rms_dbfs
         if self.leak_baseline_dbfs is not None:
             rms_threshold = max(rms_threshold, self.leak_baseline_dbfs + self.leak_margin_db)
@@ -304,23 +304,23 @@ class BargeInNode(Node):
             self._update_leak_baseline(rms, now_ms, fast=False)
             return False
         
-        # 2) High-pass filtering (anti-zgomot jos-frecvent)
+        # 2) High-pass filtering (low-frequency noise removal)
         pcm_filtered = _highpass_filter(pcm_i16, self.highpass_hz, self.sr)
         
-        # 3) Zero-crossing rate (anti-zgomot impulsiv)
+        # 3) Zero-crossing rate (impulsive noise filter)
         zcr = _zero_crossing_rate(pcm_filtered)
         if not (self.zcr_min <= zcr <= self.zcr_max):
             self._update_leak_baseline(rms, now_ms, fast=False)
             return False
         
-        # Voice hold - menține detecția pentru drop-uri scurte
+        # Voice hold - keep detection during short dropouts
         if (now_ms - self.last_voice_ms) <= self.voice_hold_ms:
             return True
         
         return True
     
     def _maybe_decay_leak(self, now_ms: int):
-        """Expiră leak baseline după timeout."""
+        """Expire the leak baseline after timeout."""
         if self.leak_baseline_dbfs is None:
             return
         if (now_ms - self.last_leak_update_ms) > self.leak_decay_ms:
@@ -328,14 +328,14 @@ class BargeInNode(Node):
             self.last_leak_update_ms = now_ms
     
     def _update_leak_baseline(self, rms_db: float, now_ms: int, fast: bool = False):
-        """Actualizează baseline pentru anti-echo."""
+        """Update the anti-echo baseline."""
         if not np.isfinite(rms_db) or rms_db <= -90.0:
             return
         
         if self.leak_baseline_dbfs is None:
             self.leak_baseline_dbfs = rms_db
         else:
-            # Limitează spike-uri mari
+            # Limit large spikes
             if not fast and rms_db > self.leak_baseline_dbfs + self.leak_margin_db * 2:
                 rms_db = self.leak_baseline_dbfs + self.leak_margin_db * 2
             
@@ -349,19 +349,19 @@ class BargeInNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     
     def _trigger_barge_in(self):
-        """Declanșează barge-in - oprește TTS."""
+        """Trigger barge-in - stop TTS."""
         now_ms = int(time.time() * 1000)
         self.last_trigger_ms = now_ms
         self.voiced_ms = 0
         
         self.get_logger().debug('_trigger_barge_in called')
         
-        # Publică pe /barge_in
+        # Publish to /barge_in
         msg = Bool()
         msg.data = True
         self.barge_pub.publish(msg)
         
-        # Trimite stop direct la TTS
+        # Send stop directly to TTS
         self.stop_pub.publish(msg)
 
 
