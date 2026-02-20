@@ -52,6 +52,7 @@ class ASRNode(Node):
         self.declare_parameter('model_size', 'small')
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('compute_type', 'int8')
+        self.declare_parameter('model_fallbacks', 'small,base,tiny')
         self.declare_parameter('min_audio_length', 0.5)  # Minimum seconds to transcribe
         self.declare_parameter('language', '')  # Empty = auto-detect, 'ro_en' = detect best
         self.declare_parameter('beam_size', 5)
@@ -66,6 +67,7 @@ class ASRNode(Node):
         model_size = self.get_parameter('model_size').value
         device = self.get_parameter('device').value
         compute_type = self.get_parameter('compute_type').value
+        model_fallbacks = self.get_parameter('model_fallbacks').value
         self.min_audio_length = self.get_parameter('min_audio_length').value
         self.language = self.get_parameter('language').value or None
         self.beam_size = self.get_parameter('beam_size').value
@@ -81,14 +83,13 @@ class ASRNode(Node):
             self.get_logger().error('faster-whisper not installed!')
             raise RuntimeError('faster-whisper not available')
         
-        # Initialize Whisper model
-        self.get_logger().debug(f'Loading Whisper model: {model_size} on {device}...')
-        self.model = WhisperModel(
-            model_size,
+        # Initialize Whisper model with fallback sizes
+        self.model = self._load_model_with_fallbacks(
+            preferred_model=model_size,
+            fallback_models=model_fallbacks,
             device=device,
-            compute_type=compute_type
+            compute_type=compute_type,
         )
-        self.get_logger().debug('✅ Whisper model loaded!')
         
         # Warmup at start
         self._warmed_up = False
@@ -141,6 +142,37 @@ class ASRNode(Node):
             self.get_logger().debug('🔇 Anti-echo DISABLED')
         
         self.get_logger().debug('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
+
+    def _load_model_with_fallbacks(self, preferred_model: str, fallback_models: str, device: str, compute_type: str):
+        """Load Whisper model, trying fallback sizes if needed."""
+        candidates = [preferred_model]
+        if fallback_models:
+            candidates.extend([m.strip() for m in str(fallback_models).split(',') if m.strip()])
+
+        # Keep order, drop duplicates
+        seen = set()
+        ordered = []
+        for cand in candidates:
+            if cand not in seen:
+                ordered.append(cand)
+                seen.add(cand)
+
+        last_error = None
+        for cand in ordered:
+            try:
+                self.get_logger().debug(f'Loading Whisper model: {cand} on {device}...')
+                model = WhisperModel(
+                    cand,
+                    device=device,
+                    compute_type=compute_type
+                )
+                self.get_logger().debug(f'✅ Whisper model loaded: {cand}')
+                return model
+            except Exception as e:
+                last_error = e
+                self.get_logger().warn(f'Failed to load model "{cand}": {e}')
+
+        raise RuntimeError(f'No ASR model could be loaded. Last error: {last_error}')
     
     def _ensure_warm(self):
         """Fully load the model via a dummy transcription."""

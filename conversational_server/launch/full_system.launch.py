@@ -4,7 +4,7 @@ Starts all nodes for local testing.
 """
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 import os
@@ -19,7 +19,16 @@ def _find_workspace_root() -> Path | None:
     return None
 
 
-def generate_launch_description():
+def _to_bool(value: str, default: bool) -> bool:
+    raw = (value or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def _launch_setup(context, *args, **kwargs):
     client_share = get_package_share_directory('conversational_client')
     models_dir = os.path.join(client_share, 'models')
     workspace_root = _find_workspace_root()
@@ -33,70 +42,58 @@ def generate_launch_description():
     stop_model_path_oww = os.path.join(models_dir, 'stop_robot.onnx')
     goodbye_model_path = os.path.join(models_dir, 'goodbye_robot.onnx')
 
-    return LaunchDescription([
-        # ========== ARGUMENTS ==========
-        DeclareLaunchArgument(
-            'asr_model_size',
-            default_value='medium',  # Upgraded from 'small' for better accuracy
-            description='Whisper model size'
-        ),
-        DeclareLaunchArgument(
-            'llm_provider',
-            default_value='groq',
-            description='LLM provider (groq/ollama)'
-        ),
-        DeclareLaunchArgument(
-            'llm_model',
-            default_value='llama-3.1-8b-instant',
-            description='LLM model name'
-        ),
-        
-        # ========== SERVER NODES ==========
-        
+    runtime_mode = LaunchConfiguration('runtime_mode').perform(context).strip().lower() or 'offline'
+    if runtime_mode not in ('offline', 'hybrid', 'online'):
+        runtime_mode = 'offline'
+
+    mode_defaults = {
+        'offline': {'asr_model_size': 'small', 'tts_backend': 'pyttsx3', 'enable_llm': False, 'websearch_enabled': False},
+        'hybrid': {'asr_model_size': 'small', 'tts_backend': 'pyttsx3', 'enable_llm': True, 'websearch_enabled': True},
+        'online': {'asr_model_size': 'medium', 'tts_backend': 'edge', 'enable_llm': True, 'websearch_enabled': True},
+    }
+    defaults = mode_defaults[runtime_mode]
+
+    asr_override = LaunchConfiguration('asr_model_size').perform(context).strip().lower()
+    tts_override = LaunchConfiguration('tts_backend').perform(context).strip().lower()
+    llm_override = LaunchConfiguration('enable_llm').perform(context).strip().lower()
+    llm_provider = LaunchConfiguration('llm_provider').perform(context).strip() or 'groq'
+    llm_model = LaunchConfiguration('llm_model').perform(context).strip() or 'llama-3.1-8b-instant'
+    ros_localhost_only = LaunchConfiguration('ros_localhost_only').perform(context).strip() or '1'
+
+    asr_model_size = defaults['asr_model_size'] if asr_override in ('', 'auto') else asr_override
+    tts_backend = defaults['tts_backend'] if tts_override in ('', 'auto') else tts_override
+    enable_llm = defaults['enable_llm'] if llm_override in ('', 'auto') else _to_bool(llm_override, defaults['enable_llm'])
+
+    actions = [
+        SetEnvironmentVariable('ROS_LOCALHOST_ONLY', ros_localhost_only),
         Node(
             package='conversational_server',
             executable='asr_node',
             name='asr_node',
             output='screen',
             parameters=[{
-                'model_size': LaunchConfiguration('asr_model_size'),
+                'model_size': asr_model_size,
+                'model_fallbacks': 'small,base,tiny',
                 'device': 'cpu',
                 'compute_type': 'int8',
-                'language': 'ro_en',  # Enable Romanian/English detection
-                'beam_size': 8,  # Higher = more accurate (default was 5)
+                'language': 'ro_en',
+                'beam_size': 8,
                 'initial_prompt': 'A bilingual conversation in Romanian and English. O conversație bilingvă.',
             }]
         ),
-        
-        # LLM Node
-        Node(
-            package='conversational_server',
-            executable='llm_node',
-            name='llm_node',
-            output='screen',
-            parameters=[{
-                'provider': LaunchConfiguration('llm_provider'),
-                'model': LaunchConfiguration('llm_model'),
-                'max_tokens': 150,
-                'temperature': 0.7,
-                'min_chunk_chars': 20,  # Smaller chunks = faster initial response
-            }]
-        ),
-        
-        # TTS Node
         Node(
             package='conversational_server',
             executable='tts_node',
             name='tts_node',
             output='screen',
             parameters=[{
-                'voice_en': 'en-GB-RyanNeural',  # British male voice (Ryan)
+                'backend': tts_backend,
+                'voice_en': 'en-GB-RyanNeural',
                 'voice_ro': 'ro-RO-EmilNeural',
-                'buffer_size': 1,  # Start playback immediately (was 2)
+                'buffer_size': 1,
+                'edge_auto_fallback': True,
             }]
         ),
-
-        # Robot command extraction from transcription
         Node(
             package='conversational_server',
             executable='robot_command_node',
@@ -109,88 +106,123 @@ def generate_launch_description():
                 'stop_ends_session': True,
             }]
         ),
-        
-        # ========== CLIENT NODES ==========
-        
-        # Audio Capture (microphone)
+    ]
+
+    if enable_llm:
+        actions.append(
+            Node(
+                package='conversational_server',
+                executable='llm_node',
+                name='llm_node',
+                output='screen',
+                parameters=[{
+                    'provider': llm_provider,
+                    'model': llm_model,
+                    'max_tokens': 150,
+                    'temperature': 0.7,
+                    'min_chunk_chars': 20,
+                    'websearch_enabled': defaults['websearch_enabled'],
+                }]
+            )
+        )
+
+    actions.extend([
         Node(
             package='conversational_client',
             executable='audio_capture_node',
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
+                'device_index': -1,
             }]
         ),
-        
-        # VAD (Voice Activity Detection)
         Node(
             package='conversational_client',
             executable='vad_node',
             name='vad_node',
             output='screen',
             parameters=[{
-                'wake_word_enabled': True,   # Gate audio until wake word
-                'session_timeout': 30.0,     # Reset to standby after 30s silence (was 8s)
+                'wake_word_enabled': True,
+                'session_timeout': 30.0,
             }]
         ),
-        
-        # Audio Playback (speaker)
         Node(
             package='conversational_client',
             executable='audio_playback_node',
             name='audio_playback_node',
             output='screen',
         ),
-        
-        # Barge-in (interrupt TTS when the user speaks)
         Node(
             package='conversational_client',
             executable='barge_in_node',
             name='barge_in_node',
             output='screen',
             parameters=[{
-                # PyTorch Stop Keyword Detector (runs ONLY when TTS is speaking)
                 'stop_model_path': stop_model_path,
-                'stop_enabled': True,  # ENABLED - per user request
+                'stop_enabled': True,
                 'stop_prob_threshold': 0.95,
                 'stop_logit_margin': 0.3,
-                'stop_hits_required': 2,      # 2 consecutive detections
-                'stop_frame_samples': 16000,  # Frame = 1s (required by the model)
-                'stop_hop_samples': 4000,     # Hop = 0.25s = check every 250ms
+                'stop_hits_required': 2,
+                'stop_frame_samples': 16000,
+                'stop_hop_samples': 4000,
             }]
         ),
-        
-        # Wake Word + Stop Keyword (OpenWakeWord unified)
-        # Detects: "hello robot" (wake), "stop robot" (barge_in), "goodbye robot" (stop)
         Node(
             package='conversational_client',
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.5,  # Default threshold
+                'threshold': 0.5,
                 'cooldown_ms': 1500,
-                # Format: "path:kind" - 'wake' to activate, 'barge_in' to stop TTS, 'stop' to end session
                 'custom_models': ','.join([
                     f'{hello_model_path}:wake',
                     f'{stop_model_path_oww}:barge_in',
                     f'{goodbye_model_path}:stop',
                 ]),
-                # Per-model thresholds
                 'model_thresholds': 'hello_robot:0.30,stop_robot:0.25,goodbye_robot:0.40',
             }]
         ),
-        
-        # Stop Keyword Node (DISABLED - using OpenWakeWord in wake_word_node)
-        # Node(
-        #     package='conversational_client',
-        #     executable='stop_keyword_node',
-        #     name='stop_keyword_node',
-        #     output='screen',
-        #     parameters=[{
-        #         'model_path': os.path.join(voices_dir, 'stop_keyword.onnx'),
-        #         'enabled': False,
-        #     }]
-        # ),
+    ])
+    return actions
+
+
+def generate_launch_description():
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            'runtime_mode',
+            default_value='offline',
+            description='offline/hybrid/online profile for robust deployment'
+        ),
+        DeclareLaunchArgument(
+            'asr_model_size',
+            default_value='auto',
+            description='Whisper model override (auto/tiny/base/small/medium/large)'
+        ),
+        DeclareLaunchArgument(
+            'tts_backend',
+            default_value='auto',
+            description='TTS backend override (auto/edge/pyttsx3)'
+        ),
+        DeclareLaunchArgument(
+            'enable_llm',
+            default_value='auto',
+            description='Enable LLM node (auto/true/false)'
+        ),
+        DeclareLaunchArgument(
+            'ros_localhost_only',
+            default_value='1',
+            description='Set ROS_LOCALHOST_ONLY (1 for single-machine, 0 for LAN)'
+        ),
+        DeclareLaunchArgument(
+            'llm_provider',
+            default_value='groq',
+            description='LLM provider (groq)'
+        ),
+        DeclareLaunchArgument(
+            'llm_model',
+            default_value='llama-3.1-8b-instant',
+            description='LLM model name'
+        ),
+        OpaqueFunction(function=_launch_setup),
     ])

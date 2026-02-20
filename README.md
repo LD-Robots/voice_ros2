@@ -116,6 +116,24 @@ source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py
 ```
 
+### Runtime Profiles (Recommended)
+Use `runtime_mode` to switch the whole behavior:
+
+- `offline` (default): local TTS, no LLM chat, robust command execution
+- `hybrid`: local TTS + online LLM
+- `online`: online TTS + online LLM
+
+```bash
+# OFFLINE (best for robot reliability)
+ros2 launch conversational_server full_system.launch.py runtime_mode:=offline
+
+# HYBRID (safe speech + cloud chat)
+ros2 launch conversational_server full_system.launch.py runtime_mode:=hybrid
+
+# ONLINE (full cloud)
+ros2 launch conversational_server full_system.launch.py runtime_mode:=online
+```
+
 ### Server Only
 ```bash
 ros2 launch conversational_server server_pipeline.launch.py
@@ -154,6 +172,22 @@ După enrollment, `speaker_id_node` va identifica automat vorbitorul la pornirea
 
 ### Launch Parameters
 
+#### Unified Switching (ASR + TTS + LLM)
+You can override profile defaults explicitly:
+
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    runtime_mode:=hybrid \
+    asr_model_size:=small \
+    tts_backend:=pyttsx3 \
+    enable_llm:=true
+```
+
+`runtime_mode` values: `offline`, `hybrid`, `online`  
+`asr_model_size` values: `auto`, `tiny`, `base`, `small`, `medium`, `large`  
+`tts_backend` values: `auto`, `pyttsx3`, `edge`  
+`enable_llm` values: `auto`, `true`, `false`
+
 #### ASR Configuration
 ```bash
 ros2 launch conversational_server full_system.launch.py \
@@ -178,6 +212,21 @@ Available Groq models:
 Edit `full_system.launch.py` and adjust:
 ```python
 'threshold': 0.5,  # Lower = more sensitive (0.0-1.0)
+```
+
+### Network Mode (DDS)
+For single-machine robot deployment:
+
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    ros_localhost_only:=1
+```
+
+For LAN / multi-computer ROS2:
+
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    ros_localhost_only:=0
 ```
 
 ### Robot Commands

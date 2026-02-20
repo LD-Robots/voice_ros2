@@ -62,6 +62,7 @@ class TTSNode(Node):
         self.declare_parameter('voice_ro', 'ro-RO-AlinaNeural')
         self.declare_parameter('rate', '+0%')
         self.declare_parameter('pitch', '+0Hz')
+        self.declare_parameter('edge_auto_fallback', True)
         self.declare_parameter('buffer_size', 2)  # Double buffer (2 chunks ahead)
         
         self.backend = self.get_parameter('backend').value
@@ -69,6 +70,7 @@ class TTSNode(Node):
         self.voice_ro = self.get_parameter('voice_ro').value
         self.rate = self.get_parameter('rate').value
         self.pitch = self.get_parameter('pitch').value
+        self.edge_auto_fallback = bool(self.get_parameter('edge_auto_fallback').value)
         self.buffer_size = self.get_parameter('buffer_size').value
         
         # Select backend
@@ -81,13 +83,7 @@ class TTSNode(Node):
                 self.backend = 'pyttsx3'
         
         if self.backend == 'pyttsx3':
-            if not PYTTSX3_AVAILABLE:
-                self.get_logger().error('No TTS backend available!')
-                raise RuntimeError('No TTS backend available')
-            # Initialize pyttsx3
-            self.pyttsx3_engine = pyttsx3.init()
-            self.pyttsx3_engine.setProperty('rate', 170)
-            self.get_logger().debug('✅ TTS initialized with pyttsx3 (offline)')
+            self._ensure_pyttsx3_engine()
         else:
             # Edge TTS requires soundfile for MP3
             if not SOUNDFILE_AVAILABLE:
@@ -193,6 +189,16 @@ class TTSNode(Node):
         self.consumer_thread.start()
         
         self.get_logger().debug('TTS Node started with DOUBLE BUFFER + CACHE! Listening on /llm_stream')
+
+    def _ensure_pyttsx3_engine(self):
+        """Initialize pyttsx3 backend once."""
+        if not PYTTSX3_AVAILABLE:
+            self.get_logger().error('No TTS backend available!')
+            raise RuntimeError('No TTS backend available')
+        if not hasattr(self, 'pyttsx3_engine'):
+            self.pyttsx3_engine = pyttsx3.init()
+            self.pyttsx3_engine.setProperty('rate', 170)
+            self.get_logger().debug('✅ TTS initialized with pyttsx3 (offline)')
     
     def _publish_speaking_status(self):
         """Publish is_speaking state periodically on /tts_speaking."""
@@ -408,8 +414,15 @@ class TTSNode(Node):
         """Synthesize text to audio using the selected backend."""
         if self.backend == 'pyttsx3':
             return self._synthesize_pyttsx3(text)
-        else:
+        try:
             return self._synthesize_edge(text, voice)
+        except Exception as e:
+            if self.edge_auto_fallback and PYTTSX3_AVAILABLE:
+                self.get_logger().warn(f'Edge TTS failed, switching to pyttsx3: {e}')
+                self.backend = 'pyttsx3'
+                self._ensure_pyttsx3_engine()
+                return self._synthesize_pyttsx3(text)
+            raise
     
     def _synthesize_edge(self, text: str, voice: str):
         """Synthesize with Edge TTS (online)."""
