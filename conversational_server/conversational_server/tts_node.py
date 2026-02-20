@@ -4,9 +4,9 @@ TTS Node - Text to Speech with MULTIPLE BACKENDS, STREAMING and DOUBLE BUFFER.
 
 BACKENDS:
   - edge-tts (default) - Microsoft Edge TTS, requires internet
-  - pyttsx3 - Offline TTS fallback
+  - piper - Offline TTS fallback (high quality, ONNX models)
 
-DOUBLE BUFFER: Synthesizes the next chunk in parallel with current playback.
+DOUBLE BUFFER: Synthesize next chunk in parallel with current playback.
 
 Subscribes to: 
   - /llm_stream (TextChunk) - streaming chunks (PREFERRED)
@@ -19,7 +19,6 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk, Audio
 from std_msgs.msg import Bool, String
 import asyncio
-import tempfile
 import os
 import numpy as np
 import threading
@@ -35,15 +34,15 @@ except ImportError:
     EDGE_TTS_AVAILABLE = False
     print("⚠️ edge-tts not installed. Run: pip install edge-tts")
 
-# pyttsx3 for voice synthesis (offline fallback)
+# Piper TTS for voice synthesis (offline fallback)
 try:
-    import pyttsx3
-    PYTTSX3_AVAILABLE = True
+    from piper import PiperVoice
+    PIPER_AVAILABLE = True
 except ImportError:
-    PYTTSX3_AVAILABLE = False
-    print("⚠️ pyttsx3 not installed. Run: pip install pyttsx3")
+    PIPER_AVAILABLE = False
+    print("⚠️ piper-tts not installed. Run: pip install piper-tts")
 
-# Soundfile for reading audio
+# Soundfile for audio reading
 try:
     import soundfile as sf
     SOUNDFILE_AVAILABLE = True
@@ -56,13 +55,17 @@ class TTSNode(Node):
     def __init__(self):
         super().__init__('tts_node')
         
-        # Configurable parameters
-        self.declare_parameter('backend', 'edge')  # 'edge' or 'pyttsx3'
+        # Parametri configurabili
+        self.declare_parameter('backend', 'edge')  # 'edge' sau 'piper'
         self.declare_parameter('voice_en', 'en-IE-EmilyNeural')
         self.declare_parameter('voice_ro', 'ro-RO-AlinaNeural')
         self.declare_parameter('rate', '+0%')
         self.declare_parameter('pitch', '+0Hz')
         self.declare_parameter('buffer_size', 2)  # Double buffer (2 chunks ahead)
+        
+        # Piper model paths
+        self.declare_parameter('piper_model_en', '')
+        self.declare_parameter('piper_model_ro', '')
         
         self.backend = self.get_parameter('backend').value
         self.voice_en = self.get_parameter('voice_en').value
@@ -70,30 +73,39 @@ class TTSNode(Node):
         self.rate = self.get_parameter('rate').value
         self.pitch = self.get_parameter('pitch').value
         self.buffer_size = self.get_parameter('buffer_size').value
+        self.piper_model_en_path = self.get_parameter('piper_model_en').value
+        self.piper_model_ro_path = self.get_parameter('piper_model_ro').value
         
-        # Select backend
+        # Piper voices (pre-loaded)
+        self.piper_voice_en = None
+        self.piper_voice_ro = None
+        
+        # Selectează backend-ul
         if self.backend == 'edge':
             if not EDGE_TTS_AVAILABLE:
-                self.get_logger().warn('edge-tts not available, falling back to pyttsx3')
-                self.backend = 'pyttsx3'
+                self.get_logger().warn('edge-tts not available, falling back to piper')
+                self.backend = 'piper'
             elif not SOUNDFILE_AVAILABLE:
-                self.get_logger().warn('soundfile not available for edge-tts, falling back to pyttsx3')
-                self.backend = 'pyttsx3'
+                self.get_logger().warn('soundfile not available for edge-tts, falling back to piper')
+                self.backend = 'piper'
         
-        if self.backend == 'pyttsx3':
-            if not PYTTSX3_AVAILABLE:
-                self.get_logger().error('No TTS backend available!')
+        if self.backend == 'piper':
+            if not PIPER_AVAILABLE:
+                self.get_logger().error('No TTS backend available! Install piper-tts.')
                 raise RuntimeError('No TTS backend available')
-            # Initialize pyttsx3
-            self.pyttsx3_engine = pyttsx3.init()
-            self.pyttsx3_engine.setProperty('rate', 170)
-            self.get_logger().debug('✅ TTS initialized with pyttsx3 (offline)')
+            self._load_piper_models()
+            self.get_logger().info('✅ TTS initialized with Piper (offline)')
         else:
-            # Edge TTS requires soundfile for MP3
+            # Edge TTS necesită soundfile pt MP3
             if not SOUNDFILE_AVAILABLE:
                 self.get_logger().error('soundfile not installed - required for edge-tts!')
                 raise RuntimeError('soundfile not available')
-            self.get_logger().debug(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
+            # Pre-load Piper models for fallback if available
+            if PIPER_AVAILABLE:
+                self._load_piper_models()
+                self.get_logger().info(f'✅ TTS initialized with edge-tts (Piper fallback ready): EN={self.voice_en}, RO={self.voice_ro}')
+            else:
+                self.get_logger().info(f'✅ TTS initialized with edge-tts (no offline fallback): EN={self.voice_en}, RO={self.voice_ro}')
         
         # Target sample rate (fix "horror voice" issues by standardizing on 16kHz)
         self.target_sample_rate = 16000
@@ -111,18 +123,18 @@ class TTSNode(Node):
             'goodbye_en': ('Goodbye! Have a great day!', 'en'),
             'goodbye_ro': ('La revedere! O zi frumoasă!', 'ro'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
-            'error_ro': ('Scuze, am întâlnit o eroare.', 'ro'),
+            'error_ro': ('Sorry, I encountered an error.', 'ro'),
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
-        # Pre-generate cache in the background
+        # Pre-generate the cache in the background
         self.cache_thread = threading.Thread(target=self._precache, daemon=True, name="TTS-Cache")
         self.cache_thread.start()
         
         # === DOUBLE BUFFER QUEUES ===
         # Queue for incoming text chunks
         self.text_queue = queue.Queue()
-        # Queue for pre-synthesized audio (double buffer) - max 2 chunks
+        # Queue for pre-synthesized audio (double buffer) - max 2 pre-synthesized chunks
         self.audio_queue = queue.Queue(maxsize=self.buffer_size)
         
         self.is_speaking = False
@@ -147,7 +159,7 @@ class TTSNode(Node):
             10
         )
         
-        # Subscriber for full response (FALLBACK)
+        # Subscriber for complete response (FALLBACK)
         self.response_sub = self.create_subscription(
             Transcription,
             '/llm_response',
@@ -178,31 +190,31 @@ class TTSNode(Node):
             10
         )
         
-        # Timer to publish is_speaking periodically
+        # Timer to periodically publish the is_speaking state
         self.speaking_timer = self.create_timer(0.2, self._publish_speaking_status)
         
         # === DOUBLE BUFFER THREADS ===
         self.running = True
         
-        # PRODUCER thread: reads text chunks, synthesizes audio, pushes to audio_queue
+        # PRODUCER Thread: read text chunks, synthesize audio, put in audio_queue
         self.producer_thread = threading.Thread(target=self._producer_loop, daemon=True, name="TTS-Producer")
         self.producer_thread.start()
         
-        # CONSUMER thread: reads from audio_queue, publishes on /audio_out
+        # Thread CONSUMER: citeste din audio_queue, publică pe /audio_out
         self.consumer_thread = threading.Thread(target=self._consumer_loop, daemon=True, name="TTS-Consumer")
         self.consumer_thread.start()
         
         self.get_logger().debug('TTS Node started with DOUBLE BUFFER + CACHE! Listening on /llm_stream')
     
     def _publish_speaking_status(self):
-        """Publish is_speaking state periodically on /tts_speaking."""
+        """Publică periodic starea is_speaking pe /tts_speaking."""
         from std_msgs.msg import Bool
         msg = Bool()
         msg.data = self.is_speaking
         self.speaking_pub.publish(msg)
     
     def stop_callback(self, msg: Bool):
-        """Stop TTS when we receive True on /tts_stop."""
+        """Oprește TTS când primim True pe /tts_stop."""
         if msg.data:
             self.stop()
     
@@ -228,14 +240,14 @@ class TTSNode(Node):
         self.get_logger().debug(f'✅ Cached {len(self.audio_cache)} phrases')
     
     def say_cached(self, key: str) -> bool:
-        """Play a cached phrase. Returns True if it succeeded."""
+        """Play a cached phrase. Returns True if successful."""
         if key not in self.audio_cache:
             self.get_logger().warn(f'Cache miss: {key}')
             return False
         
         audio_data, sample_rate = self.audio_cache[key]
         
-        # Publish audio
+        # Publică audio
         out = Audio()
         out.data = audio_data.tolist()
         out.sample_rate = sample_rate
@@ -249,28 +261,28 @@ class TTSNode(Node):
         """Process TTS commands (play cached phrases)."""
         command = msg.data.strip()
         
-        # If it's a cache key, play it
+        # Dacă e un key din cache, îl redă
         if command in self.audio_cache or command in self.cache_phrases:
             self.say_cached(command)
         else:
             self.get_logger().warn(f'Unknown TTS command: {command}')
     
     def _pick_voice(self, lang: str) -> str:
-        """Choose the voice - Romanian or English (default for everything else)."""
+        """Choose the voice - Romanian or English (default for anything else)."""
         lang = lang.lower() if lang else 'en'
         if lang.startswith('ro'):
             return self.voice_ro
-        # Any other language -> English
+        # Orice altă limbă -> engleză
         return self.voice_en
     
     def stream_callback(self, msg: TextChunk):
-        """Process streaming text chunks."""
-        # New session - reset
+        """Procesează chunk-uri de text streaming."""
+        # Sesiune nouă - resetează
         if self.current_session and msg.session_id != self.current_session:
             if not msg.is_final:
                 self.current_session = msg.session_id
-                self.stop_requested = True  # Stop what's in progress
-                # Clear queues
+                self.stop_requested = True  # Stop what is currently playing
+                # Golim queue-urile
                 self._clear_queues()
                 self.stop_requested = False
         
@@ -281,15 +293,15 @@ class TTSNode(Node):
             self.get_logger().debug(f'📥 Stream chunk: "{msg.text[:40]}..." (final={msg.is_final})')
             self.text_queue.put((msg.text, msg.language, msg.is_final, msg.session_id))
         elif msg.is_final:
-            # Empty message with is_final - signal end
+            # Empty message with is_final - signals the end
             self.text_queue.put(("", "", True, msg.session_id))
     
     def response_callback(self, msg: Transcription):
         """Fallback for complete responses (non-streaming)."""
-        pass  # Disabled - we use streaming only
+        pass  # Dezactivat - folosim doar streaming
     
     def _clear_queues(self):
-        """Clear all queues."""
+        """Golește toate queue-urile."""
         while not self.text_queue.empty():
             try:
                 self.text_queue.get_nowait()
@@ -303,8 +315,8 @@ class TTSNode(Node):
     
     def _producer_loop(self):
         """
-        PRODUCER: Reads text from text_queue, synthesizes, puts into audio_queue.
-        Runs in parallel - always tries to keep 1-2 pre-synthesized chunks.
+        PRODUCER: Read text from text_queue, synthesize, put in audio_queue.
+        Run in parallel - always try to have 1-2 pre-synthesized chunks.
         """
         while self.running:
             try:
@@ -329,7 +341,7 @@ class TTSNode(Node):
                         if len(audio_data.shape) > 1:
                             audio_data = audio_data[:, 0]
                         
-                        # Put into audio_queue WITH EPOCH (blocks if full = double buffer full)
+                        # Put in audio_queue WITH EPOCH (will block if full = double buffer full)
                         current_epoch = self.stop_epoch
                         if not self.stop_requested:
                             self.audio_queue.put((audio_data, sample_rate, is_final, session_id, current_epoch), timeout=5.0)
@@ -339,7 +351,7 @@ class TTSNode(Node):
                         self.get_logger().error(f'Synthesis error: {e}')
                 
                 elif is_final:
-                    # Signal end in audio_queue (with epoch)
+                    # Signal the end in audio_queue (with epoch)
                     try:
                         self.audio_queue.put((None, 0, True, session_id, self.stop_epoch), timeout=1.0)
                     except queue.Full:
@@ -352,7 +364,7 @@ class TTSNode(Node):
     
     def _consumer_loop(self):
         """
-        CONSUMER: Reads audio from audio_queue, publishes on /audio_out.
+        CONSUMER: Citește audio din audio_queue, publică pe /audio_out.
         """
         from std_msgs.msg import Bool
         
@@ -369,7 +381,7 @@ class TTSNode(Node):
                     continue
                 
                 if audio_data is not None:
-                    # Publish audio - audio_playback_node handles is_speaking
+                    # Publică audio - audio_playback_node va gestiona is_speaking
                     out = Audio()
                     out.data = audio_data.tolist()
                     out.sample_rate = sample_rate
@@ -377,7 +389,7 @@ class TTSNode(Node):
                     self.audio_pub.publish(out)
                     
                     self.get_logger().debug(f'📤 Published {len(audio_data)} samples at {sample_rate}Hz')
-                    # Do NOT sleep - audio_playback_node handles is_speaking state
+                    # NU facem sleep - audio_playback_node gestionează starea is_speaking
                 
                 if is_final:
                     self.current_session = None
@@ -404,15 +416,42 @@ class TTSNode(Node):
         
         return audio_data
     
+    def _load_piper_models(self):
+        """Pre-load Piper ONNX models for EN and RO."""
+        if self.piper_model_en_path and os.path.exists(self.piper_model_en_path):
+            try:
+                self.piper_voice_en = PiperVoice.load(self.piper_model_en_path)
+                self.get_logger().info(f'🔊 Piper EN loaded: {os.path.basename(self.piper_model_en_path)}')
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to load Piper EN: {e}')
+        else:
+            self.get_logger().warn(f'⚠️ Piper EN model not found: {self.piper_model_en_path}')
+        
+        if self.piper_model_ro_path and os.path.exists(self.piper_model_ro_path):
+            try:
+                self.piper_voice_ro = PiperVoice.load(self.piper_model_ro_path)
+                self.get_logger().info(f'🔊 Piper RO loaded: {os.path.basename(self.piper_model_ro_path)}')
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to load Piper RO: {e}')
+        else:
+            self.get_logger().warn(f'⚠️ Piper RO model not found: {self.piper_model_ro_path}')
+    
     def _synthesize(self, text: str, voice: str):
         """Synthesize text to audio using the selected backend."""
-        if self.backend == 'pyttsx3':
-            return self._synthesize_pyttsx3(text)
+        if self.backend == 'piper':
+            return self._synthesize_piper(text, voice)
         else:
-            return self._synthesize_edge(text, voice)
+            try:
+                return self._synthesize_edge(text, voice)
+            except Exception as e:
+                # Fallback to Piper if edge-tts fails (e.g., no internet)
+                if self.piper_voice_en or self.piper_voice_ro:
+                    self.get_logger().warn(f'⚠️ Edge TTS failed ({e}), falling back to Piper')
+                    return self._synthesize_piper(text, voice)
+                raise
     
     def _synthesize_edge(self, text: str, voice: str):
-        """Synthesize with Edge TTS (online)."""
+        """Synthesize with Edge TTS (online, entirely in RAM)."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -420,34 +459,38 @@ class TTSNode(Node):
         finally:
             loop.close()
         
-        # Save temporarily and read with soundfile
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as f:
-            temp_path = f.name
-            f.write(audio_bytes)
+        # Use io.BytesIO directly in memory
+        import io
+        mp3_io = io.BytesIO(audio_bytes)
         
-        try:
-            audio_data, sample_rate = sf.read(temp_path, dtype='int16')
-            return audio_data, sample_rate
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        # Citește MP3 direct din buffer-ul din memorie
+        audio_data, sample_rate = sf.read(mp3_io, dtype='int16')
+        return audio_data, sample_rate
     
-    def _synthesize_pyttsx3(self, text: str):
-        """Synthesize with pyttsx3 (offline)."""
-        # pyttsx3 saves to a WAV file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
-            temp_path = f.name
+    def _synthesize_piper(self, text: str, voice: str):
+        """Synthesize with Piper TTS (offline, entirely in RAM)."""
+        # Alege modelul Piper bazat pe limba vocii
+        lang = voice.lower() if voice else 'en'
+        if lang.startswith('ro') or 'ro-' in lang.lower():
+            piper_voice = self.piper_voice_ro or self.piper_voice_en
+        else:
+            piper_voice = self.piper_voice_en or self.piper_voice_ro
         
-        try:
-            self.pyttsx3_engine.save_to_file(text, temp_path)
-            self.pyttsx3_engine.runAndWait()
-            
-            # Read WAV
-            audio_data, sample_rate = sf.read(temp_path, dtype='int16')
-            return audio_data, sample_rate
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+        if piper_voice is None:
+            raise RuntimeError('No Piper voice loaded!')
+        
+        # Sintetizează — returnează chunks de audio int16
+        audio_chunks = list(piper_voice.synthesize(text))
+        
+        if not audio_chunks:
+            raise RuntimeError('Piper returned no audio')
+        
+        # Concatenate all chunks into a single array
+        all_audio = b''.join(chunk.audio_int16_bytes for chunk in audio_chunks)
+        audio_data = np.frombuffer(all_audio, dtype=np.int16)
+        sample_rate = audio_chunks[0].sample_rate
+        
+        return audio_data, sample_rate
 
     def _resample(self, audio_data, original_rate, target_rate):
         """Resample audio data to target rate."""
@@ -473,7 +516,7 @@ class TTSNode(Node):
         self.stop_requested = False
     
     def destroy_node(self):
-        """Cleanup on shutdown."""
+        """Cleanup on exit."""
         self.running = False
         super().destroy_node()
 
