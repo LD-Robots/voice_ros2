@@ -124,6 +124,20 @@ class VoiceCommandNode(Node):
     def _parse_command(self, text: str):
         normalized = self._normalize_text(text)
 
+        stop_patterns = [
+            r'\b(stop|halt|freeze|cancel)\b',
+            r'\b(opreste|anuleaza|stop)\b',
+        ]
+        for pattern in stop_patterns:
+            if re.search(pattern, normalized):
+                return {
+                    'intent': 'stop',
+                    'direction': 'none',
+                    'steps': 0,
+                    'confidence': 0.98,
+                    'parameters': {'reason': 'voice_stop'},
+                }
+
         raise_hands_patterns = [
             r'\bhands up\b',
             r'\b(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b',
@@ -137,6 +151,23 @@ class VoiceCommandNode(Node):
                     'direction': 'none',
                     'steps': 0,
                     'confidence': 0.95,
+                    'parameters': {'motion': 'upper_body', 'style': 'default'},
+                }
+
+        lower_hands_patterns = [
+            r'\b(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b',
+            r'\bhands down\b',
+            r'\barms down\b',
+            r'\bcoboara\b.*\b(mainile|mana|bratele|brat)\b',
+            r'\bmainile jos\b',
+        ]
+        for pattern in lower_hands_patterns:
+            if re.search(pattern, normalized):
+                return {
+                    'intent': 'lower_hands',
+                    'direction': 'none',
+                    'steps': 0,
+                    'confidence': 0.93,
                     'parameters': {'motion': 'upper_body', 'style': 'default'},
                 }
 
@@ -156,11 +187,53 @@ class VoiceCommandNode(Node):
                     'parameters': {'style': 'default', 'duration_s': 8.0},
                 }
 
+        wave_patterns = [
+            r'\bwave\b',
+            r'\bwave your hand\b',
+            r'\bfa cu mana\b',
+            r'\bsaluta\b',
+        ]
+        for pattern in wave_patterns:
+            if re.search(pattern, normalized):
+                return {
+                    'intent': 'wave',
+                    'direction': 'none',
+                    'steps': 0,
+                    'confidence': 0.91,
+                    'parameters': {'style': 'greeting'},
+                }
+
+        turn = self._parse_turn(normalized)
+        if turn:
+            return turn
+
         move = self._parse_move(normalized)
         if move:
             return move
 
         return None
+
+    def _parse_turn(self, normalized: str):
+        has_turn_verb = re.search(
+            r'\b(turn|rotate|spin|intoarce|roteste)\b',
+            normalized
+        ) is not None
+        direction = self._extract_turn_direction(normalized)
+        angle = self._extract_turn_angle(normalized)
+
+        if not has_turn_verb or direction is None:
+            return None
+
+        return {
+            'intent': 'turn',
+            'direction': direction,
+            'steps': 0,
+            'confidence': 0.90,
+            'parameters': {
+                'angle_deg': angle,
+                'speed_scale': 1.0,
+            },
+        }
 
     def _parse_move(self, normalized: str):
         direction = self._extract_direction(normalized)
@@ -199,6 +272,43 @@ class VoiceCommandNode(Node):
         if has_backward and not has_forward:
             return 'backward'
         return None
+
+    def _extract_turn_direction(self, normalized: str):
+        left_tokens = ('left', 'stanga')
+        right_tokens = ('right', 'dreapta')
+
+        has_left = any(token in normalized for token in left_tokens)
+        has_right = any(token in normalized for token in right_tokens)
+
+        if has_left and not has_right:
+            return 'left'
+        if has_right and not has_left:
+            return 'right'
+        return None
+
+    def _extract_turn_angle(self, normalized: str):
+        angle_patterns = [
+            r'\b(\d+)\s*(degrees?|deg|grade)\b',
+        ]
+        for pattern in angle_patterns:
+            match = re.search(pattern, normalized)
+            if match:
+                try:
+                    value = int(match.group(1))
+                    return max(5, min(360, value))
+                except ValueError:
+                    return 90
+
+        words = normalized.split()
+        for i, word in enumerate(words):
+            value = NUMBER_WORDS.get(word)
+            if value is None:
+                continue
+            next_word = words[i + 1] if i + 1 < len(words) else ''
+            if next_word in ('degree', 'degrees', 'deg', 'grade'):
+                return max(5, min(360, value))
+
+        return 90
 
     def _extract_steps(self, normalized: str):
         step_patterns = [
