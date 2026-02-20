@@ -6,11 +6,25 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from pathlib import Path
+
+
+def _find_workspace_root():
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('conversational_client')
     models_dir = os.path.join(pkg_share, 'models')
+    workspace_root = _find_workspace_root()
+    voices_dir = os.path.join(
+        str(workspace_root) if workspace_root else os.getcwd(),
+        'voices'
+    )
     
     # Build the string for custom_models
     # Format: path:kind
@@ -25,6 +39,10 @@ def generate_launch_description():
     # stop_robot_oww lower (0.25) for detection even when the robot is speaking
     # stop_robot lower (0.15) for detection even when the robot is speaking
     model_thresholds = "hello_robot:0.10,goodbye_robot:0.50"
+    stop_keyword_path = os.path.join(voices_dir, 'stop_keyword.onnx')
+    if not os.path.exists(stop_keyword_path):
+        stop_keyword_path = os.path.join(models_dir, 'stop_keyword.onnx')
+    enrollment_dir = os.path.join(voices_dir, 'enrollment')
 
     return LaunchDescription([
         
@@ -91,7 +109,7 @@ def generate_launch_description():
                 'min_voice_ms': 600,
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
-                'stop_model_path': os.path.expanduser('~/voice_ros2/voices/stop_keyword.onnx'),
+                'stop_model_path': stop_keyword_path,
                 'stop_prob_threshold': 0.95,  # Increased to prevent false positives
                 'stop_logit_margin': 0.5,
                 'stop_hits_required': 2,      # Remote suggests 2, safer
@@ -115,7 +133,7 @@ def generate_launch_description():
             name='speaker_id_node',
             output='screen',
             parameters=[{
-                'enrollment_dir': os.path.expanduser('~/voice_ros2/voices/enrollment/'),
+                'enrollment_dir': enrollment_dir,
                 'similarity_threshold': 0.25,
             }]
         ),
