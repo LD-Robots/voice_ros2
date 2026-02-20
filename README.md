@@ -139,7 +139,7 @@ ros2 launch conversational_client client_pipeline.launch.py
 python3 speaker_id/enroll_speaker.py
 ```
 
-Scriptul va cere numele și va salva amprenta vocală în `conversational_client/voices/enrollment/<nume>.wav`. Repetă pentru fiecare utilizator.
+Scriptul va cere numele și va salva amprenta vocală în `voices/enrollment/<nume>.wav`. Repetă pentru fiecare utilizator.
 
 Verifică baza de date:
 ```bash
