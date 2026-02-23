@@ -202,7 +202,7 @@ def generate_launch_description():
                 'preempt_on_new_command': True,
                 'enable_voice_cancel': True,
                 'enable_risky_confirmation': True,
-                'confirmation_timeout_s': 6.0,
+                'confirmation_timeout_s': 12.0,
                 'risky_steps_threshold': 5,
                 'risky_backward_steps_threshold': 3,
             }]

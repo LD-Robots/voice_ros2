@@ -106,6 +106,11 @@ class RobotCommandExecutorNode(Node):
             self._command_callback,
             10
         )
+        self.tts_cmd_pub = self.create_publisher(
+            String,
+            '/tts_command',
+            10
+        )
         self.transcription_sub = self.create_subscription(
             Transcription,
             '/transcription',
@@ -208,14 +213,9 @@ class RobotCommandExecutorNode(Node):
             self._publish_status('confirmation_timeout')
             return
 
-        if (
-            pending_speaker
-            and pending_speaker != 'Unknown'
-            and self.current_speaker
-            and self.current_speaker != 'Unknown'
-            and self.current_speaker != pending_speaker
-        ):
-            return
+        # Am scos verificarea de speaker (pending_speaker vs current_speaker) 
+        # pentru că sistemul de recunoaștere dădea rateuri la schimbarea rapidă
+        # între 'Unknown' și numele persoanei. Orice 'yes' valid va fi acceptat.
 
         if self._contains_any(text, self.confirm_accept_words):
             self._clear_pending_confirmation('confirmed')
@@ -479,6 +479,14 @@ class RobotCommandExecutorNode(Node):
             f'direction={msg.direction}, steps={msg.steps}, speaker={speaker}'
         )
         self._publish_status('confirmation_required')
+        if (msg.language or '').lower().startswith('ro'):
+            tts_msg = String()
+            tts_msg.data = 'confirm_ro'
+            self.tts_cmd_pub.publish(tts_msg)
+        else:
+            tts_msg = String()
+            tts_msg.data = 'confirm_en'
+            self.tts_cmd_pub.publish(tts_msg)
 
     def _get_pending_confirmation(self):
         with self._pending_lock:

@@ -124,6 +124,8 @@ class TTSNode(Node):
             'goodbye_ro': ('La revedere! O zi frumoasă!', 'ro'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
             'error_ro': ('Sorry, I encountered an error.', 'ro'),
+            'confirm_en': ('Are you sure? Please say yes or no.', 'en'),
+            'confirm_ro': ('Ești sigur? Te rog confirmă cu da sau nu.', 'ro'),
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
