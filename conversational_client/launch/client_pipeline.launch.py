@@ -156,7 +156,7 @@ def generate_launch_description():
                 'min_transcription_confidence': 0.45,
                 'default_steps': 1,
                 'max_steps': 20,
-                'enable_tts_ack': True,
+                'enable_tts_ack': False,
             }]
         ),
 
