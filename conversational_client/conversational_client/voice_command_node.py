@@ -124,12 +124,14 @@ class VoiceCommandNode(Node):
     def _parse_command(self, text: str):
         normalized = self._normalize_text(text)
 
+        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
+
         stop_patterns = [
-            r'\b(stop|halt|freeze|cancel)\b',
-            r'\b(opreste|anuleaza|stop)\b',
+            prefix + r'(stop|halt|freeze|cancel)\b',
+            prefix + r'(opreste|anuleaza|stop)\b',
         ]
         for pattern in stop_patterns:
-            if re.search(pattern, normalized):
+            if re.match(pattern, normalized):
                 return {
                     'intent': 'stop',
                     'direction': 'none',
@@ -139,13 +141,13 @@ class VoiceCommandNode(Node):
                 }
 
         raise_hands_patterns = [
-            r'\bhands up\b',
-            r'\b(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b',
-            r'\bridica\b.*\b(mainile|mana|bratele|brat)\b',
-            r'\bmainile sus\b',
+            prefix + r'(hands|arms) up\b',
+            prefix + r'(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b',
+            prefix + r'ridica\b.*\b(mainile|mana|bratele|brat)\b',
+            prefix + r'mainile sus\b',
         ]
         for pattern in raise_hands_patterns:
-            if re.search(pattern, normalized):
+            if re.match(pattern, normalized):
                 return {
                     'intent': 'raise_hands',
                     'direction': 'none',
@@ -155,14 +157,13 @@ class VoiceCommandNode(Node):
                 }
 
         lower_hands_patterns = [
-            r'\b(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b',
-            r'\bhands down\b',
-            r'\barms down\b',
-            r'\bcoboara\b.*\b(mainile|mana|bratele|brat)\b',
-            r'\bmainile jos\b',
+            prefix + r'(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b',
+            prefix + r'(hands|arms) down\b',
+            prefix + r'coboara\b.*\b(mainile|mana|bratele|brat)\b',
+            prefix + r'mainile jos\b',
         ]
         for pattern in lower_hands_patterns:
-            if re.search(pattern, normalized):
+            if re.match(pattern, normalized):
                 return {
                     'intent': 'lower_hands',
                     'direction': 'none',
@@ -172,13 +173,11 @@ class VoiceCommandNode(Node):
                 }
 
         dance_patterns = [
-            r'\bdance\b',
-            r'\bdo a dance\b',
-            r'\bdanseaza\b',
-            r'\bfa un dans\b',
+            prefix + r'(dance|danseaza)\b',
+            prefix + r'(do a|fa un) dans\b',
         ]
         for pattern in dance_patterns:
-            if re.search(pattern, normalized):
+            if re.match(pattern, normalized):
                 return {
                     'intent': 'dance',
                     'direction': 'none',
@@ -188,13 +187,12 @@ class VoiceCommandNode(Node):
                 }
 
         wave_patterns = [
-            r'\bwave\b',
-            r'\bwave your hand\b',
-            r'\bfa cu mana\b',
-            r'\bsaluta\b',
+            prefix + r'(wave|saluta)\b',
+            prefix + r'wave your hand\b',
+            prefix + r'fa cu mana\b',
         ]
         for pattern in wave_patterns:
-            if re.search(pattern, normalized):
+            if re.match(pattern, normalized):
                 return {
                     'intent': 'wave',
                     'direction': 'none',
@@ -214,8 +212,9 @@ class VoiceCommandNode(Node):
         return None
 
     def _parse_turn(self, normalized: str):
-        has_turn_verb = re.search(
-            r'\b(turn|rotate|spin|intoarce|roteste)\b',
+        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
+        has_turn_verb = re.match(
+            prefix + r'(turn|rotate|spin|intoarce|roteste)\b',
             normalized
         ) is not None
         direction = self._extract_turn_direction(normalized)
@@ -238,8 +237,9 @@ class VoiceCommandNode(Node):
     def _parse_move(self, normalized: str):
         direction = self._extract_direction(normalized)
         steps = self._extract_steps(normalized)
-        has_move_verb = re.search(
-            r'\b(move|go|walk|step|mergi|du te|inainteaza|retrage te|fa)\b',
+        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
+        has_move_verb = re.match(
+            prefix + r'(move|go|walk|step|take|mergi|du te|inainteaza|retrage te|fa)\b',
             normalized
         ) is not None
 
