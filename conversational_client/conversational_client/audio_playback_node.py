@@ -345,7 +345,7 @@ class AudioPlaybackNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     def destroy_node(self):
         """Cleanup when stopping the node."""
-        self.get_logger().info('🛑 Shutting down audio playback...')
+        print('🛑 Shutting down audio playback...')
         
         # 1. Oprește loop-ul de playback
         self.running = False
@@ -361,14 +361,14 @@ class AudioPlaybackNode(Node):
                     self.stream.stop_stream()
                 self.stream.close()
             except Exception as e:
-                self.get_logger().warn(f'Error closing stream: {e}')
+                print(f'Error closing stream: {e}')
         
         # 4. Termină PyAudio
         if hasattr(self, 'audio'):
             try:
                 self.audio.terminate()
             except Exception as e:
-                self.get_logger().warn(f'Error terminating PyAudio: {e}')
+                print(f'Error terminating PyAudio: {e}')
                 
         super().destroy_node()
 

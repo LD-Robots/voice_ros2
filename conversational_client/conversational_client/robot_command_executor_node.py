@@ -431,10 +431,20 @@ class RobotCommandExecutorNode(Node):
     def _cancel_active_execution(self, reason: str):
         self._cancel_event.set()
         self._stop_motion()
-        self.get_logger().info(f'Active execution canceled: {reason}')
+        try:
+            if rclpy.ok():
+                self.get_logger().info(f'Active execution canceled: {reason}')
+            else:
+                print(f'Active execution canceled: {reason}')
+        except Exception:
+            pass
 
     def _stop_motion(self):
-        self.cmd_vel_pub.publish(Twist())
+        try:
+            if rclpy.ok():
+                self.cmd_vel_pub.publish(Twist())
+        except Exception:
+            pass
 
     def _clear_queue(self):
         while True:
