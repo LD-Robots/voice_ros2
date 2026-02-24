@@ -41,6 +41,7 @@ class AudioCaptureNode(Node):
         
         self.stream = None
         self.frame_count = 0
+        self.running = True
         
         if SD_AVAILABLE:
             self.start_capture()
@@ -94,6 +95,9 @@ class AudioCaptureNode(Node):
         Callback called by sounddevice audio thread.
         indata is numpy array of shape (frames, channels) float32
         """
+        if not self.running or not rclpy.ok():
+            return
+            
         if status:
             self.get_logger().warn(f"Audio Status: {status}")
             
@@ -125,16 +129,21 @@ class AudioCaptureNode(Node):
                 self.get_logger().info(f"📊 Audio Level (RMS): {rms:.2f} (Frames: {self.frame_count})")
                 
         except Exception as e:
-            self.get_logger().error(f"Callback error: {e}")
+            if self.running and rclpy.ok():
+                try:
+                    self.get_logger().error(f"Callback error: {e}")
+                except Exception:
+                    pass
 
     def destroy_node(self):
-        self.get_logger().info("🛑 Shutting down audio capture...")
+        self.running = False
+        print("🛑 Shutting down audio capture...")
         try:
             if self.stream:
                 self.stream.stop()
                 self.stream.close()
         except Exception as e:
-            self.get_logger().warn(f"Error closing audio stream: {e}")
+            print(f"Error closing audio stream: {e}")
             
         super().destroy_node()
 
