@@ -290,25 +290,29 @@ You will receive the user's name in the format `[Speaker: Name]`.
         normalized = re.sub(r'[^a-z0-9\s]', ' ', normalized)
         normalized = ' '.join(normalized.split())
 
+        # Optional prefix for politeness / bot addressing at start of string
+        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
+
         patterns = [
             # Stop
-            r'\b(stop|halt|freeze|cancel)\b',
-            r'\b(opreste|anuleaza|stop)\b',
+            prefix + r'(stop|halt|freeze|cancel)\b',
+            prefix + r'(opreste|anuleaza|stop)\b',
             # Move
-            r'\b(move|go|walk|step|take|mergi|du te|inainteaza|retrage te|fa)\b.*\b(forward|ahead|front|inainte|in fata|backward|backwards|back|inapoi|spate|steps?|pasi?|pasii)\b',
-            r'\b(forward|ahead|front|inainte|in fata|backward|backwards|back|inapoi|spate)\b', # direction only often works for step commands
-            r'\b\d+\s*(steps?|pasi?|pasii)\b',
+            prefix + r'(move|go|walk|step|take|mergi|du te|inainteaza|retrage te|fa)\b.*\b(forward|ahead|front|inainte|in fata|backward|backwards|back|inapoi|spate|steps?|pasi?|pasii)\b',
+            prefix + r'(forward|ahead|front|inainte|in fata|backward|backwards|back|inapoi|spate)\b', # direction only
+            prefix + r'\d+\s*(steps?|pasi?|pasii)\b',
             # Turn
-            r'\b(turn|rotate|spin|intoarce|roteste)\b.*\b(left|stanga|right|dreapta)\b',
+            prefix + r'(turn|rotate|spin|intoarce|roteste)\b.*\b(left|stanga|right|dreapta)\b',
             # Behaviors
-            r'\bhands up\b', r'\b(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b', r'\bridica\b.*\b(mainile|mana|bratele|brat)\b', r'\bmainile sus\b',
-            r'\b(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b', r'\bhands down\b', r'\barms down\b', r'\bcoboara\b.*\b(mainile|mana|bratele|brat)\b', r'\bmainile jos\b',
-            r'\bdance\b', r'\bdo a dance\b', r'\bdanseaza\b', r'\bfa un dans\b',
-            r'\bwave\b', r'\bwave your hand\b', r'\bfa cu mana\b', r'\bsaluta\b'
+            prefix + r'(hands|arms) up\b', prefix + r'(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b', prefix + r'ridica\b.*\b(mainile|mana|bratele|brat)\b', prefix + r'mainile sus\b',
+            prefix + r'(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b', prefix + r'(hands|arms) down\b', prefix + r'coboara\b.*\b(mainile|mana|bratele|brat)\b', prefix + r'mainile jos\b',
+            prefix + r'(dance|danseaza)\b', prefix + r'(do a|fa un) dans\b',
+            prefix + r'(wave|saluta)\b', prefix + r'wave your hand\b', prefix + r'fa cu mana\b'
         ]
         
         for pattern in patterns:
-            if re.search(pattern, normalized):
+            # use re.match to force anchoring at the beginning of the string (redundant to ^ but good practice)
+            if re.match(pattern, normalized):
                 return True
         return False
 
