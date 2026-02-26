@@ -29,10 +29,10 @@ def generate_launch_description():
     # Build the string for custom_models
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
-    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # test the original model
+    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # testăm modelul original
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
-    # Define model roles: hello=wake, stop_robot_oww=barge_in (only stop TTS), goodbye=stop session
+    # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
     custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
     # Individual thresholds per model (stop_robot_oww lower for better detection)
@@ -46,7 +46,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         
-        # Audio Capture (microphone)
+        # Audio Capture (microfon)
         Node(
             package='conversational_client',
             executable='audio_capture_node',
@@ -57,7 +57,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Wake Word ("hello robot") + Stop Keyword ("stop")
+        # Wake Word (detectare "hello robot") + Stop Keyword ("stop")
         Node(
             package='conversational_client',
             executable='wake_word_node',
@@ -98,7 +98,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Barge-in (voice interruption + PyTorch stop keyword)
+        # Barge-in (detectare voce + PyTorch stop keyword)
         Node(
             package='conversational_client',
             executable='barge_in_node',
@@ -113,12 +113,12 @@ def generate_launch_description():
                 'stop_prob_threshold': 0.95,  # Increased to prevent false positives
                 'stop_logit_margin': 0.5,
                 'stop_hits_required': 2,      # Remote suggests 2, safer
-                'stop_frame_samples': 16000,  # 1s frame (model requirement)
-                'stop_hop_samples': 4000,     # 0.25s hop (check every 250ms)
+                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
             }]
         ),
         
-        # Audio Playback (speaker)
+        # Audio Playback (difuzor)
         Node(
             package='conversational_client',
             executable='audio_playback_node',
@@ -126,7 +126,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # Speaker Identification (who is speaking)
+        # Speaker Identification (cine vorbește)
         Node(
             package='conversational_client',
             executable='speaker_id_node',
