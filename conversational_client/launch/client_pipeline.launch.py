@@ -145,4 +145,41 @@ def generate_launch_description():
             name='session_manager_node',
             output='screen',
         ),
+
+        # Voice Command Intent (raise hands / move / dance)
+        Node(
+            package='conversational_client',
+            executable='voice_command_node',
+            name='voice_command_node',
+            output='screen',
+            parameters=[{
+                'min_transcription_confidence': 0.45,
+                'default_steps': 1,
+                'max_steps': 20,
+                'enable_tts_ack': False,
+            }]
+        ),
+
+        # Robot Command Executor (bridges voice intents to controllers)
+        Node(
+            package='conversational_client',
+            executable='robot_command_executor_node',
+            name='robot_command_executor_node',
+            output='screen',
+            parameters=[{
+                'execution_enabled': True,
+                'move_mode': 'twist',
+                'cmd_vel_topic': '/cmd_vel',
+                'behavior_mode': 'topic',
+                'behavior_topic': '/robot_behavior_command',
+                'raise_hands_service': '/raise_hands',
+                'dance_service': '/dance',
+                'preempt_on_new_command': True,
+                'enable_voice_cancel': True,
+                'enable_risky_confirmation': True,
+                'confirmation_timeout_s': 12.0,
+                'risky_steps_threshold': 5,
+                'risky_backward_steps_threshold': 3,
+            }]
+        ),
     ])

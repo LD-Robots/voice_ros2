@@ -173,6 +173,15 @@ You will receive the user's name in the format `[Speaker: Name]`.
             10
         )
         
+        # Track robot command confirmations
+        self.waiting_for_robot_confirmation = False
+        self.robot_status_sub = self.create_subscription(
+            String,
+            '/robot_command_status',
+            self._robot_status_callback,
+            10
+        )
+        
         # Subscriber for transcription
         self.transcription_sub = self.create_subscription(
             Transcription,
@@ -268,6 +277,56 @@ You will receive the user's name in the format `[Speaker: Name]`.
         
         return False
     
+    def _is_robot_command(self, text: str) -> bool:
+        """Check if the text is likely a robot command, to avoid LLM chatter."""
+        import unicodedata
+        import re
+        
+        # Normalize text similar to voice_command_node
+        normalized = text.lower().strip()
+        normalized = unicodedata.normalize('NFD', normalized)
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        normalized = normalized.replace('-', ' ')
+        normalized = re.sub(r'[^a-z0-9\s]', ' ', normalized)
+        normalized = ' '.join(normalized.split())
+
+        # Optional prefix for politeness / bot addressing at start of string
+        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
+
+        patterns = [
+            # Stop
+            prefix + r'(stop|halt|freeze|cancel)\b',
+            prefix + r'(opreste|anuleaza|stop)\b',
+            # Move
+            prefix + r'(move|go|walk|step|take|mergi|du te|inainteaza|retrage te|fa)\b.*\b(forward|ahead|front|inainte|in fata|backward|backwards|back|inapoi|spate|steps?|pasi?|pasii)\b',
+            prefix + r'(forward|ahead|front|inainte|in fata|backward|backwards|back|inapoi|spate)\b', # direction only
+            prefix + r'\d+\s*(steps?|pasi?|pasii)\b',
+            # Turn
+            prefix + r'(turn|rotate|spin|intoarce|roteste)\b.*\b(left|stanga|right|dreapta)\b',
+            # Behaviors
+            prefix + r'(hands|arms) up\b', prefix + r'(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b', prefix + r'ridica\b.*\b(mainile|mana|bratele|brat)\b', prefix + r'mainile sus\b',
+            prefix + r'(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b', prefix + r'(hands|arms) down\b', prefix + r'coboara\b.*\b(mainile|mana|bratele|brat)\b', prefix + r'mainile jos\b',
+            prefix + r'(dance|danseaza)\b', prefix + r'(do a|fa un) dans\b',
+            prefix + r'(wave|saluta)\b', prefix + r'wave your hand\b', prefix + r'fa cu mana\b'
+        ]
+        
+        for pattern in patterns:
+            # use re.match to force anchoring at the beginning of the string (redundant to ^ but good practice)
+            if re.match(pattern, normalized):
+                return True
+        return False
+
+    def _robot_status_callback(self, msg: String):
+        """Monitor the robot command executor status to mute the LLM during confirmations."""
+        status = msg.data
+        if status == 'confirmation_required':
+            self.waiting_for_robot_confirmation = True
+            self.get_logger().info('🤐 Robot needs confirmation - suspending LLM for the next transcription')
+        elif status in ['confirmation_accepted', 'confirmation_rejected', 'confirmation_timeout', 'canceled', 'completed', 'executing']:
+            if self.waiting_for_robot_confirmation:
+                self.waiting_for_robot_confirmation = False
+                self.get_logger().info(f'🔊 Robot status {status} - LLM resumed')
+
     def transcription_callback(self, msg: Transcription):
         """Process transcription and publish the LLM response in streaming."""
         user_text = msg.text.strip()
@@ -275,6 +334,17 @@ You will receive the user's name in the format `[Speaker: Name]`.
         
         if not user_text:
             self.get_logger().warn('Empty transcription received, skipping')
+            return
+            
+        if self._is_robot_command(user_text):
+            self.get_logger().info(f'🔇 Ignored robot command: {user_text}')
+            return
+
+        # If we are waiting for a safety confirmation (e.g. they said "yes" or "no")
+        # we want the LLM to ignore it completely so it doesn't chat.
+        if self.waiting_for_robot_confirmation:
+            self.get_logger().info(f'🔇 Ignored text during robot confirmation: {user_text}')
+            # We don't reset the flag here, we let the status topic do it
             return
         
         self.get_logger().info(f'💬 User [{user_lang}]: {user_text}')
