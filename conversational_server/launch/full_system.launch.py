@@ -37,7 +37,7 @@ def generate_launch_description():
     goodbye_model_path = os.path.join(models_dir, 'goodbye_robot.onnx')
 
     return LaunchDescription([
-        # ========== ARGUMENTS ==========
+        # ========== ARGUMENTE ==========
         DeclareLaunchArgument(
             'asr_model_size',
             default_value='medium',  # Upgraded from 'small' for better accuracy
@@ -101,7 +101,7 @@ def generate_launch_description():
         
         # ========== CLIENT NODES ==========
         
-        # Audio Capture (microphone)
+        # Audio Capture (microfon)
         Node(
             package='conversational_client',
             executable='audio_capture_node',
@@ -124,7 +124,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Audio Playback (speaker)
+        # Audio Playback (difuzor)
         Node(
             package='conversational_client',
             executable='audio_playback_node',
@@ -139,19 +139,19 @@ def generate_launch_description():
             name='barge_in_node',
             output='screen',
             parameters=[{
-                # PyTorch Stop Keyword Detector (runs only while TTS is speaking)
+                # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
                 'stop_model_path': stop_model_path,
-                'stop_enabled': True,  # Enabled
+                'stop_enabled': True,  # ACTIVAT - la cererea userului
                 'stop_prob_threshold': 0.95,
                 'stop_logit_margin': 0.3,
-                'stop_hits_required': 2,      # 2 consecutive detections
-                'stop_frame_samples': 16000,  # 1s frame (model requirement)
-                'stop_hop_samples': 4000,     # 0.25s hop (check every 250ms)
+                'stop_hits_required': 2,      # 2 detectări consecutive
+                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
             }]
         ),
         
         # Wake Word + Stop Keyword (OpenWakeWord unified)
-        # Detects: "hello robot" (wake), "stop robot" (barge_in), "goodbye robot" (stop)
+        # Detectează: "hello robot" (wake), "stop robot" (barge_in), "goodbye robot" (stop)
         Node(
             package='conversational_client',
             executable='wake_word_node',
@@ -160,13 +160,13 @@ def generate_launch_description():
             parameters=[{
                 'threshold': 0.5,  # Default threshold
                 'cooldown_ms': 1500,
-                # Format: "path:kind" - 'wake' for activation, 'barge_in' for stopping TTS, 'stop' for ending session
+                # Format: "path:kind" - \'wake\' for activation, \'barge_in\' for stopping TTS, \'stop\' for ending session
                 'custom_models': ','.join([
                     f'{hello_model_path}:wake',
                     f'{stop_model_path_oww}:barge_in',
                     f'{goodbye_model_path}:stop',
                 ]),
-                # Per-model thresholds
+                # Threshold-uri individuale per model
                 'model_thresholds': 'hello_robot:0.30,stop_robot:0.25,goodbye_robot:0.40',
             }]
         ),
