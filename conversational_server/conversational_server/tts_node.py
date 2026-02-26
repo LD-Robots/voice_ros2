@@ -25,6 +25,8 @@ import threading
 import queue
 import time
 import scipy.signal  # For resampling
+import re
+from num2words import num2words
 
 # Edge TTS for voice synthesis (online)
 try:
@@ -277,6 +279,54 @@ class TTSNode(Node):
         # Orice altă limbă -> engleză
         return self.voice_en
     
+    def _preprocess_numbers(self, text: str, lang: str) -> str:
+        """Convert numbers to words and pronounce math symbols."""
+        base_lang = lang.lower()[:2] if lang else 'en'
+        if base_lang not in ['en', 'ro']:
+            base_lang = 'en'
+
+        # 1. Traducem semnele matematice uzuale (cu spații în jur)
+        math_symbols = {
+            'en': {' + ': ' plus ', ' - ': ' minus ', ' = ': ' equals ', ' * ': ' times ', ' / ': ' divided by '},
+            'ro': {' + ': ' plus ', ' - ': ' minus ', ' = ': ' egal ', ' * ': ' înmulțit cu ', ' / ': ' împărțit la '}
+        }
+        
+        for symbol, word in math_symbols[base_lang].items():
+            text = text.replace(symbol, word)
+            
+        # Tratăm și cazul în care minusul e lipit direct de număr (ex: -50 -> minus 50)
+        text = re.sub(r'(?<!\w)-(?=\d)', 'minus ', text)
+
+        # 2. Transformăm numerele în cuvinte
+        def replace_match(match):
+            s = match.group(0)
+            try:
+                if ',' in s and '.' not in s:
+                    if len(s.split(',')[-1]) != 3:
+                        s = s.replace(',', '.')
+                    else:
+                        s = s.replace(',', '')
+                elif '.' in s and ',' not in s and len(s.split('.')[-1]) == 3 and base_lang == 'ro':
+                    s = s.replace('.', '')
+                else:
+                    s = s.replace(',', '')
+
+                if '.' in s:
+                    return num2words(float(s), lang=base_lang)
+                else:
+                    return num2words(int(s), lang=base_lang)
+            except Exception as e:
+                self.get_logger().warn(f"Failed to convert number {match.group(0)}: {e}")
+                return match.group(0)
+
+        return re.sub(r'\b\d+(?:[.,]\d+)*\b', replace_match, text)
+
+        # Regex care prinde numere complexe: 3.14, 3,14, 100,000, 1.000.000 etc.
+        return re.sub(r'\b\d+(?:[.,]\d+)*\b', replace_match, text) 
+
+        # Regex nou care prinde și numere cu virgulă/punct (ex: 100,000.50, 3.14, 4520)
+        return re.sub(r'\b(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\b', replace_match, text)
+    
     def stream_callback(self, msg: TextChunk):
         """Procesează chunk-uri de text streaming."""
         # Sesiune nouă - resetează
@@ -329,6 +379,14 @@ class TTSNode(Node):
                 
                 if text:
                     voice = self._pick_voice(lang)
+                    
+                    # ---> NOU: Transformăm numerele în cuvinte aici <---
+                    original_text = text
+                    text = self._preprocess_numbers(text, lang)
+                    if text != original_text:
+                        self.get_logger().info(f'🔢 Numbers replaced: "{original_text}" -> "{text}"')
+                    # ----------------------------------------------------
+                    
                     self.get_logger().debug(f'🔧 Pre-synthesizing: "{text[:30]}..."')
                     
                     try:
