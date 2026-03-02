@@ -114,7 +114,6 @@ class OpenAIRealtimeNode(Node):
         self.waiting_for_robot_confirmation = False
         self.current_speaker = 'Unknown'
         self.current_backend = 'openai_realtime'
-        self.conversation_language = ''
         self.person_context = {
             'speaker': 'Unknown',
             'preferred_name': '',
@@ -198,12 +197,6 @@ class OpenAIRealtimeNode(Node):
             String,
             '/robot_command_status',
             self.robot_status_callback,
-            10,
-        )
-        self.attended_transcription_sub = self.create_subscription(
-            Transcription,
-            '/attended_transcription',
-            self.attended_transcription_callback,
             10,
         )
         self.backend_sub = self.create_subscription(
@@ -317,15 +310,6 @@ class OpenAIRealtimeNode(Node):
             'facts': list(payload.get('facts', []) or []),
         }
         self._refresh_session()
-
-    def attended_transcription_callback(self, msg: Transcription):
-        text = (msg.text or '').strip()
-        if not text:
-            return
-        language = self._infer_language_from_text(text)
-        if language and language != self.conversation_language:
-            self.conversation_language = language
-            self._refresh_session()
 
     def robot_command_callback(self, msg: RobotCommand):
         # Keep robot motion logic local; suppress assistant chatter for commands.
@@ -630,17 +614,11 @@ class OpenAIRealtimeNode(Node):
         extras = []
         if self.current_speaker != 'Unknown':
             extras.append(f'Current identified speaker: {self.current_speaker}.')
-        if self.conversation_language:
-            extras.append(
-                f'Current conversation language is {self.conversation_language}. '
-                f'Keep responding in {self.conversation_language} until a new robot-directed user utterance clearly switches languages. '
-                'Ignore side conversations heard while paused when choosing response language.'
-            )
         preferred_name = self.person_context.get('preferred_name', '')
         if preferred_name:
             extras.append(f'Preferred name for this speaker: {preferred_name}.')
         preferred_language = self.person_context.get('preferred_language', '')
-        if preferred_language and not self.conversation_language:
+        if preferred_language:
             extras.append(f'Preferred language for this speaker: {preferred_language}.')
         facts = self.person_context.get('facts', []) or []
         if facts:
@@ -931,36 +909,6 @@ class OpenAIRealtimeNode(Node):
         normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
         normalized = re.sub(r'[^a-z0-9\\s]+', ' ', normalized)
         return ' '.join(normalized.split())
-
-    @classmethod
-    def _infer_language_from_text(cls, text: str) -> str:
-        normalized = cls._normalize_text(text)
-        if not normalized:
-            return ''
-
-        romanian_markers = {
-            'si', 'sunt', 'asta', 'aceasta', 'vreau', 'vorbesc', 'cineva', 'robotul',
-            'salut', 'poate', 'poti', 'te', 'rog', 'despre', 'cum', 'mai', 'bine',
-            'acum', 'da', 'nu', 'ceva', 'proiectul', 'meu', 'mea', 'romanian',
-        }
-        english_markers = {
-            'the', 'and', 'with', 'about', 'please', 'hello', 'wait', 'project',
-            'just', 'back', 'know', 'something', 'tell', 'name', 'working', 'robot',
-            'how', 'what', 'why', 'now', 'english',
-        }
-
-        words = normalized.split()
-        if not words:
-            return ''
-
-        ro_score = sum(1 for word in words if word in romanian_markers)
-        en_score = sum(1 for word in words if word in english_markers)
-
-        if ro_score > en_score:
-            return 'Romanian'
-        if en_score > ro_score:
-            return 'English'
-        return ''
 
 
 def main(args=None):
