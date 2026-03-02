@@ -189,26 +189,6 @@ class AudioPlaybackNode(Node):
         Args:
             msg: Received Audio message (contains sample_rate, channels, data)
         """
-        # Check if sample_rate changed - need to recreate the stream
-        if msg.sample_rate != self.sample_rate and PYAUDIO_AVAILABLE:
-            self.sample_rate = msg.sample_rate
-            self.get_logger().info(f'🔄 Sample rate changed to {self.sample_rate}Hz, recreating stream...')
-            try:
-                if self.stream is not None:
-                    self.stream.stop_stream()
-                    self.stream.close()
-                # Suppress ALSA logs
-                with RedirectStderr():
-                    self.stream = self.audio.open(
-                        format=pyaudio.paInt16,
-                        channels=self.channels,
-                        rate=self.sample_rate,
-                        output=True,
-                        frames_per_buffer=1024
-                    )
-            except Exception as e:
-                self.get_logger().error(f'❌ Failed to recreate stream: {e}')
-        
         # BARGE-IN: Ignore new audio if in cooldown (after stop)
         import time
         if time.time() < self._ignore_until:
@@ -217,6 +197,8 @@ class AudioPlaybackNode(Node):
         
         # Convert int16 list to numpy array
         audio_data = np.array(msg.data, dtype=np.int16)
+        if msg.sample_rate != self.sample_rate:
+            audio_data = self._resample_pcm16(audio_data, int(msg.sample_rate), int(self.sample_rate))
         stream_id = getattr(msg, 'stream_id', '') or ''
         item_id = getattr(msg, 'item_id', '') or ''
         
@@ -234,6 +216,18 @@ class AudioPlaybackNode(Node):
         # Log (only occasionally to avoid flooding)
         if len(self.audio_buffer) == 1:
             self.get_logger().info(f'🎵 Received audio ({self.sample_rate}Hz), starting playback...')
+
+    @staticmethod
+    def _resample_pcm16(audio: np.ndarray, original_rate: int, target_rate: int) -> np.ndarray:
+        if audio.size == 0 or original_rate == target_rate:
+            return audio.astype(np.int16, copy=False)
+
+        duration = audio.size / float(original_rate)
+        target_samples = max(1, int(round(duration * target_rate)))
+        source_positions = np.linspace(0.0, 1.0, num=audio.size, endpoint=False)
+        target_positions = np.linspace(0.0, 1.0, num=target_samples, endpoint=False)
+        resampled = np.interp(target_positions, source_positions, audio.astype(np.float32))
+        return np.clip(np.round(resampled), -32768, 32767).astype(np.int16)
     
     # ═══════════════════════════════════════════════════════════════════
     # PLAYBACK LOOP - runs continuously in a separate thread

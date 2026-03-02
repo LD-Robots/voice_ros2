@@ -19,6 +19,8 @@ from rclpy.node import Node
 from conversational_interfaces.msg import RobotCommand, Transcription
 from std_msgs.msg import String
 
+from .conversation_utils import has_direct_robot_address
+
 
 NUMBER_WORDS = {
     # English
@@ -47,6 +49,7 @@ class VoiceCommandNode(Node):
         self.declare_parameter('tts_ack_en', 'ack_en')
         self.declare_parameter('tts_ack_ro', 'ack_ro')
         self.declare_parameter('transcription_topic', '/attended_transcription')
+        self.declare_parameter('require_direct_robot_address', True)
 
         self.min_transcription_confidence = float(
             self.get_parameter('min_transcription_confidence').value
@@ -57,6 +60,9 @@ class VoiceCommandNode(Node):
         self.tts_ack_en = str(self.get_parameter('tts_ack_en').value)
         self.tts_ack_ro = str(self.get_parameter('tts_ack_ro').value)
         transcription_topic = str(self.get_parameter('transcription_topic').value)
+        self.require_direct_robot_address = bool(
+            self.get_parameter('require_direct_robot_address').value
+        )
 
         self.current_speaker = 'Unknown'
 
@@ -97,6 +103,14 @@ class VoiceCommandNode(Node):
 
         if msg.confidence < self.min_transcription_confidence:
             return
+
+        if self.require_direct_robot_address:
+            normalized = self._normalize_text(text)
+            if not has_direct_robot_address(normalized):
+                self.get_logger().debug(
+                    f'Ignoring command-like text without direct robot address: "{text}"'
+                )
+                return
 
         parsed = self._parse_command(text)
         if not parsed:

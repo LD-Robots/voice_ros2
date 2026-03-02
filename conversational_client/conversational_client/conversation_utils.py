@@ -2,7 +2,7 @@ import re
 import unicodedata
 
 
-DIRECT_ROBOT_PHRASES = (
+DIRECT_ROBOT_PREFIXES = (
     'robot',
     'hey robot',
     'hello robot',
@@ -10,6 +10,24 @@ DIRECT_ROBOT_PHRASES = (
     'for you robot',
     'tu robot',
     'hei robot',
+)
+
+REENGAGEMENT_PHRASES = (
+    'i am back',
+    'i m back',
+    'im back',
+    'back now',
+    'i am here',
+    'i m here',
+    'im here',
+    'ok robot',
+    'okay robot',
+    'am revenit',
+    'sunt inapoi',
+    'gata am revenit',
+    'acum am revenit',
+    'ok am revenit',
+    'bun am revenit',
 )
 
 
@@ -22,16 +40,48 @@ def normalize_text(text: str) -> str:
     return ' '.join(text.split())
 
 
+def _phrase_pattern(phrase: str) -> str:
+    tokens = [re.escape(token) for token in phrase.split() if token]
+    if not tokens:
+        return ''
+    return r'\b' + r'\s+'.join(tokens) + r'\b'
+
+
 def contains_phrase(normalized_text: str, phrases) -> bool:
-    return any(phrase in normalized_text for phrase in phrases)
+    for phrase in phrases:
+        pattern = _phrase_pattern(phrase)
+        if pattern and re.search(pattern, normalized_text):
+            return True
+    return False
+
+
+def contains_standalone_word(normalized_text: str, word: str) -> bool:
+    return bool(re.search(rf'\b{re.escape(word)}\b', normalized_text))
 
 
 def has_direct_robot_address(normalized_text: str) -> bool:
     if not normalized_text:
         return False
-    if contains_phrase(normalized_text, DIRECT_ROBOT_PHRASES):
+    if normalized_text in DIRECT_ROBOT_PREFIXES:
         return True
-    return normalized_text.startswith(('hey ', 'hei ', 'robot '))
+    if normalized_text.startswith(tuple(f'{phrase} ' for phrase in DIRECT_ROBOT_PREFIXES)):
+        return True
+    if contains_standalone_word(normalized_text, 'robot'):
+        return True
+    return False
+
+
+def is_reengagement_phrase(normalized_text: str) -> bool:
+    if not normalized_text:
+        return False
+    if contains_phrase(normalized_text, REENGAGEMENT_PHRASES):
+        return True
+    if contains_standalone_word(normalized_text, 'robot') and contains_phrase(
+        normalized_text,
+        ('i am back', 'i m back', 'im back', 'am revenit', 'sunt inapoi', 'acum am revenit'),
+    ):
+        return True
+    return False
 
 
 def detect_control_action(normalized_text: str) -> str | None:
@@ -51,6 +101,24 @@ def detect_control_action(normalized_text: str) -> str | None:
         'asteapta o secunda',
         'un moment',
         'mai tarziu',
+        'wait',
+        'just wait',
+        'just wait a bit',
+        'pause a little',
+        'pause for a second',
+        'speak later',
+        'talk later',
+        'vorbesc cu cineva',
+        'vorbesc cu cineva acum',
+        'vorbesc acum cu cineva',
+        'stai putin ca vorbesc',
+        'stai putin ca vorbesc cu cineva',
+        'asteapta ca vorbesc cu cineva',
+        'am de vorbit cu cineva',
+        'i am talking with someone',
+        'i m talking with someone',
+        'i need to talk with someone',
+        'let me talk with someone',
     )):
         return 'hold_on'
 

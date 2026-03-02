@@ -64,6 +64,8 @@ class BackendManagerNode(Node):
                 self._publish_backend(self.fallback_backend, f'realtime_{self.realtime_status}')
 
     def _timer_callback(self):
+        self._publish_backend_topic()
+
         if self.preferred_backend != 'openai_realtime':
             if self.active_backend != self.preferred_backend:
                 self._publish_backend(self.preferred_backend, 'preferred_backend')
@@ -85,11 +87,14 @@ class BackendManagerNode(Node):
 
     def _publish_backend(self, backend: str, reason: str):
         self.active_backend = backend
-        msg = String()
-        msg.data = backend
-        self.backend_pub.publish(msg)
+        self._publish_backend_topic()
         self._publish_status(reason)
         self.get_logger().warn(f'Active backend -> {backend} ({reason})')
+
+    def _publish_backend_topic(self):
+        msg = String()
+        msg.data = self.active_backend
+        self.backend_pub.publish(msg)
 
     def _publish_status(self, reason: str = ''):
         msg = String()

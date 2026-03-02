@@ -24,10 +24,12 @@ import os
 from pathlib import Path
 
 try:
-    from conversational_client.speaker_manager import SpeakerManager
+    from .speaker_manager import SpeakerManager
     SPEAKER_MANAGER_AVAILABLE = True
-except ImportError:
+    _SPEAKER_MANAGER_IMPORT_ERROR = ''
+except Exception as exc:
     SPEAKER_MANAGER_AVAILABLE = False
+    _SPEAKER_MANAGER_IMPORT_ERROR = str(exc)
 
 
 def _find_workspace_root() -> Path | None:
@@ -117,7 +119,7 @@ class SpeakerIdNode(Node):
         if not SPEAKER_MANAGER_AVAILABLE:
             self.get_logger().warn(
                 '⚠️ speaker_manager nu a fost importat. '
-                'Nodul funcționează în modul "Unknown".'
+                f'Nodul funcționează în modul "Unknown". Cauză: {_SPEAKER_MANAGER_IMPORT_ERROR}'
             )
             return
 

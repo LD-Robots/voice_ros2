@@ -13,7 +13,13 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Transcription
 from std_msgs.msg import Bool, String
 
-from .conversation_utils import has_direct_robot_address, is_robot_directive, normalize_text
+from .conversation_utils import (
+    detect_control_action,
+    has_direct_robot_address,
+    is_reengagement_phrase,
+    is_robot_directive,
+    normalize_text,
+)
 
 
 class AttentionManagerNode(Node):
@@ -27,11 +33,13 @@ class AttentionManagerNode(Node):
         self.unknown_speaker_grace_s = float(self.get_parameter('unknown_speaker_grace_s').value)
 
         self.session_active = False
+        self.conversation_paused = False
         self.current_speaker = 'Unknown'
         self.focused_speaker = 'Unknown'
         self.last_focus_time = 0.0
 
         self.session_sub = self.create_subscription(Bool, '/session_active', self._session_callback, 10)
+        self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self._pause_callback, 10)
         self.speaker_sub = self.create_subscription(String, '/speaker_id', self._speaker_callback, 10)
         self.transcription_sub = self.create_subscription(
             Transcription,
@@ -52,6 +60,9 @@ class AttentionManagerNode(Node):
             self.last_focus_time = 0.0
             self._publish_status(False, False, 'session_inactive')
 
+    def _pause_callback(self, msg: Bool):
+        self.conversation_paused = bool(msg.data)
+
     def _speaker_callback(self, msg: String):
         speaker = msg.data.strip() or 'Unknown'
         self.current_speaker = speaker
@@ -66,8 +77,15 @@ class AttentionManagerNode(Node):
             return
 
         direct_address = has_direct_robot_address(normalized)
+        reengagement = is_reengagement_phrase(normalized)
         robot_directive = is_robot_directive(normalized)
-        allow, reason = self._should_allow(direct_address, robot_directive)
+        control_action = detect_control_action(normalized)
+        allow, reason = self._should_allow(
+            direct_address,
+            reengagement,
+            robot_directive,
+            control_action,
+        )
         self._publish_status(allow, direct_address, reason)
 
         if not allow:
@@ -88,9 +106,24 @@ class AttentionManagerNode(Node):
 
         self.attended_pub.publish(msg)
 
-    def _should_allow(self, direct_address: bool, robot_directive: bool):
+    def _should_allow(
+        self,
+        direct_address: bool,
+        reengagement: bool,
+        robot_directive: bool,
+        control_action: str | None,
+    ):
         if not self.session_active:
             return False, 'session_inactive'
+
+        if self.conversation_paused:
+            if control_action in ('continue', 'repeat', 'hold_on', 'stop'):
+                return True, f'paused_control_{control_action}'
+            if reengagement:
+                return True, 'paused_reengagement'
+            if direct_address:
+                return True, 'paused_direct_address'
+            return False, 'paused_side_conversation'
 
         now = time.monotonic()
         if self.focused_speaker != 'Unknown' and (now - self.last_focus_time) > self.focus_timeout_s:
@@ -122,6 +155,7 @@ class AttentionManagerNode(Node):
             'focused_speaker': self.focused_speaker,
             'current_speaker': self.current_speaker,
             'session_active': self.session_active,
+            'conversation_paused': self.conversation_paused,
         }
         msg = String()
         msg.data = json.dumps(payload, separators=(',', ':'))
