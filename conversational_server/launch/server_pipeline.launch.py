@@ -6,13 +6,23 @@ import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PythonExpression
 from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
+    legacy_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'legacy'"])
+    realtime_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"])
+
     return LaunchDescription([
         # Declare arguments
+        DeclareLaunchArgument(
+            'conversation_backend',
+            default_value='legacy',
+            description='Conversation backend (legacy/openai_realtime)'
+        ),
         DeclareLaunchArgument(
             'asr_model_size',
             default_value='small',
@@ -28,6 +38,16 @@ def generate_launch_description():
             default_value='llama-3.1-8b-instant',
             description='LLM model name'
         ),
+        DeclareLaunchArgument(
+            'realtime_model',
+            default_value='gpt-realtime-mini',
+            description='OpenAI Realtime model name'
+        ),
+        DeclareLaunchArgument(
+            'realtime_voice',
+            default_value='cedar',
+            description='OpenAI Realtime voice'
+        ),
         
         # ASR Node
         Node(
@@ -35,6 +55,7 @@ def generate_launch_description():
             executable='asr_node',
             name='asr_node',
             output='screen',
+            condition=IfCondition(legacy_backend),
             parameters=[{
                 'model_size': LaunchConfiguration('asr_model_size'),
                 'device': 'cpu',
@@ -49,6 +70,7 @@ def generate_launch_description():
             executable='llm_node',
             name='llm_node',
             output='screen',
+            condition=IfCondition(legacy_backend),
             parameters=[{
                 'provider': LaunchConfiguration('llm_provider'),
                 'model': LaunchConfiguration('llm_model'),
@@ -63,6 +85,7 @@ def generate_launch_description():
             executable='tts_node',
             name='tts_node',
             output='screen',
+            condition=IfCondition(legacy_backend),
             parameters=[{
                 'voice_en': 'en-GB-RyanNeural',
                 'voice_ro': 'ro-RO-EmilNeural',
@@ -72,6 +95,18 @@ def generate_launch_description():
                 'piper_model_ro': os.path.join(
                     get_package_share_directory('conversational_server'),
                     'models', 'piper', 'ro_RO-mihai-medium.onnx'),
+            }]
+        ),
+
+        Node(
+            package='conversational_server',
+            executable='openai_realtime_node',
+            name='openai_realtime_node',
+            output='screen',
+            condition=IfCondition(realtime_backend),
+            parameters=[{
+                'model': LaunchConfiguration('realtime_model'),
+                'voice': LaunchConfiguration('realtime_voice'),
             }]
         ),
     ])

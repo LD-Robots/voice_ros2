@@ -7,6 +7,7 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Audio.msg"
+  "msg/RobotCommand.msg"
   "msg/Transcription.msg"
   "msg/TextChunk.msg"
   "msg/WakeWord.msg"

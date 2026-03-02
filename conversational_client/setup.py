@@ -13,8 +13,9 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
-        # Modelele ONNX pentru wake word detection
+        # Wake-word and stop-keyword assets must be installed together.
         (os.path.join('share', package_name, 'models'), glob('models/*.onnx')),
+        (os.path.join('share', package_name, 'models'), glob('models/*.onnx.data')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -38,6 +39,8 @@ setup(
             'stop_keyword_node = conversational_client.stop_keyword_node:main',
             'speaker_id_node = conversational_client.speaker_id_node:main',
             'session_manager_node = conversational_client.session_manager_node:main',
+            'voice_command_node = conversational_client.voice_command_node:main',
+            'robot_command_executor_node = conversational_client.robot_command_executor_node:main',
         ],
     },
 )

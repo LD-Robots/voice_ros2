@@ -62,6 +62,7 @@ class LLMNode(Node):
         super().__init__('llm_node')
         
         # Parametri configurabili
+        self.declare_parameter('provider', 'groq')
         self.declare_parameter('model', 'llama-3.1-8b-instant')
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
@@ -99,11 +100,17 @@ You will receive the user's name in the format `[Speaker: Name]`.
         self.declare_parameter('websearch_model', 'compound-beta')  # Groq compound model
         self.declare_parameter('websearch_max_tokens', 300)
         
+        self.provider = str(self.get_parameter('provider').value).lower()
         self.model = self.get_parameter('model').value
         self.max_tokens = self.get_parameter('max_tokens').value
         self.temperature = self.get_parameter('temperature').value
         self.min_chunk_chars = self.get_parameter('min_chunk_chars').value
         self.system_prompt = self.get_parameter('system_prompt').value
+
+        if self.provider != 'groq':
+            raise RuntimeError(
+                f"Unsupported llm provider '{self.provider}'. Only 'groq' is implemented."
+            )
         
         # Web search
         self.websearch_enabled = self.get_parameter('websearch_enabled').value

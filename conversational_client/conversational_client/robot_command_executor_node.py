@@ -53,6 +53,7 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('confirmation_timeout_s', 6.0)
         self.declare_parameter('confirmation_accept_words', 'yes,confirm,ok,da,confirma')
         self.declare_parameter('confirmation_reject_words', 'no,reject,nu,anuleaza')
+        self.declare_parameter('require_same_speaker_for_confirmation', True)
         self.declare_parameter('risky_steps_threshold', 5)
         self.declare_parameter('risky_backward_steps_threshold', 3)
         self.declare_parameter('risky_turn_angle_deg', 150.0)
@@ -85,6 +86,9 @@ class RobotCommandExecutorNode(Node):
         self.enable_voice_cancel = bool(self.get_parameter('enable_voice_cancel').value)
         self.enable_risky_confirmation = bool(self.get_parameter('enable_risky_confirmation').value)
         self.confirmation_timeout_s = float(self.get_parameter('confirmation_timeout_s').value)
+        self.require_same_speaker_for_confirmation = bool(
+            self.get_parameter('require_same_speaker_for_confirmation').value
+        )
         self.risky_steps_threshold = int(self.get_parameter('risky_steps_threshold').value)
         self.risky_backward_steps_threshold = int(self.get_parameter('risky_backward_steps_threshold').value)
         self.risky_turn_angle_deg = float(self.get_parameter('risky_turn_angle_deg').value)
@@ -213,9 +217,14 @@ class RobotCommandExecutorNode(Node):
             self._publish_status('confirmation_timeout')
             return
 
-        # Am scos verificarea de speaker (pending_speaker vs current_speaker) 
-        # pentru că sistemul de recunoaștere dădea rateuri la schimbarea rapidă
-        # între 'Unknown' și numele persoanei. Orice 'yes' valid va fi acceptat.
+        if self.require_same_speaker_for_confirmation:
+            current_speaker = self.current_speaker if self.current_speaker else 'Unknown'
+            if pending_speaker != 'Unknown' and current_speaker != pending_speaker:
+                self.get_logger().warn(
+                    'Ignoring confirmation from a different speaker: '
+                    f'expected={pending_speaker}, got={current_speaker}'
+                )
+                return
 
         if self._contains_any(text, self.confirm_accept_words):
             self._clear_pending_confirmation('confirmed')

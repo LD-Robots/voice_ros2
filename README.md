@@ -1,6 +1,6 @@
 # Voice ROS2 - Conversational Robot System
 
-A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, LLM processing with Groq, and TTS capabilities.
+A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend.
 
 ## 🏗️ Architecture
 
@@ -10,6 +10,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - **ASR Node** - Automatic Speech Recognition (Faster-Whisper)
 - **LLM Node** - Language Model processing (Groq API with streaming)
 - **TTS Node** - Text-to-Speech (Piper TTS)
+- **OpenAI Realtime Node** - Speech-to-speech via `gpt-realtime-mini`
 
 ### Client Nodes (Robot Hardware)
 - **Audio Capture Node** - Microphone input
@@ -50,6 +51,7 @@ pip install --break-system-packages \
     python-dotenv \
     pyaudio \
     numpy \
+    websocket-client \
     speechbrain \
     torch \
     torchaudio \
@@ -71,9 +73,10 @@ cd /path/to/ros2_ws/src/voice_ros2
 nano .env
 ```
 
-Add your Groq API key:
+Add your API keys:
 ```
 GROQ_API_KEY=your_api_key_here
+OPENAI_API_KEY=your_openai_api_key_here
 ```
 
 > **Note:** The `.env` file is already in `.gitignore` to protect your API key.
@@ -114,6 +117,15 @@ source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py
 ```
 
+### Full System with OpenAI Realtime
+```bash
+source /path/to/ros2_ws/install/setup.bash
+ros2 launch conversational_server full_system.launch.py \
+    conversation_backend:=openai_realtime \
+    realtime_model:=gpt-realtime-mini \
+    realtime_voice:=cedar
+```
+
 ### Server Only
 ```bash
 ros2 launch conversational_server server_pipeline.launch.py
@@ -121,6 +133,15 @@ ros2 launch conversational_server server_pipeline.launch.py
 corect:
 source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_server server_pipeline.launch.py
+
+Pentru OpenAI Realtime:
+```bash
+source ~/voice_ros2/install/setup.bash
+ros2 launch conversational_server server_pipeline.launch.py \
+    conversation_backend:=openai_realtime \
+    realtime_model:=gpt-realtime-mini \
+    realtime_voice:=cedar
+```
 
 ### Client Only (on robot hardware)
 ```bash
@@ -172,6 +193,19 @@ Available Groq models:
 - `compound-beta` (web search enabled)
 - `mixtral-8x7b-32768`
 
+#### OpenAI Realtime Configuration
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    conversation_backend:=openai_realtime \
+    realtime_model:=gpt-realtime-mini \
+    realtime_voice:=cedar
+```
+
+Recommended first test:
+- `conversation_backend:=openai_realtime`
+- `realtime_model:=gpt-realtime-mini`
+- `realtime_voice:=cedar`
+
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
 ```python
@@ -205,6 +239,12 @@ Edit `full_system.launch.py` and adjust:
 Make sure `.env` file exists and contains your API key:
 ```bash
 cat /path/to/ros2_ws/src/voice_ros2/.env
+```
+
+### "OPENAI_API_KEY not set" Error
+Make sure `.env` contains:
+```bash
+OPENAI_API_KEY=your_openai_api_key_here
 ```
 
 ### Microphone Not Working

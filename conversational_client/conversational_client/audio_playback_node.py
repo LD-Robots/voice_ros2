@@ -15,10 +15,11 @@ EXPLANATION:
 import rclpy                              # Main ROS2 library for Python
 from rclpy.node import Node               # Base class - all nodes inherit from it
 from conversational_interfaces.msg import Audio  # Audio message type we defined
-from std_msgs.msg import Bool              # For stop commands
+from std_msgs.msg import Bool, String      # For stop commands and playback progress
 import numpy as np                         # For working with numeric arrays
 from collections import deque              # Queue for audio buffer
 import threading                           # Run playback in parallel
+import json
 
 # Try to import PyAudio (for audio playback)
 try:
@@ -92,6 +93,9 @@ class AudioPlaybackNode(Node):
         self._playback_chunk_size = 1024       # Small chunks for responsive stop (~42ms at 24kHz)
         self._last_audio_time = 0.0            # Timestamp of last audio received (for grace period)
         self._speaking_grace_period = 2.0      # Keep is_speaking True for 2s after last audio
+        self._current_stream_id = ''
+        self._current_item_id = ''
+        self._played_samples_current_item = 0
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - listen on /audio_out
@@ -159,6 +163,7 @@ class AudioPlaybackNode(Node):
         # PUBLISHER FOR is_speaking - publishes TTS state
         # ─────────────────────────────────────────────────────────
         self.speaking_pub = self.create_publisher(Bool, '/is_speaking', 10)
+        self.playback_progress_pub = self.create_publisher(String, '/audio_playback_progress', 10)
         self._last_speaking_state = False
         
         # Timer to publish state (every 100ms)
@@ -205,6 +210,8 @@ class AudioPlaybackNode(Node):
         
         # Convert int16 list to numpy array
         audio_data = np.array(msg.data, dtype=np.int16)
+        stream_id = getattr(msg, 'stream_id', '') or ''
+        item_id = getattr(msg, 'item_id', '') or ''
         
         # Clear stop flag - new audio means we should play again
         self._stop_requested = False
@@ -214,7 +221,7 @@ class AudioPlaybackNode(Node):
         self._last_audio_time = time.time()
         
         # Push chunk into buffer
-        self.audio_buffer.append(audio_data)
+        self.audio_buffer.append((audio_data, stream_id, item_id))
         self.is_playing = True
         
         # Log (only occasionally to avoid flooding)
@@ -247,8 +254,16 @@ class AudioPlaybackNode(Node):
                     self.is_playing = False
             
             if chunk is not None:
+                chunk_data, stream_id, item_id = chunk
+
+                if item_id:
+                    if item_id != self._current_item_id:
+                        self._current_item_id = item_id
+                        self._current_stream_id = stream_id
+                        self._played_samples_current_item = 0
+
                 # Play the chunk in SMALL PIECES to allow instant stop
-                chunk_bytes = chunk.tobytes()
+                chunk_bytes = chunk_data.tobytes()
                 bytes_per_sample = 2  # int16
                 piece_size = self._playback_chunk_size * bytes_per_sample  # ~1024 samples = 42ms
                 offset = 0
@@ -268,6 +283,9 @@ class AudioPlaybackNode(Node):
                         with self._stream_lock:
                             if self.stream is not None:
                                 self.stream.write(piece)
+                                if item_id:
+                                    self._played_samples_current_item += len(piece) // bytes_per_sample
+                                    self._publish_playback_progress()
                     except Exception:
                         break  # Stream might have been stopped
             else:
@@ -280,7 +298,8 @@ class AudioPlaybackNode(Node):
         """Stop current playback IMMEDIATELY (for barge-in)."""
         # 0. Set stop flag FIRST - interrupts playback loop immediately
         self._stop_requested = True
-        
+        self._publish_playback_progress(stopped=True)
+
         # 1. Clear the buffer
         self.audio_buffer.clear()
         self.is_playing = False
@@ -308,7 +327,10 @@ class AudioPlaybackNode(Node):
         # 4. Set cooldown - ignore new audio for 1.5s (avoid race condition with TTS double-buffer)
         import time
         self._ignore_until = time.time() + 1.5
-        
+
+        self._current_stream_id = ''
+        self._current_item_id = ''
+        self._played_samples_current_item = 0
         self.get_logger().debug('⏹️ Playback stopped immediately (ignoring new audio for 1.5s)')
     
     def stop_callback(self, msg: Bool):
@@ -339,6 +361,22 @@ class AudioPlaybackNode(Node):
                 self.get_logger().debug('🔊 Speaking: True')
             else:
                 self.get_logger().debug('🔇 Speaking: False')
+
+    def _publish_playback_progress(self, stopped: bool = False):
+        """Publish the latest playback position for interruption-aware backends."""
+        if not self._current_item_id:
+            return
+
+        played_ms = int(round(self._played_samples_current_item * 1000.0 / self.sample_rate))
+        payload = {
+            'stream_id': self._current_stream_id,
+            'item_id': self._current_item_id,
+            'played_ms': played_ms,
+            'stopped': bool(stopped),
+        }
+        msg = String()
+        msg.data = json.dumps(payload, separators=(',', ':'))
+        self.playback_progress_pub.publish(msg)
     
     # ═══════════════════════════════════════════════════════════════════
     # CLEANUP - on node shutdown
