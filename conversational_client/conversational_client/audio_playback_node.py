@@ -170,6 +170,13 @@ class AudioPlaybackNode(Node):
         self.speaking_timer = self.create_timer(0.1, self._publish_speaking_state)
         
         self.get_logger().info('🔊 Audio Playback Node started - waiting for audio on /audio_out')
+
+    def _emit_speaking_state(self, state: bool):
+        """Publish speaking state immediately when playback is changed out-of-band."""
+        msg = Bool()
+        msg.data = state
+        self.speaking_pub.publish(msg)
+        self._last_speaking_state = state
     
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACK - called when a message arrives on /audio_out
@@ -303,6 +310,7 @@ class AudioPlaybackNode(Node):
         # 1. Clear the buffer
         self.audio_buffer.clear()
         self.is_playing = False
+        self._last_audio_time = 0.0
         
         # 2. Stop the stream immediately (abort - don't wait for current chunk)
         with self._stream_lock:
@@ -331,6 +339,7 @@ class AudioPlaybackNode(Node):
         self._current_stream_id = ''
         self._current_item_id = ''
         self._played_samples_current_item = 0
+        self._emit_speaking_state(False)
         self.get_logger().debug('⏹️ Playback stopped immediately (ignoring new audio for 1.5s)')
     
     def stop_callback(self, msg: Bool):
@@ -352,10 +361,7 @@ class AudioPlaybackNode(Node):
         
         # Publish only when state changes (optimization)
         if current_state != self._last_speaking_state:
-            msg = Bool()
-            msg.data = current_state
-            self.speaking_pub.publish(msg)
-            self._last_speaking_state = current_state
+            self._emit_speaking_state(current_state)
             
             if current_state:
                 self.get_logger().debug('🔊 Speaking: True')
