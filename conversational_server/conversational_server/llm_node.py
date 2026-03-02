@@ -15,6 +15,7 @@ import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk
 from std_msgs.msg import String
+import json
 import os
 import re
 import uuid
@@ -67,6 +68,7 @@ class LLMNode(Node):
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
         self.declare_parameter('min_chunk_chars', 40)  # Min chars per chunk
+        self.declare_parameter('transcription_topic', '/attended_transcription')
         
         # System prompt - can be overridden via parameter
         # Default: Enhanced prompt with personality, language rules, teasing, opinions
@@ -106,6 +108,7 @@ You will receive the user's name in the format `[Speaker: Name]`.
         self.temperature = self.get_parameter('temperature').value
         self.min_chunk_chars = self.get_parameter('min_chunk_chars').value
         self.system_prompt = self.get_parameter('system_prompt').value
+        self.transcription_topic = str(self.get_parameter('transcription_topic').value)
 
         if self.provider != 'groq':
             raise RuntimeError(
@@ -170,6 +173,14 @@ You will receive the user's name in the format `[Speaker: Name]`.
         
         # Conversation history
         self.conversation_history = []
+        self.last_assistant_response = ''
+        self.current_backend = 'legacy'
+        self.person_context = {
+            'speaker': 'Unknown',
+            'preferred_name': '',
+            'preferred_language': '',
+            'facts': [],
+        }
         
         # Speaker identification — who is speaking now
         self.current_speaker = "Unknown"
@@ -188,11 +199,29 @@ You will receive the user's name in the format `[Speaker: Name]`.
             self._robot_status_callback,
             10
         )
+        self.person_context_sub = self.create_subscription(
+            String,
+            '/person_context',
+            self._person_context_callback,
+            10
+        )
+        self.backend_sub = self.create_subscription(
+            String,
+            '/conversation_backend',
+            self._backend_callback,
+            10
+        )
+        self.control_sub = self.create_subscription(
+            String,
+            '/conversation_control',
+            self._control_callback,
+            10
+        )
         
         # Subscriber for transcription
         self.transcription_sub = self.create_subscription(
             Transcription,
-            '/transcription',
+            self.transcription_topic,
             self.transcription_callback,
             10
         )
@@ -334,8 +363,52 @@ You will receive the user's name in the format `[Speaker: Name]`.
                 self.waiting_for_robot_confirmation = False
                 self.get_logger().info(f'🔊 Robot status {status} - LLM resumed')
 
+    def _person_context_callback(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+        self.person_context = {
+            'speaker': str(payload.get('speaker', 'Unknown') or 'Unknown'),
+            'preferred_name': str(payload.get('preferred_name', '') or ''),
+            'preferred_language': str(payload.get('preferred_language', '') or ''),
+            'facts': list(payload.get('facts', []) or []),
+        }
+
+    def _backend_callback(self, msg: String):
+        backend = msg.data.strip() or 'legacy'
+        self.current_backend = backend
+
+    def _control_callback(self, msg: String):
+        if self.current_backend != 'legacy':
+            return
+
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+
+        action = str(payload.get('action', '') or '')
+        language = str(payload.get('language', '') or '')
+        if action == 'repeat' and self.last_assistant_response:
+            self.get_logger().info('Repeating last assistant response from local memory')
+            self._publish_immediate_response(self.last_assistant_response, language or 'en')
+        elif action == 'continue' and self.last_assistant_response:
+            user_text = 'Continue your last answer from where you stopped. Do not restart from the beginning.'
+            if (language or '').startswith('ro'):
+                user_text = 'Continuă ultimul răspuns exact de unde te-ai oprit, fără să îl reiei de la început.'
+            thread = threading.Thread(
+                target=self._process_streaming,
+                args=(user_text, language or 'en'),
+                daemon=True,
+            )
+            thread.start()
+
     def transcription_callback(self, msg: Transcription):
         """Process transcription and publish the LLM response in streaming."""
+        if self.current_backend != 'legacy':
+            return
+
         user_text = msg.text.strip()
         user_lang = msg.language
         
@@ -409,6 +482,23 @@ You will receive the user's name in the format `[Speaker: Name]`.
                     self.get_logger().info(f'term timeout - reset la Unknown (au trecut {time_since_last:.1f}s)')
                     self.current_speaker = "Unknown"
     
+    def _get_person_context_prompt(self) -> str:
+        speaker = self.person_context.get('speaker', 'Unknown') or 'Unknown'
+        if speaker == 'Unknown':
+            return ''
+
+        extras = [f'Current stored speaker profile label: {speaker}.']
+        preferred_name = self.person_context.get('preferred_name', '')
+        if preferred_name:
+            extras.append(f'Preferred name: {preferred_name}.')
+        preferred_language = self.person_context.get('preferred_language', '')
+        if preferred_language:
+            extras.append(f'Preferred language: {preferred_language}.')
+        facts = self.person_context.get('facts', []) or []
+        if facts:
+            extras.append('Known personal facts: ' + '; '.join(str(fact) for fact in facts[:8]) + '.')
+        return ' '.join(extras)
+
     def _process_streaming(self, user_text: str, user_lang: str):
         """Process the LLM response with streaming."""
         session_id = str(uuid.uuid4())[:8]
@@ -433,7 +523,13 @@ You will receive the user's name in the format `[Speaker: Name]`.
             
             # Build messages for the API
             messages = [
-                {'role': 'system', 'content': self._get_system_prompt_with_date()}
+                {
+                    'role': 'system',
+                    'content': ' '.join(filter(None, [
+                        self._get_system_prompt_with_date(),
+                        self._get_person_context_prompt(),
+                    ])),
+                }
             ] + self.conversation_history
             
             # Detect if the question needs web search
@@ -514,6 +610,7 @@ You will receive the user's name in the format `[Speaker: Name]`.
                     'role': 'assistant',
                     'content': full_response
                 })
+                self.last_assistant_response = full_response
                 
                 # Limit history
                 if len(self.conversation_history) > 10:
@@ -550,6 +647,17 @@ You will receive the user's name in the format `[Speaker: Name]`.
         
         if text:
             self.get_logger().debug(f'📤 Chunk: "{text[:30]}..." (final={is_final})')
+
+    def _publish_immediate_response(self, text: str, language: str):
+        session_id = str(uuid.uuid4())[:8]
+        self._publish_chunk(text, language, False, session_id)
+        self._publish_chunk('', language, True, session_id)
+
+        out = Transcription()
+        out.text = text
+        out.language = language
+        out.confidence = 1.0
+        self.response_pub.publish(out)
     
     def clear_history(self):
         """Clear the conversation history."""

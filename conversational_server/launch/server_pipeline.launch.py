@@ -13,7 +13,6 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
-    legacy_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'legacy'"])
     realtime_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"])
 
     return LaunchDescription([
@@ -57,10 +56,22 @@ def generate_launch_description():
         # ASR Node
         Node(
             package='conversational_server',
+            executable='backend_manager_node',
+            name='backend_manager_node',
+            output='screen',
+            parameters=[{
+                'preferred_backend': LaunchConfiguration('conversation_backend'),
+                'fallback_backend': 'legacy',
+                'offline_timeout_s': 6.0,
+                'auto_return_to_preferred': True,
+            }]
+        ),
+
+        Node(
+            package='conversational_server',
             executable='asr_node',
             name='asr_node',
             output='screen',
-            condition=IfCondition(legacy_backend),
             parameters=[{
                 'model_size': LaunchConfiguration('asr_model_size'),
                 'device': 'cpu',
@@ -75,7 +86,6 @@ def generate_launch_description():
             executable='llm_node',
             name='llm_node',
             output='screen',
-            condition=IfCondition(legacy_backend),
             parameters=[{
                 'provider': LaunchConfiguration('llm_provider'),
                 'model': LaunchConfiguration('llm_model'),
@@ -90,7 +100,6 @@ def generate_launch_description():
             executable='tts_node',
             name='tts_node',
             output='screen',
-            condition=IfCondition(legacy_backend),
             parameters=[{
                 'voice_en': 'en-GB-RyanNeural',
                 'voice_ro': 'ro-RO-EmilNeural',

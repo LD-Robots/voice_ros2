@@ -137,6 +137,27 @@ def generate_launch_description():
                 'similarity_threshold': 0.25,
             }]
         ),
+
+        Node(
+            package='conversational_client',
+            executable='attention_manager_node',
+            name='attention_manager_node',
+            output='screen',
+        ),
+
+        Node(
+            package='conversational_client',
+            executable='person_memory_store_node',
+            name='person_memory_store_node',
+            output='screen',
+        ),
+
+        Node(
+            package='conversational_client',
+            executable='conversation_control_node',
+            name='conversation_control_node',
+            output='screen',
+        ),
         
         # Session Manager (Goodbye handling)
         Node(

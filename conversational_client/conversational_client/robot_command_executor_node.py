@@ -59,6 +59,7 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('risky_turn_angle_deg', 150.0)
         self.declare_parameter('require_confirmation_for_dance', False)
         self.declare_parameter('require_confirmation_for_raise_hands', False)
+        self.declare_parameter('transcription_topic', '/attended_transcription')
 
         self.execution_enabled = bool(self.get_parameter('execution_enabled').value)
         self.min_command_confidence = float(self.get_parameter('min_command_confidence').value)
@@ -98,6 +99,7 @@ class RobotCommandExecutorNode(Node):
         self.require_confirmation_for_raise_hands = bool(
             self.get_parameter('require_confirmation_for_raise_hands').value
         )
+        transcription_topic = str(self.get_parameter('transcription_topic').value)
         self.cancel_words = self._parse_words(self.get_parameter('cancel_words').value)
         self.confirm_accept_words = self._parse_words(self.get_parameter('confirmation_accept_words').value)
         self.confirm_reject_words = self._parse_words(self.get_parameter('confirmation_reject_words').value)
@@ -117,7 +119,7 @@ class RobotCommandExecutorNode(Node):
         )
         self.transcription_sub = self.create_subscription(
             Transcription,
-            '/transcription',
+            transcription_topic,
             self._transcription_callback,
             10
         )
