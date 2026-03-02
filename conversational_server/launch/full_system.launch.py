@@ -73,6 +73,11 @@ def generate_launch_description():
             default_value='cedar',
             description='OpenAI Realtime voice'
         ),
+        DeclareLaunchArgument(
+            'realtime_capture_during_playback',
+            default_value='false',
+            description='Stream microphone audio to OpenAI while robot playback is active'
+        ),
         
         # ========== SERVER NODES ==========
         
@@ -131,6 +136,7 @@ def generate_launch_description():
             parameters=[{
                 'model': LaunchConfiguration('realtime_model'),
                 'voice': LaunchConfiguration('realtime_voice'),
+                'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
             }]
         ),
         
