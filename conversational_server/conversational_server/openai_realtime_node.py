@@ -8,8 +8,10 @@ assistant audio back into the existing ROS2 audio playback pipeline.
 import base64
 import json
 import os
+import re
 import threading
 import time
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -127,9 +129,14 @@ class OpenAIRealtimeNode(Node):
             'stream_id': '',
             'item_id': '',
             'played_ms': 0,
+            'stopped': False,
         }
         self._last_truncate_signature = ('', -1)
         self._last_truncate_time = 0.0
+        self._pending_resume_text = ''
+        self._pending_resume_remaining = ''
+        self._pending_resume_played_ms = 0
+        self._resume_requested = False
 
         self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
         self.transcription_pub = self.create_publisher(Transcription, '/transcription', 10)
@@ -206,6 +213,7 @@ class OpenAIRealtimeNode(Node):
     def stop_callback(self, msg: Bool):
         if msg.data:
             self._truncate_current_audio('tts_stop')
+            self._clear_playback_progress()
 
     def playback_progress_callback(self, msg: String):
         try:
@@ -216,6 +224,7 @@ class OpenAIRealtimeNode(Node):
             'stream_id': str(payload.get('stream_id', '') or ''),
             'item_id': str(payload.get('item_id', '') or ''),
             'played_ms': int(payload.get('played_ms', 0) or 0),
+            'stopped': bool(payload.get('stopped', False)),
         }
 
     def speaker_callback(self, msg: String):
@@ -339,6 +348,10 @@ class OpenAIRealtimeNode(Node):
             transcript = (event.get('transcript') or '').strip()
             if transcript:
                 self.get_logger().info(f'OpenAI transcript: {transcript}')
+                if self._pending_resume_text:
+                    self._resume_requested = self._is_resume_request(transcript)
+                    if self._resume_requested:
+                        self.get_logger().info('Resume request detected for interrupted reply')
                 out = Transcription()
                 out.text = transcript
                 out.language = ''
@@ -460,6 +473,9 @@ class OpenAIRealtimeNode(Node):
             self._mark_response_inactive(response_id)
         else:
             self._mark_response_inactive()
+        if self._pending_resume_text:
+            self._clear_pending_resume()
+            self._refresh_session()
 
     def _refresh_session(self):
         if not self._connected.is_set():
@@ -502,6 +518,24 @@ class OpenAIRealtimeNode(Node):
                 'A risky robot command is awaiting local confirmation. '
                 'Do not speak. Let the user answer yes/no without assistant chatter.'
             )
+        if self._pending_resume_text:
+            extras.append(
+                'There is an interrupted assistant reply pending. '
+                'If the user asks to continue, resume, reia raspunsul, continua, or continue please, '
+                'continue that interrupted reply from where it was cut, without restarting from the beginning.'
+            )
+            if self._pending_resume_remaining:
+                extras.append(
+                    f'Approximate remaining part of the interrupted reply: "{self._pending_resume_remaining}"'
+                )
+            else:
+                extras.append(
+                    f'Interrupted reply to continue from naturally: "{self._pending_resume_text}"'
+                )
+            extras.append(
+                'If the user asks a different question or changes topic, answer the new request normally and '
+                'ignore the interrupted reply.'
+            )
         return ' '.join([self.base_instructions, *extras]).strip()
 
     def _cancel_and_clear(self):
@@ -513,6 +547,8 @@ class OpenAIRealtimeNode(Node):
         self._assistant_text.clear()
         self._published_final_items.clear()
         self._seen_output_audio_for_response.clear()
+        self._clear_playback_progress()
+        self._clear_pending_resume()
         self._mark_response_inactive()
 
     def _truncate_current_audio(self, reason: str):
@@ -537,6 +573,7 @@ class OpenAIRealtimeNode(Node):
         if not should_cancel:
             return
 
+        self._capture_pending_resume(item_id, played_ms)
         self._send_event({'type': 'response.cancel'})
         if item_id:
             self._send_event({
@@ -549,6 +586,7 @@ class OpenAIRealtimeNode(Node):
         self.get_logger().debug(
             f'Truncated current assistant audio ({reason}): item={item_id}, played_ms={played_ms}'
         )
+        self._refresh_session()
 
     def _send_event(self, event: dict) -> bool:
         if not self._connected.is_set() or self._ws_app is None:
@@ -609,6 +647,77 @@ class OpenAIRealtimeNode(Node):
         if not response_id or response_id == self._active_response_id:
             self._response_active = False
             self._active_response_id = ''
+
+    def _clear_playback_progress(self):
+        self._last_playback_progress = {
+            'stream_id': '',
+            'item_id': '',
+            'played_ms': 0,
+            'stopped': False,
+        }
+
+    def _capture_pending_resume(self, item_id: str, played_ms: int):
+        text = self._assistant_text.get(item_id, '').strip() if item_id else ''
+        if not text:
+            return
+
+        self._pending_resume_text = text
+        self._pending_resume_played_ms = max(0, int(played_ms))
+        self._pending_resume_remaining = self._estimate_remaining_text(text, played_ms)
+        self._resume_requested = False
+
+    def _clear_pending_resume(self):
+        self._pending_resume_text = ''
+        self._pending_resume_remaining = ''
+        self._pending_resume_played_ms = 0
+        self._resume_requested = False
+
+    def _estimate_remaining_text(self, text: str, played_ms: int) -> str:
+        clean_text = text.strip()
+        if not clean_text:
+            return ''
+        if played_ms <= 0:
+            return clean_text
+
+        chars_per_second = 18.0
+        approx_chars_spoken = int((played_ms / 1000.0) * chars_per_second)
+        if approx_chars_spoken <= 0:
+            return clean_text
+        if approx_chars_spoken >= len(clean_text):
+            return ''
+
+        cut_idx = approx_chars_spoken
+        while cut_idx < len(clean_text) and not clean_text[cut_idx].isspace():
+            cut_idx += 1
+        if cut_idx >= len(clean_text):
+            return ''
+
+        return clean_text[cut_idx:].lstrip(' ,.;:!?-')
+
+    def _is_resume_request(self, text: str) -> bool:
+        normalized = self._normalize_text(text)
+        resume_patterns = (
+            'continue',
+            'resume',
+            'continue please',
+            'continua',
+            'continua te rog',
+            'reia',
+            'reia raspunsul',
+            'reia de unde ai ramas',
+            'continua raspunsul',
+            'continue the answer',
+            'continue your answer',
+            'pick up where you left off',
+        )
+        return any(pattern in normalized for pattern in resume_patterns)
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        normalized = unicodedata.normalize('NFKD', text.lower())
+        normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = re.sub(r'[^a-z0-9\\s]+', ' ', normalized)
+        return ' '.join(normalized.split())
 
 
 def main(args=None):
