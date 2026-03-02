@@ -13,6 +13,7 @@ Used by speaker_id_node.py (Developer B — Delia).
 
 import os
 from pathlib import Path
+import inspect
 import numpy as np
 import torch
 import torchaudio
@@ -22,6 +23,37 @@ import torchaudio
 # ─────────────────────────────────────────────────────────────────
 if not hasattr(torchaudio, 'list_audio_backends'):
     torchaudio.list_audio_backends = lambda: ['ffmpeg']
+
+# ─────────────────────────────────────────────────────────────────
+# FIX: huggingface_hub >= 1.0 removed `use_auth_token` and some
+# download kwargs, but speechbrain 1.0.x still forwards them.
+# Normalize those kwargs before SpeechBrain imports/calls the hub.
+# ─────────────────────────────────────────────────────────────────
+try:
+    import huggingface_hub
+
+    _hf_hub_download = huggingface_hub.hf_hub_download
+    _hf_hub_download_signature = inspect.signature(_hf_hub_download)
+
+    if 'use_auth_token' not in _hf_hub_download_signature.parameters:
+        def _compat_hf_hub_download(*args, **kwargs):
+            if 'use_auth_token' in kwargs and 'token' not in kwargs:
+                kwargs['token'] = kwargs.pop('use_auth_token')
+            else:
+                kwargs.pop('use_auth_token', None)
+
+            for deprecated_kwarg in (
+                'resume_download',
+                'force_filename',
+                'local_dir_use_symlinks',
+            ):
+                kwargs.pop(deprecated_kwarg, None)
+
+            return _hf_hub_download(*args, **kwargs)
+
+        huggingface_hub.hf_hub_download = _compat_hf_hub_download
+except Exception:
+    pass
 
 from speechbrain.inference.speaker import EncoderClassifier
 
@@ -47,6 +79,12 @@ class SpeakerManager:
         """
         self.enrollment_dir = enrollment_dir
         self.threshold = threshold
+        self.model_cache_dir = os.path.expanduser(
+            "~/.cache/speechbrain/spkrec-ecapa-voxceleb"
+        )
+
+        os.makedirs(self.model_cache_dir, exist_ok=True)
+        self._ensure_placeholder_custom_module()
 
         # ─────────────────────────────────────────────────────────
         # Load SpeechBrain ECAPA-TDNN model
@@ -54,7 +92,7 @@ class SpeakerManager:
         print("🔄 Se încarcă modelul SpeechBrain ECAPA-TDNN...")
         self.classifier = EncoderClassifier.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
-            savedir=os.path.expanduser("~/.cache/speechbrain/spkrec-ecapa-voxceleb"),
+            savedir=self.model_cache_dir,
             run_opts={"device": "cpu"}
         )
         print("✅ Model ECAPA-TDNN încărcat!")
@@ -99,6 +137,17 @@ class SpeakerManager:
 
         print(f"📊 Baza de date: {len(self.speaker_db)} voci "
               f"({', '.join(self.speaker_db.keys())})")
+
+    def _ensure_placeholder_custom_module(self):
+        """SpeechBrain tries to fetch an optional custom.py by default."""
+        custom_module_path = os.path.join(self.model_cache_dir, 'custom.py')
+        if os.path.exists(custom_module_path):
+            return
+
+        with open(custom_module_path, 'w', encoding='utf-8') as handle:
+            handle.write(
+                '# Placeholder module for SpeechBrain pretrained loading.\n'
+            )
 
     # ═══════════════════════════════════════════════════════════════════
     # EMBEDDING COMPUTATION

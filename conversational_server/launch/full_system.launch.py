@@ -146,6 +146,10 @@ def generate_launch_description():
                 'model': LaunchConfiguration('realtime_model'),
                 'voice': LaunchConfiguration('realtime_voice'),
                 'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
+                'vad_threshold': 0.65,
+                'vad_prefix_padding_ms': 400,
+                'vad_silence_duration_ms': 800,
+                'short_transcript_dedupe_window_s': 4.0,
             }]
         ),
         

@@ -124,16 +124,28 @@ class TTSNode(Node):
         
         # Common phrases for cache
         self.cache_phrases = {
-            'ack_en': ('Yes, I am listening.', 'en'),
-            'ack_ro': ('Da, te ascult.', 'ro'),
+            'ack_en': ('Hello. I am here and listening.', 'en'),
+            'ack_ro': ('Salut. Sunt aici si te ascult.', 'ro'),
             'filler_en': ('One moment please...', 'en'),
             'filler_ro': ('Un moment...', 'ro'),
-            'goodbye_en': ('Goodbye! Have a great day!', 'en'),
-            'goodbye_ro': ('La revedere! O zi frumoasă!', 'ro'),
+            'goodbye_en': ('Goodbye. I will be here when you need me again.', 'en'),
+            'goodbye_ro': ('La revedere. Raman aici daca mai ai nevoie de mine.', 'ro'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
             'error_ro': ('Sorry, I encountered an error.', 'ro'),
             'confirm_en': ('Are you sure? Please say yes or no.', 'en'),
             'confirm_ro': ('Ești sigur? Te rog confirmă cu da sau nu.', 'ro'),
+        }
+        self.system_commands = {
+            'ack_en',
+            'ack_ro',
+            'goodbye_en',
+            'goodbye_ro',
+            'error_en',
+            'error_ro',
+            'confirm_en',
+            'confirm_ro',
+            'filler_en',
+            'filler_ro',
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
@@ -277,6 +289,8 @@ class TTSNode(Node):
     def command_callback(self, msg):
         """Process TTS commands (play cached phrases)."""
         command = msg.data.strip()
+        if self.current_backend != 'legacy' and command not in self.system_commands:
+            return
         
         # Dacă e un key din cache, îl redă
         if command in self.audio_cache or command in self.cache_phrases:

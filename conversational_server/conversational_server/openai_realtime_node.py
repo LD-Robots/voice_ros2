@@ -61,9 +61,10 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('capture_during_playback', False)
         self.declare_parameter('input_transcription_enabled', True)
         self.declare_parameter('input_transcription_model', 'gpt-4o-mini-transcribe')
-        self.declare_parameter('vad_threshold', 0.5)
-        self.declare_parameter('vad_prefix_padding_ms', 300)
-        self.declare_parameter('vad_silence_duration_ms', 500)
+        self.declare_parameter('vad_threshold', 0.65)
+        self.declare_parameter('vad_prefix_padding_ms', 400)
+        self.declare_parameter('vad_silence_duration_ms', 800)
+        self.declare_parameter('short_transcript_dedupe_window_s', 4.0)
         self.declare_parameter('reconnect_delay_s', 3.0)
         self.declare_parameter(
             'instructions',
@@ -93,6 +94,9 @@ class OpenAIRealtimeNode(Node):
         self.vad_silence_duration_ms = int(
             self.get_parameter('vad_silence_duration_ms').value
         )
+        self.short_transcript_dedupe_window_s = float(
+            self.get_parameter('short_transcript_dedupe_window_s').value
+        )
         self.reconnect_delay_s = float(self.get_parameter('reconnect_delay_s').value)
         self.base_instructions = str(self.get_parameter('instructions').value)
 
@@ -105,10 +109,12 @@ class OpenAIRealtimeNode(Node):
             raise RuntimeError('websocket-client not available')
 
         self.session_active = False
+        self.conversation_paused = False
         self.robot_speaking = False
         self.waiting_for_robot_confirmation = False
         self.current_speaker = 'Unknown'
         self.current_backend = 'openai_realtime'
+        self.conversation_language = ''
         self.person_context = {
             'speaker': 'Unknown',
             'preferred_name': '',
@@ -144,6 +150,10 @@ class OpenAIRealtimeNode(Node):
         self._pending_resume_remaining = ''
         self._pending_resume_played_ms = 0
         self._resume_requested = False
+        self._paused_transcript_pending = ''
+        self._paused_transcript_at = 0.0
+        self._last_accepted_user_transcript_norm = ''
+        self._last_accepted_user_transcript_at = 0.0
 
         self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
         self.transcription_pub = self.create_publisher(Transcription, '/transcription', 10)
@@ -190,6 +200,12 @@ class OpenAIRealtimeNode(Node):
             self.robot_status_callback,
             10,
         )
+        self.attended_transcription_sub = self.create_subscription(
+            Transcription,
+            '/attended_transcription',
+            self.attended_transcription_callback,
+            10,
+        )
         self.backend_sub = self.create_subscription(
             String,
             '/conversation_backend',
@@ -200,6 +216,12 @@ class OpenAIRealtimeNode(Node):
             String,
             '/person_context',
             self.person_context_callback,
+            10,
+        )
+        self.pause_sub = self.create_subscription(
+            Bool,
+            '/conversation_pause',
+            self.pause_callback,
             10,
         )
 
@@ -231,6 +253,22 @@ class OpenAIRealtimeNode(Node):
     def speaking_callback(self, msg: Bool):
         self.robot_speaking = bool(msg.data)
 
+    def pause_callback(self, msg: Bool):
+        paused = bool(msg.data)
+        if paused == self.conversation_paused:
+            return
+        self.conversation_paused = paused
+        if paused:
+            self.get_logger().info('OpenAI conversation paused: listening without responding')
+            self._truncate_current_audio('conversation_paused')
+        else:
+            self.get_logger().info('OpenAI conversation resumed')
+        self._refresh_session()
+        if not paused and self._paused_transcript_pending:
+            self._send_event({'type': 'response.create'})
+            self._paused_transcript_pending = ''
+            self._paused_transcript_at = 0.0
+
     def backend_callback(self, msg: String):
         backend = msg.data.strip() or 'legacy'
         if backend == self.current_backend:
@@ -249,6 +287,10 @@ class OpenAIRealtimeNode(Node):
         try:
             payload = json.loads(msg.data)
         except Exception:
+            return
+        if bool(payload.get('stopped', False)):
+            self._clear_playback_progress()
+            self._mark_response_inactive()
             return
         self._last_playback_progress = {
             'stream_id': str(payload.get('stream_id', '') or ''),
@@ -275,6 +317,15 @@ class OpenAIRealtimeNode(Node):
             'facts': list(payload.get('facts', []) or []),
         }
         self._refresh_session()
+
+    def attended_transcription_callback(self, msg: Transcription):
+        text = (msg.text or '').strip()
+        if not text:
+            return
+        language = self._infer_language_from_text(text)
+        if language and language != self.conversation_language:
+            self.conversation_language = language
+            self._refresh_session()
 
     def robot_command_callback(self, msg: RobotCommand):
         # Keep robot motion logic local; suppress assistant chatter for commands.
@@ -395,7 +446,21 @@ class OpenAIRealtimeNode(Node):
         if event_type == 'conversation.item.input_audio_transcription.completed':
             transcript = (event.get('transcript') or '').strip()
             if transcript:
+                ignore_reason = self._ignored_transcript_reason(transcript)
+                if ignore_reason:
+                    self.get_logger().info(
+                        f'Ignoring short/accidental transcript ({ignore_reason}): {transcript}'
+                    )
+                    self._cancel_current_pending_response(ignore_reason)
+                    return
                 self.get_logger().info(f'OpenAI transcript: {transcript}')
+                normalized = self._normalize_text(transcript)
+                if normalized:
+                    self._last_accepted_user_transcript_norm = normalized
+                    self._last_accepted_user_transcript_at = time.monotonic()
+                if self.conversation_paused:
+                    self._paused_transcript_pending = transcript
+                    self._paused_transcript_at = time.monotonic()
                 if self._pending_resume_text:
                     self._resume_requested = self._is_resume_request(transcript)
                     if self._resume_requested:
@@ -434,8 +499,11 @@ class OpenAIRealtimeNode(Node):
         if event_type == 'error':
             error = event.get('error', {})
             message = error.get('message') or str(error)
-            self._publish_status('error')
-            self.get_logger().error(f'OpenAI Realtime API error: {message}')
+            if self._is_benign_realtime_error(message):
+                self.get_logger().warn(f'OpenAI Realtime benign API warning: {message}')
+            else:
+                self._publish_status('error')
+                self.get_logger().error(f'OpenAI Realtime API error: {message}')
 
     def _handle_output_audio_delta(self, event: dict):
         delta = event.get('delta')
@@ -536,8 +604,8 @@ class OpenAIRealtimeNode(Node):
             'threshold': self.vad_threshold,
             'prefix_padding_ms': self.vad_prefix_padding_ms,
             'silence_duration_ms': self.vad_silence_duration_ms,
-            'create_response': True,
-            'interrupt_response': True,
+            'create_response': not self.conversation_paused,
+            'interrupt_response': not self.conversation_paused,
         }
 
         session = {
@@ -562,11 +630,17 @@ class OpenAIRealtimeNode(Node):
         extras = []
         if self.current_speaker != 'Unknown':
             extras.append(f'Current identified speaker: {self.current_speaker}.')
+        if self.conversation_language:
+            extras.append(
+                f'Current conversation language is {self.conversation_language}. '
+                f'Keep responding in {self.conversation_language} until a new robot-directed user utterance clearly switches languages. '
+                'Ignore side conversations heard while paused when choosing response language.'
+            )
         preferred_name = self.person_context.get('preferred_name', '')
         if preferred_name:
             extras.append(f'Preferred name for this speaker: {preferred_name}.')
         preferred_language = self.person_context.get('preferred_language', '')
-        if preferred_language:
+        if preferred_language and not self.conversation_language:
             extras.append(f'Preferred language for this speaker: {preferred_language}.')
         facts = self.person_context.get('facts', []) or []
         if facts:
@@ -575,6 +649,11 @@ class OpenAIRealtimeNode(Node):
             extras.append(
                 'A risky robot command is awaiting local confirmation. '
                 'Do not speak. Let the user answer yes/no without assistant chatter.'
+            )
+        if self.conversation_paused:
+            extras.append(
+                'The user told you to wait because they are talking with someone else. '
+                'Stay silent until the local controller resumes the conversation.'
             )
         if self._pending_resume_text:
             extras.append(
@@ -627,12 +706,13 @@ class OpenAIRealtimeNode(Node):
         self._last_truncate_signature = signature
         self._last_truncate_time = now
 
-        should_cancel = self._response_active or bool(item_id)
-        if not should_cancel:
+        should_truncate = self._response_active or bool(item_id)
+        if not should_truncate:
             return
 
         self._capture_pending_resume(item_id, played_ms)
-        self._send_event({'type': 'response.cancel'})
+        if self._response_active:
+            self._send_event({'type': 'response.cancel'})
         if item_id:
             self._send_event({
                 'type': 'conversation.item.truncate',
@@ -713,11 +793,27 @@ class OpenAIRealtimeNode(Node):
             'played_ms': 0,
             'stopped': False,
         }
+        self._last_truncate_signature = ('', -1)
 
     def _publish_status(self, status: str):
         msg = String()
         msg.data = status
         self.status_pub.publish(msg)
+
+    def _cancel_current_pending_response(self, reason: str):
+        if self._response_active:
+            self._send_event({'type': 'response.cancel'})
+            self._mark_response_inactive()
+        self._send_event({'type': 'input_audio_buffer.clear'})
+        self.get_logger().debug(f'Canceled pending realtime response ({reason})')
+
+    @staticmethod
+    def _is_benign_realtime_error(message: str) -> bool:
+        normalized = (message or '').strip().lower()
+        return (
+            'cancellation failed: no active response found' in normalized
+            or ('audio content of' in normalized and 'already shorter than' in normalized)
+        )
 
     def _capture_pending_resume(self, item_id: str, played_ms: int):
         text = self._assistant_text.get(item_id, '').strip() if item_id else ''
@@ -775,12 +871,96 @@ class OpenAIRealtimeNode(Node):
         )
         return any(pattern in normalized for pattern in resume_patterns)
 
+    def _ignored_transcript_reason(self, text: str) -> str:
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return 'empty'
+
+        control_patterns = (
+            'stop',
+            'stop talking',
+            'be quiet',
+            'quiet',
+            'hold on',
+            'wait',
+            'wait a second',
+            'wait a little',
+            'wait a bit',
+            'continue',
+            'resume',
+            'repeat',
+            'say that again',
+            'continua',
+            'reia',
+            'repeta',
+            'stai putin',
+            'asteapta putin',
+            'opreste',
+            'taci',
+        )
+        if any(pattern == normalized or f' {pattern} ' in f' {normalized} ' for pattern in control_patterns):
+            return ''
+
+        words = normalized.split()
+        yes_no_words = {'yes', 'no', 'da', 'nu'}
+        if len(words) == 1 and words[0] in yes_no_words:
+            if self.waiting_for_robot_confirmation:
+                return ''
+            return 'stray_yes_no'
+
+        now = time.monotonic()
+        if (
+            normalized
+            and normalized == self._last_accepted_user_transcript_norm
+            and (now - self._last_accepted_user_transcript_at) <= self.short_transcript_dedupe_window_s
+            and len(words) <= 4
+        ):
+            return 'duplicate_short_turn'
+
+        if len(words) == 1 and len(words[0]) <= 4:
+            return 'single_short_word'
+
+        if len(words) <= 2 and len(normalized) <= 6:
+            return 'very_short_turn'
+
+        return ''
+
     @staticmethod
     def _normalize_text(text: str) -> str:
         normalized = unicodedata.normalize('NFKD', text.lower())
         normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
         normalized = re.sub(r'[^a-z0-9\\s]+', ' ', normalized)
         return ' '.join(normalized.split())
+
+    @classmethod
+    def _infer_language_from_text(cls, text: str) -> str:
+        normalized = cls._normalize_text(text)
+        if not normalized:
+            return ''
+
+        romanian_markers = {
+            'si', 'sunt', 'asta', 'aceasta', 'vreau', 'vorbesc', 'cineva', 'robotul',
+            'salut', 'poate', 'poti', 'te', 'rog', 'despre', 'cum', 'mai', 'bine',
+            'acum', 'da', 'nu', 'ceva', 'proiectul', 'meu', 'mea', 'romanian',
+        }
+        english_markers = {
+            'the', 'and', 'with', 'about', 'please', 'hello', 'wait', 'project',
+            'just', 'back', 'know', 'something', 'tell', 'name', 'working', 'robot',
+            'how', 'what', 'why', 'now', 'english',
+        }
+
+        words = normalized.split()
+        if not words:
+            return ''
+
+        ro_score = sum(1 for word in words if word in romanian_markers)
+        en_score = sum(1 for word in words if word in english_markers)
+
+        if ro_score > en_score:
+            return 'Romanian'
+        if en_score > ro_score:
+            return 'English'
+        return ''
 
 
 def main(args=None):
