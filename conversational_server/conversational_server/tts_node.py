@@ -26,7 +26,13 @@ import queue
 import time
 import scipy.signal  # For resampling
 import re
-from num2words import num2words
+
+try:
+    from num2words import num2words
+    NUM2WORDS_AVAILABLE = True
+except ImportError:
+    NUM2WORDS_AVAILABLE = False
+    print("⚠️ num2words not installed. Number verbalization disabled.")
 
 # Edge TTS for voice synthesis (online)
 try:
@@ -145,6 +151,7 @@ class TTSNode(Node):
         self.current_session = None
         self.stop_requested = False
         self.stop_epoch = 0  # Epoch counter - increments on stop(), chunks with old epoch are skipped
+        self.current_backend = 'legacy'
         
         # Subscriber for cache commands (ack, goodbye, etc)
         from std_msgs.msg import String
@@ -152,6 +159,12 @@ class TTSNode(Node):
             String,
             '/tts_command',
             self.command_callback,
+            10
+        )
+        self.backend_sub = self.create_subscription(
+            String,
+            '/conversation_backend',
+            self.backend_callback,
             10
         )
         
@@ -281,6 +294,9 @@ class TTSNode(Node):
     
     def _preprocess_numbers(self, text: str, lang: str) -> str:
         """Convert numbers to words and pronounce math symbols."""
+        if not NUM2WORDS_AVAILABLE:
+            return text
+
         base_lang = lang.lower()[:2] if lang else 'en'
         if base_lang not in ['en', 'ro']:
             base_lang = 'en'
@@ -329,6 +345,8 @@ class TTSNode(Node):
     
     def stream_callback(self, msg: TextChunk):
         """Procesează chunk-uri de text streaming."""
+        if self.current_backend != 'legacy':
+            return
         # Sesiune nouă - resetează
         if self.current_session and msg.session_id != self.current_session:
             if not msg.is_final:
@@ -351,6 +369,14 @@ class TTSNode(Node):
     def response_callback(self, msg: Transcription):
         """Fallback for complete responses (non-streaming)."""
         pass  # Dezactivat - folosim doar streaming
+
+    def backend_callback(self, msg: String):
+        backend = msg.data.strip() or 'legacy'
+        if backend == self.current_backend:
+            return
+        self.current_backend = backend
+        if backend != 'legacy':
+            self.stop()
     
     def _clear_queues(self):
         """Golește toate queue-urile."""
@@ -374,7 +400,7 @@ class TTSNode(Node):
             try:
                 text, lang, is_final, session_id = self.text_queue.get(timeout=0.1)
                 
-                if self.stop_requested:
+                if self.stop_requested or self.current_backend != 'legacy':
                     continue
                 
                 if text:
@@ -438,6 +464,8 @@ class TTSNode(Node):
                     continue
                 
                 if self.stop_requested:
+                    continue
+                if self.current_backend != 'legacy':
                     continue
                 
                 if audio_data is not None:

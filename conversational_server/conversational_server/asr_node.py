@@ -17,7 +17,7 @@ Buffers audio while user is speaking, then transcribes when speech ends.
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio, Transcription
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 import numpy as np
 import tempfile
 import wave
@@ -104,6 +104,7 @@ class ASRNode(Node):
         
         # Anti-echo: last robot response
         self.last_bot_reply = ""
+        self.current_backend = 'legacy'
         
         # Audio subscriber
         self.audio_sub = self.create_subscription(
@@ -118,6 +119,12 @@ class ASRNode(Node):
             Bool,
             '/voice_activity',
             self.vad_callback,
+            10
+        )
+        self.backend_sub = self.create_subscription(
+            String,
+            '/conversation_backend',
+            self.backend_callback,
             10
         )
         
@@ -145,6 +152,8 @@ class ASRNode(Node):
     
     def audio_callback(self, msg: Audio):
         """Buffers audio during speech."""
+        if self.current_backend != 'legacy':
+            return
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
@@ -160,6 +169,11 @@ class ASRNode(Node):
 
     def vad_callback(self, msg: Bool):
         """Primește statusul VAD (vorbește/nu vorbește)."""
+        if self.current_backend != 'legacy':
+            self.was_speaking = False
+            self.is_speaking = False
+            self.audio_buffer = []
+            return
         self.was_speaking = self.is_speaking
         self.is_speaking = msg.data
         
@@ -173,6 +187,14 @@ class ASRNode(Node):
         if msg.text:
             self.last_bot_reply = msg.text
             self.get_logger().debug(f'📝 Stored bot reply for anti-echo: {msg.text[:50]}...')
+
+    def backend_callback(self, msg: String):
+        backend = msg.data.strip() or 'legacy'
+        if backend != self.current_backend:
+            self.current_backend = backend
+            self.audio_buffer = []
+            self.is_speaking = False
+            self.was_speaking = False
 
     def _normalize_text(self, text: str) -> str:
         """

@@ -46,6 +46,7 @@ class VoiceCommandNode(Node):
         self.declare_parameter('enable_tts_ack', True)
         self.declare_parameter('tts_ack_en', 'ack_en')
         self.declare_parameter('tts_ack_ro', 'ack_ro')
+        self.declare_parameter('transcription_topic', '/attended_transcription')
 
         self.min_transcription_confidence = float(
             self.get_parameter('min_transcription_confidence').value
@@ -55,12 +56,13 @@ class VoiceCommandNode(Node):
         self.enable_tts_ack = bool(self.get_parameter('enable_tts_ack').value)
         self.tts_ack_en = str(self.get_parameter('tts_ack_en').value)
         self.tts_ack_ro = str(self.get_parameter('tts_ack_ro').value)
+        transcription_topic = str(self.get_parameter('transcription_topic').value)
 
         self.current_speaker = 'Unknown'
 
         self.transcription_sub = self.create_subscription(
             Transcription,
-            '/transcription',
+            transcription_topic,
             self._transcription_callback,
             10
         )

@@ -12,11 +12,13 @@ from conversational_interfaces.msg import Transcription
 class SessionManagerNode(Node):
     def __init__(self):
         super().__init__('session_manager_node')
+        self.declare_parameter('transcription_topic', '/attended_transcription')
+        transcription_topic = str(self.get_parameter('transcription_topic').value)
         
         # Subscriber la transcrierea de la server (pentru a detecta intentia de goodbye din text)
         self.transcription_sub = self.create_subscription(
             Transcription,
-            '/transcription',
+            transcription_topic,
             self.transcription_callback,
             10
         )

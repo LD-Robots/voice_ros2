@@ -22,7 +22,6 @@ def _find_workspace_root():
 
 
 def generate_launch_description():
-    legacy_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'legacy'"])
     realtime_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"])
 
     client_share = get_package_share_directory('conversational_client')
@@ -36,6 +35,7 @@ def generate_launch_description():
     stop_model_path = os.path.join(voices_dir, 'stop_keyword.onnx')
     if not os.path.exists(stop_model_path):
         stop_model_path = os.path.join(models_dir, 'stop_keyword.onnx')
+    enrollment_dir = os.path.join(voices_dir, 'enrollment')
 
     hello_model_path = os.path.join(models_dir, 'hello_robot.onnx')
     stop_model_path_oww = os.path.join(models_dir, 'stop_robot.onnx')
@@ -80,13 +80,24 @@ def generate_launch_description():
         ),
         
         # ========== SERVER NODES ==========
+        Node(
+            package='conversational_server',
+            executable='backend_manager_node',
+            name='backend_manager_node',
+            output='screen',
+            parameters=[{
+                'preferred_backend': LaunchConfiguration('conversation_backend'),
+                'fallback_backend': 'legacy',
+                'offline_timeout_s': 6.0,
+                'auto_return_to_preferred': True,
+            }]
+        ),
         
         Node(
             package='conversational_server',
             executable='asr_node',
             name='asr_node',
             output='screen',
-            condition=IfCondition(legacy_backend),
             parameters=[{
                 'model_size': LaunchConfiguration('asr_model_size'),
                 'device': 'cpu',
@@ -103,7 +114,6 @@ def generate_launch_description():
             executable='llm_node',
             name='llm_node',
             output='screen',
-            condition=IfCondition(legacy_backend),
             parameters=[{
                 'provider': LaunchConfiguration('llm_provider'),
                 'model': LaunchConfiguration('llm_model'),
@@ -119,7 +129,6 @@ def generate_launch_description():
             executable='tts_node',
             name='tts_node',
             output='screen',
-            condition=IfCondition(legacy_backend),
             parameters=[{
                 'voice_en': 'en-GB-RyanNeural',  # British male voice (Ryan)
                 'voice_ro': 'ro-RO-EmilNeural',
@@ -164,6 +173,17 @@ def generate_launch_description():
                 'session_timeout': 30.0,     # Reset to standby after 30s silence (was 8s)
             }]
         ),
+
+        Node(
+            package='conversational_client',
+            executable='audio_segment_node',
+            name='audio_segment_node',
+            output='screen',
+            parameters=[{
+                'min_segment_seconds': 0.5,
+                'max_segment_seconds': 30.0,
+            }]
+        ),
         
         # Audio Playback (difuzor)
         Node(
@@ -190,7 +210,39 @@ def generate_launch_description():
                 'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
             }]
         ),
-        
+
+        Node(
+            package='conversational_client',
+            executable='speaker_id_node',
+            name='speaker_id_node',
+            output='screen',
+            parameters=[{
+                'enrollment_dir': enrollment_dir,
+                'similarity_threshold': 0.25,
+            }]
+        ),
+
+        Node(
+            package='conversational_client',
+            executable='attention_manager_node',
+            name='attention_manager_node',
+            output='screen',
+        ),
+
+        Node(
+            package='conversational_client',
+            executable='person_memory_store_node',
+            name='person_memory_store_node',
+            output='screen',
+        ),
+
+        Node(
+            package='conversational_client',
+            executable='conversation_control_node',
+            name='conversation_control_node',
+            output='screen',
+        ),
+
         # Wake Word + Stop Keyword (OpenWakeWord unified)
         # Detectează: "hello robot" (wake), "stop robot" (barge_in), "goodbye robot" (stop)
         Node(
@@ -210,6 +262,13 @@ def generate_launch_description():
                 # Threshold-uri individuale per model
                 'model_thresholds': 'hello_robot:0.30,stop_robot:0.25,goodbye_robot:0.40',
             }]
+        ),
+
+        Node(
+            package='conversational_client',
+            executable='session_manager_node',
+            name='session_manager_node',
+            output='screen',
         ),
 
         # Voice Command Intent (raise hands / move / dance)

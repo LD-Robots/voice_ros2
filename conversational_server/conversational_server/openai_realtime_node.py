@@ -108,6 +108,13 @@ class OpenAIRealtimeNode(Node):
         self.robot_speaking = False
         self.waiting_for_robot_confirmation = False
         self.current_speaker = 'Unknown'
+        self.current_backend = 'openai_realtime'
+        self.person_context = {
+            'speaker': 'Unknown',
+            'preferred_name': '',
+            'preferred_language': '',
+            'facts': [],
+        }
 
         self._ws_app = None
         self._ws_thread = threading.Thread(
@@ -143,6 +150,7 @@ class OpenAIRealtimeNode(Node):
         self.stream_pub = self.create_publisher(TextChunk, '/llm_stream', 10)
         self.response_pub = self.create_publisher(Transcription, '/llm_response', 10)
         self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.status_pub = self.create_publisher(String, '/openai_realtime_status', 10)
 
         self.audio_sub = self.create_subscription(Audio, '/audio_raw', self.audio_callback, 10)
         self.session_sub = self.create_subscription(
@@ -182,8 +190,21 @@ class OpenAIRealtimeNode(Node):
             self.robot_status_callback,
             10,
         )
+        self.backend_sub = self.create_subscription(
+            String,
+            '/conversation_backend',
+            self.backend_callback,
+            10,
+        )
+        self.person_context_sub = self.create_subscription(
+            String,
+            '/person_context',
+            self.person_context_callback,
+            10,
+        )
 
         self._ws_thread.start()
+        self._publish_status('connecting')
         self.get_logger().info(
             f'OpenAI Realtime Node started with model={self.model}, voice={self.voice}'
         )
@@ -210,6 +231,15 @@ class OpenAIRealtimeNode(Node):
     def speaking_callback(self, msg: Bool):
         self.robot_speaking = bool(msg.data)
 
+    def backend_callback(self, msg: String):
+        backend = msg.data.strip() or 'legacy'
+        if backend == self.current_backend:
+            return
+        self.current_backend = backend
+        if backend != 'openai_realtime':
+            self._cancel_and_clear()
+        self._refresh_session()
+
     def stop_callback(self, msg: Bool):
         if msg.data:
             self._truncate_current_audio('tts_stop')
@@ -232,6 +262,19 @@ class OpenAIRealtimeNode(Node):
         if speaker != self.current_speaker:
             self.current_speaker = speaker
             self._refresh_session()
+
+    def person_context_callback(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+        self.person_context = {
+            'speaker': str(payload.get('speaker', 'Unknown') or 'Unknown'),
+            'preferred_name': str(payload.get('preferred_name', '') or ''),
+            'preferred_language': str(payload.get('preferred_language', '') or ''),
+            'facts': list(payload.get('facts', []) or []),
+        }
+        self._refresh_session()
 
     def robot_command_callback(self, msg: RobotCommand):
         # Keep robot motion logic local; suppress assistant chatter for commands.
@@ -259,6 +302,8 @@ class OpenAIRealtimeNode(Node):
 
     def audio_callback(self, msg: Audio):
         if not self.session_active or not self._connected.is_set():
+            return
+        if self.current_backend != 'openai_realtime':
             return
         if not self.capture_during_playback and self.robot_speaking:
             return
@@ -306,13 +351,16 @@ class OpenAIRealtimeNode(Node):
     def _on_open(self, ws):
         self.get_logger().info('Connected to OpenAI Realtime API')
         self._connected.set()
+        self._publish_status('online')
         self._refresh_session()
 
     def _on_close(self, ws, status_code, msg):
         self._connected.clear()
+        self._publish_status('offline')
         self.get_logger().warn(f'OpenAI Realtime disconnected: code={status_code}, msg={msg}')
 
     def _on_error(self, ws, error):
+        self._publish_status('error')
         self.get_logger().error(f'OpenAI Realtime error: {error}')
 
     def _on_message(self, ws, message):
@@ -386,6 +434,7 @@ class OpenAIRealtimeNode(Node):
         if event_type == 'error':
             error = event.get('error', {})
             message = error.get('message') or str(error)
+            self._publish_status('error')
             self.get_logger().error(f'OpenAI Realtime API error: {message}')
 
     def _handle_output_audio_delta(self, event: dict):
@@ -478,7 +527,7 @@ class OpenAIRealtimeNode(Node):
             self._refresh_session()
 
     def _refresh_session(self):
-        if not self._connected.is_set():
+        if not self._connected.is_set() or self.current_backend != 'openai_realtime':
             return
 
         instructions = self._build_instructions()
@@ -513,6 +562,15 @@ class OpenAIRealtimeNode(Node):
         extras = []
         if self.current_speaker != 'Unknown':
             extras.append(f'Current identified speaker: {self.current_speaker}.')
+        preferred_name = self.person_context.get('preferred_name', '')
+        if preferred_name:
+            extras.append(f'Preferred name for this speaker: {preferred_name}.')
+        preferred_language = self.person_context.get('preferred_language', '')
+        if preferred_language:
+            extras.append(f'Preferred language for this speaker: {preferred_language}.')
+        facts = self.person_context.get('facts', []) or []
+        if facts:
+            extras.append('Known personal facts: ' + '; '.join(str(fact) for fact in facts[:8]) + '.')
         if self.waiting_for_robot_confirmation:
             extras.append(
                 'A risky robot command is awaiting local confirmation. '
@@ -655,6 +713,11 @@ class OpenAIRealtimeNode(Node):
             'played_ms': 0,
             'stopped': False,
         }
+
+    def _publish_status(self, status: str):
+        msg = String()
+        msg.data = status
+        self.status_pub.publish(msg)
 
     def _capture_pending_resume(self, item_id: str, played_ms: int):
         text = self._assistant_text.get(item_id, '').strip() if item_id else ''
