@@ -137,7 +137,10 @@ class SpeakerIdNode(Node):
 
         # Initialize SpeakerManager
         try:
-            self.speaker_manager = SpeakerManager(self.enrollment_dir)
+            self.speaker_manager = SpeakerManager(
+                self.enrollment_dir,
+                threshold=self.similarity_threshold,
+            )
             self.db_loaded = True
             self.get_logger().info(
                 f'✅ Speaker database loaded: {len(wav_files)} voci '

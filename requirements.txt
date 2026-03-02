@@ -32,3 +32,4 @@ torchcodec>=0.10.0
 
 # Utilities
 requests>=2.31.0
+websocket-client>=1.8.0
