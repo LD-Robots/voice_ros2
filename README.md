@@ -123,7 +123,8 @@ source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar
+    realtime_voice:=cedar \
+    realtime_capture_during_playback:=false
 ```
 
 ### Server Only
@@ -140,7 +141,8 @@ source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_server server_pipeline.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar
+    realtime_voice:=cedar \
+    realtime_capture_during_playback:=false
 ```
 
 ### Client Only (on robot hardware)
@@ -198,13 +200,15 @@ Available Groq models:
 ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar
+    realtime_voice:=cedar \
+    realtime_capture_during_playback:=false
 ```
 
 Recommended first test:
 - `conversation_backend:=openai_realtime`
 - `realtime_model:=gpt-realtime-mini`
 - `realtime_voice:=cedar`
+- `realtime_capture_during_playback:=false`
 
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
