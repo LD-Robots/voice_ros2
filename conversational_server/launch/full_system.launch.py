@@ -68,6 +68,7 @@ def generate_launch_description():
                 'language': 'ro_en',  # Enable Romanian/English detection
                 'beam_size': 8,  # Higher = more accurate (default was 5)
                 'initial_prompt': 'A bilingual conversation in Romanian and English. O conversație bilingvă.',
+                'speech_pause_s': 3.0,  # Wait 5s for more speech before processing
             }]
         ),
         
