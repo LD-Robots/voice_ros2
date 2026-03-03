@@ -57,7 +57,8 @@ class ASRNode(Node):
         self.declare_parameter('language', '')  # Empty = auto-detect, 'ro_en' = detect best
         self.declare_parameter('beam_size', 5)
         self.declare_parameter('vad_min_silence_ms', 300)
-        self.declare_parameter('speech_pause_s', 5.0)  # Grace period before processing
+        self.declare_parameter('speech_pause_s', 2.0)  # Grace period before processing
+        self.declare_parameter('min_speech_duration', 0.3)  # Min seconds of actual speech to trigger processing
         self.declare_parameter('warmup_enabled', True)
         
         # Anti-echo textual parameters
@@ -73,6 +74,7 @@ class ASRNode(Node):
         self.beam_size = self.get_parameter('beam_size').value
         self.vad_min_silence_ms = self.get_parameter('vad_min_silence_ms').value
         self.speech_pause_s = self.get_parameter('speech_pause_s').value
+        self.min_speech_duration = self.get_parameter('min_speech_duration').value
         self.warmup_enabled = self.get_parameter('warmup_enabled').value
         
         # Anti-echo settings
@@ -104,6 +106,7 @@ class ASRNode(Node):
         self.is_speaking = False
         self.was_speaking = False
         self.pause_timer = None  # Timer for speech pause
+        self.speech_frame_count = 0  # Count frames where user was actually speaking
         
         # Anti-echo: last robot response
         self.last_bot_reply = ""
@@ -166,12 +169,21 @@ class ASRNode(Node):
         self.was_speaking = self.is_speaking
         self.is_speaking = msg.data
         
-        if self.was_speaking and not self.is_speaking:
-            # User stopped speaking — start grace period before processing
-            self._start_pause_timer()
-        elif not self.was_speaking and self.is_speaking:
-            # User resumed speaking — cancel pending processing
+        if self.is_speaking:
+            # User is speaking — count speech frames and cancel pending processing
+            self.speech_frame_count += 1
             self._cancel_pause_timer()
+        elif self.was_speaking and not self.is_speaking:
+            # User stopped speaking — only start pause timer if there was enough actual speech
+            min_frames = int(self.min_speech_duration * self.sample_rate / 320)  # ~320 samples per VAD frame
+            if self.speech_frame_count >= min_frames:
+                self._start_pause_timer()
+            else:
+                # Too short — probably just noise, ignore
+                self.get_logger().debug(
+                    f'🔇 Ignoring short noise burst ({self.speech_frame_count} frames < {min_frames} min)'
+                )
+                self.speech_frame_count = 0
 
     def _start_pause_timer(self):
         """Start the speech pause timer."""
@@ -189,6 +201,7 @@ class ASRNode(Node):
         """Called when the speech pause expires — process the buffered audio."""
         self._cancel_pause_timer()
         self.get_logger().debug(f'🔚 Pause expired, processing {len(self.audio_buffer)} frames...')
+        self.speech_frame_count = 0  # Reset for next utterance
         self._process_buffer()
 
     def llm_response_callback(self, msg: Transcription):
