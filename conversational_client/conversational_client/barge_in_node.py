@@ -131,6 +131,7 @@ class BargeInNode(Node):
         self.declare_parameter('stop_hits_required', 2)
         self.declare_parameter('stop_frame_samples', 16000)  # Frame size in samples
         self.declare_parameter('stop_hop_samples', 8000)     # Hop size in samples
+        self.declare_parameter('stop_requires_voice_signature', True)
         
         self.sr = self.get_parameter('sample_rate').value
         self.min_voice_ms = self.get_parameter('min_voice_ms').value
@@ -156,6 +157,7 @@ class BargeInNode(Node):
         self.last_voice_ms = 0  # Last moment with voice
         self.last_trigger_ms = 0  # Last barge-in
         self.start_ms = int(time.time() * 1000)
+        self.tts_started_ms = 0
         
         # Anti-echo baseline
         self.leak_baseline_dbfs = None
@@ -165,6 +167,9 @@ class BargeInNode(Node):
         self.stop_detector = None
         stop_model_path = self.get_parameter('stop_model_path').value
         stop_enabled = self.get_parameter('stop_enabled').value
+        self.stop_requires_voice_signature = bool(
+            self.get_parameter('stop_requires_voice_signature').value
+        )
         
         if stop_enabled and STOP_DETECTOR_AVAILABLE and stop_model_path and os.path.exists(stop_model_path):
             try:
@@ -230,7 +235,15 @@ class BargeInNode(Node):
         
         # When TTS starts speaking, reset the anti-echo baseline
         if msg.data and not was_speaking:
+            self.tts_started_ms = int(time.time() * 1000)
             self.leak_baseline_dbfs = None
+            self.last_voice_ms = 0
+            if self.stop_detector:
+                self.stop_detector.reset()
+        elif not msg.data and was_speaking:
+            self.last_voice_ms = 0
+            if self.stop_detector:
+                self.stop_detector.reset()
     
     def audio_callback(self, msg: Audio):
         """Process audio for stop keyword detection."""
@@ -245,11 +258,12 @@ class BargeInNode(Node):
             return
         
         # Debounce - ignore duplicate detections
-        if (now_ms - self.last_trigger_ms) < 2000:
+        if (now_ms - self.last_trigger_ms) < self.cooldown_ms:
             return
         
         # Convert to int16
         pcm = np.array(msg.data, dtype=np.int16)
+        has_voice_signature = self._is_human_voice(pcm, now_ms)
         
         # ══════════════════════════════════════════════════════════
         # STOP KEYWORD DETECTOR (only when TTS is speaking)
@@ -258,6 +272,11 @@ class BargeInNode(Node):
             try:
                 stop_result = self.stop_detector.process_block(pcm)
                 if stop_result:
+                    if self.stop_requires_voice_signature and not has_voice_signature:
+                        self.get_logger().debug(
+                            'Ignoring stop keyword hit without strong human-voice signature'
+                        )
+                        return
                     self.get_logger().info(
                         f'🛑 STOP KEYWORD detected (p={stop_result.probability:.2f}) - Barge-in!'
                     )
@@ -316,7 +335,7 @@ class BargeInNode(Node):
         # Voice hold - keep detection during short dropouts
         if (now_ms - self.last_voice_ms) <= self.voice_hold_ms:
             return True
-        
+        self.last_voice_ms = now_ms
         return True
     
     def _maybe_decay_leak(self, now_ms: int):
@@ -353,6 +372,9 @@ class BargeInNode(Node):
         now_ms = int(time.time() * 1000)
         self.last_trigger_ms = now_ms
         self.voiced_ms = 0
+        self.last_voice_ms = 0
+        if self.stop_detector:
+            self.stop_detector.reset()
         
         self.get_logger().debug('_trigger_barge_in called')
         

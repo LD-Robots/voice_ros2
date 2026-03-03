@@ -8,10 +8,8 @@ assistant audio back into the existing ROS2 audio playback pipeline.
 import base64
 import json
 import os
-import re
 import threading
 import time
-import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -19,7 +17,24 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio, TextChunk, Transcription, RobotCommand
+from conversational_client.conversation_utils import (
+    advance_attention_focus,
+    can_accept_control_action,
+    can_accept_reengagement,
+    decide_attention,
+    detect_control_action,
+    has_direct_robot_address,
+    is_reengagement_phrase,
+)
 from std_msgs.msg import Bool, String
+from .language_utils import ConversationLanguageTracker
+from .prompt_config import load_prompt_defaults
+from .realtime_text_utils import (
+    StickySpeakerTracker,
+    is_resume_request,
+    normalize_realtime_text,
+    should_preserve_paused_transcript,
+)
 
 try:
     import websocket
@@ -64,17 +79,20 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('vad_threshold', 0.65)
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 800)
+        self.declare_parameter('response_create_delay_ms', 450)
+        self.declare_parameter('local_response_gating', True)
         self.declare_parameter('short_transcript_dedupe_window_s', 4.0)
         self.declare_parameter('reconnect_delay_s', 3.0)
+        self.declare_parameter('sticky_speaker_timeout_s', 60.0)
+        self.declare_parameter('speaker_switch_hits_required', 2)
+        self.declare_parameter('language_switch_hits_required', 2)
+        self.declare_parameter('focus_timeout_s', 45.0)
+        self.declare_parameter('focus_recognition_window_s', 3.0)
+        self.declare_parameter('utterance_capture_prefix_ms', 400)
+        self.declare_parameter('utterance_capture_min_ms', 800)
         self.declare_parameter(
             'instructions',
-            (
-                "You are Robot, a friendly bilingual Romanian/English humanoid robot buddy. "
-                "Always answer in the same language as the latest user utterance. "
-                "Keep answers short, natural, spoken, with no markdown and no emojis. "
-                "If the user gives a robot movement or behavior command, stay silent because "
-                "the robot control stack handles that request locally."
-            ),
+            str(load_prompt_defaults().get('realtime_instructions', '')),
         )
 
         self.model = str(self.get_parameter('model').value)
@@ -94,11 +112,33 @@ class OpenAIRealtimeNode(Node):
         self.vad_silence_duration_ms = int(
             self.get_parameter('vad_silence_duration_ms').value
         )
+        self.response_create_delay_ms = max(
+            0,
+            int(self.get_parameter('response_create_delay_ms').value),
+        )
+        self.local_response_gating = bool(self.get_parameter('local_response_gating').value)
         self.short_transcript_dedupe_window_s = float(
             self.get_parameter('short_transcript_dedupe_window_s').value
         )
         self.reconnect_delay_s = float(self.get_parameter('reconnect_delay_s').value)
+        self.utterance_capture_prefix_ms = int(
+            self.get_parameter('utterance_capture_prefix_ms').value
+        )
+        self.utterance_capture_min_ms = int(
+            self.get_parameter('utterance_capture_min_ms').value
+        )
         self.base_instructions = str(self.get_parameter('instructions').value)
+        self.speaker_tracker = StickySpeakerTracker(
+            float(self.get_parameter('sticky_speaker_timeout_s').value),
+            int(self.get_parameter('speaker_switch_hits_required').value),
+        )
+        self.focus_timeout_s = float(self.get_parameter('focus_timeout_s').value)
+        self.focus_recognition_window_s = float(
+            self.get_parameter('focus_recognition_window_s').value
+        )
+        self.language_tracker = ConversationLanguageTracker(
+            int(self.get_parameter('language_switch_hits_required').value)
+        )
 
         self.api_key = os.environ.get('OPENAI_API_KEY')
         if not self.api_key:
@@ -113,7 +153,12 @@ class OpenAIRealtimeNode(Node):
         self.robot_speaking = False
         self.waiting_for_robot_confirmation = False
         self.current_speaker = 'Unknown'
+        self.last_raw_speaker = 'Unknown'
         self.current_backend = 'openai_realtime'
+        self.focused_speaker = 'Unknown'
+        self.last_focus_time = 0.0
+        self.pending_focus_speaker = 'Unknown'
+        self.pending_focus_at = 0.0
         self.person_context = {
             'speaker': 'Unknown',
             'preferred_name': '',
@@ -149,15 +194,26 @@ class OpenAIRealtimeNode(Node):
         self._pending_resume_remaining = ''
         self._pending_resume_played_ms = 0
         self._resume_requested = False
+        self._last_response_request_item_id = ''
+        self._pending_response_timer = None
+        self._pending_response_item_id = ''
+        self._pending_response_reason = ''
         self._paused_transcript_pending = ''
         self._paused_transcript_at = 0.0
         self._last_accepted_user_transcript_norm = ''
         self._last_accepted_user_transcript_at = 0.0
+        self._recent_input_audio = []
+        self._current_user_audio = []
+        self._capture_user_audio = False
+        self._current_input_sample_rate = self.input_sample_rate
+        self._current_input_channels = 1
 
         self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
+        self.user_audio_segment_pub = self.create_publisher(Audio, '/realtime_user_audio_segment', 10)
         self.transcription_pub = self.create_publisher(Transcription, '/transcription', 10)
         self.stream_pub = self.create_publisher(TextChunk, '/llm_stream', 10)
         self.response_pub = self.create_publisher(Transcription, '/llm_response', 10)
+        self.pause_state_pub = self.create_publisher(Bool, '/conversation_pause', 10)
         self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
         self.status_pub = self.create_publisher(String, '/openai_realtime_status', 10)
 
@@ -227,6 +283,7 @@ class OpenAIRealtimeNode(Node):
     def destroy_node(self):
         self._running = False
         self._connected.clear()
+        self._cancel_pending_response_create()
         try:
             if self._ws_app is not None:
                 self._ws_app.close()
@@ -241,26 +298,41 @@ class OpenAIRealtimeNode(Node):
             self._refresh_session()
         else:
             self.get_logger().info('OpenAI conversation session is INACTIVE')
+            self.speaker_tracker.reset()
+            self.current_speaker = 'Unknown'
+            self.last_raw_speaker = 'Unknown'
+            self.language_tracker.reset()
+            self.focused_speaker = 'Unknown'
+            self.last_focus_time = 0.0
+            self.pending_focus_speaker = 'Unknown'
+            self.pending_focus_at = 0.0
             self._cancel_and_clear()
 
     def speaking_callback(self, msg: Bool):
         self.robot_speaking = bool(msg.data)
 
     def pause_callback(self, msg: Bool):
-        paused = bool(msg.data)
+        self._apply_pause_state(bool(msg.data), publish=False)
+
+    def _apply_pause_state(self, paused: bool, *, publish: bool):
         if paused == self.conversation_paused:
             return
         self.conversation_paused = paused
         if paused:
             self.get_logger().info('OpenAI conversation paused: listening without responding')
+            self._cancel_pending_response_create()
             self._truncate_current_audio('conversation_paused')
         else:
             self.get_logger().info('OpenAI conversation resumed')
         self._refresh_session()
         if not paused and self._paused_transcript_pending:
-            self._send_event({'type': 'response.create'})
+            self._schedule_response_create('', reason='resume_from_pause')
             self._paused_transcript_pending = ''
             self._paused_transcript_at = 0.0
+        if publish:
+            msg = Bool()
+            msg.data = paused
+            self.pause_state_pub.publish(msg)
 
     def backend_callback(self, msg: String):
         backend = msg.data.strip() or 'legacy'
@@ -293,7 +365,12 @@ class OpenAIRealtimeNode(Node):
         }
 
     def speaker_callback(self, msg: String):
-        speaker = msg.data.strip() or 'Unknown'
+        raw_speaker = msg.data.strip() or 'Unknown'
+        self.last_raw_speaker = raw_speaker
+        speaker = self.speaker_tracker.update(raw_speaker)
+        if raw_speaker != 'Unknown' and speaker == raw_speaker:
+            self.pending_focus_speaker = raw_speaker
+            self.pending_focus_at = time.monotonic()
         if speaker != self.current_speaker:
             self.current_speaker = speaker
             self._refresh_session()
@@ -309,6 +386,7 @@ class OpenAIRealtimeNode(Node):
             'preferred_language': str(payload.get('preferred_language', '') or ''),
             'facts': list(payload.get('facts', []) or []),
         }
+        self.language_tracker.seed(self.person_context.get('preferred_language', ''))
         self._refresh_session()
 
     def robot_command_callback(self, msg: RobotCommand):
@@ -344,6 +422,12 @@ class OpenAIRealtimeNode(Node):
             return
         if not msg.data:
             return
+
+        self._current_input_sample_rate = int(msg.sample_rate or self.input_sample_rate)
+        self._current_input_channels = int(msg.channels or 1)
+        self._remember_input_audio(msg.data)
+        if self._capture_user_audio:
+            self._current_user_audio.extend(msg.data)
 
         pcm = np.array(msg.data, dtype=np.int16)
         pcm = self._resample_pcm16(pcm, int(msg.sample_rate), self.api_sample_rate)
@@ -409,14 +493,17 @@ class OpenAIRealtimeNode(Node):
 
         if event_type == 'input_audio_buffer.speech_started':
             self.get_logger().info('OpenAI Realtime detected user speech start')
+            self._cancel_pending_response_create()
             stop_msg = Bool()
             stop_msg.data = True
             self.tts_stop_pub.publish(stop_msg)
             self._truncate_current_audio('speech_started')
+            self._start_user_audio_capture()
             return
 
         if event_type == 'input_audio_buffer.speech_stopped':
             self.get_logger().info('OpenAI Realtime detected user speech stop')
+            self._publish_captured_user_audio_segment()
             return
 
         if event_type == 'response.created':
@@ -428,6 +515,7 @@ class OpenAIRealtimeNode(Node):
             return
 
         if event_type == 'conversation.item.input_audio_transcription.completed':
+            item_id = str(event.get('item_id', '') or '')
             transcript = (event.get('transcript') or '').strip()
             if transcript:
                 ignore_reason = self._ignored_transcript_reason(transcript)
@@ -436,24 +524,80 @@ class OpenAIRealtimeNode(Node):
                         f'Ignoring short/accidental transcript ({ignore_reason}): {transcript}'
                     )
                     self._cancel_current_pending_response(ignore_reason)
+                    self._delete_conversation_item(item_id, ignore_reason)
                     return
                 self.get_logger().info(f'OpenAI transcript: {transcript}')
+                focus_candidate = self._consume_focus_candidate()
                 normalized = self._normalize_text(transcript)
+                direct_address = has_direct_robot_address(normalized)
+                control_action = detect_control_action(normalized)
+                reengagement = is_reengagement_phrase(normalized)
                 if normalized:
                     self._last_accepted_user_transcript_norm = normalized
                     self._last_accepted_user_transcript_at = time.monotonic()
+                if control_action == 'hold_on' and can_accept_control_action(
+                    control_action,
+                    current_speaker=self.current_speaker,
+                    focused_speaker=self.focused_speaker,
+                    session_active=self.session_active,
+                    conversation_paused=self.conversation_paused,
+                    direct_address=direct_address,
+                    normalized_text=normalized,
+                ):
+                    self._delete_conversation_item(item_id, 'pause_command')
+                    self._apply_pause_state(True, publish=True)
+                    return
+                allow, reason, effective_focus, effective_focus_time = decide_attention(
+                    session_active=self.session_active,
+                    conversation_paused=self.conversation_paused,
+                    current_speaker=self.current_speaker,
+                    focused_speaker=self.focused_speaker,
+                    last_focus_time=self.last_focus_time,
+                    focus_timeout_s=self.focus_timeout_s,
+                    direct_address=direct_address,
+                    reengagement=reengagement,
+                    robot_directive=False,
+                    control_action=control_action,
+                    normalized_text=normalized,
+                )
+                self.focused_speaker = effective_focus
+                self.last_focus_time = effective_focus_time
+                if not allow:
+                    self._delete_conversation_item(item_id, reason)
+                    self.get_logger().info(
+                        f'Ignored realtime side conversation from speaker={self.current_speaker}: "{transcript}" ({reason})'
+                    )
+                    return
                 if self.conversation_paused:
-                    self._paused_transcript_pending = transcript
-                    self._paused_transcript_at = time.monotonic()
+                    if control_action in ('continue', 'repeat') or reengagement:
+                        self._paused_transcript_pending = transcript
+                        self._paused_transcript_at = time.monotonic()
+                        self._apply_pause_state(False, publish=True)
+                        return
+                    self._delete_conversation_item(item_id, reason)
+                    return
+                self.focused_speaker, self.last_focus_time = advance_attention_focus(
+                    current_speaker=self.current_speaker,
+                    focused_speaker=self.focused_speaker,
+                    last_focus_time=self.last_focus_time,
+                    allow=True,
+                    recognized_speaker=focus_candidate,
+                )
                 if self._pending_resume_text:
                     self._resume_requested = self._is_resume_request(transcript)
                     if self._resume_requested:
                         self.get_logger().info('Resume request detected for interrupted reply')
+                active_language = self.language_tracker.observe(
+                    transcript,
+                    preferred_language=self.person_context.get('preferred_language', ''),
+                )
+                self._refresh_session()
                 out = Transcription()
                 out.text = transcript
-                out.language = ''
+                out.language = active_language
                 out.confidence = 1.0
                 self.transcription_pub.publish(out)
+                self._schedule_response_create(item_id, reason='accepted_transcript')
             return
 
         if event_type in ('response.audio.delta', 'response.output_audio.delta'):
@@ -574,6 +718,7 @@ class OpenAIRealtimeNode(Node):
             self._mark_response_inactive(response_id)
         else:
             self._mark_response_inactive()
+        self._last_response_request_item_id = ''
         if self._pending_resume_text:
             self._clear_pending_resume()
             self._refresh_session()
@@ -588,7 +733,7 @@ class OpenAIRealtimeNode(Node):
             'threshold': self.vad_threshold,
             'prefix_padding_ms': self.vad_prefix_padding_ms,
             'silence_duration_ms': self.vad_silence_duration_ms,
-            'create_response': not self.conversation_paused,
+            'create_response': (not self.local_response_gating) and (not self.conversation_paused),
             'interrupt_response': not self.conversation_paused,
         }
 
@@ -610,6 +755,41 @@ class OpenAIRealtimeNode(Node):
             'session': session,
         })
 
+    def _remember_input_audio(self, samples):
+        if not samples:
+            return
+        max_samples = max(
+            1,
+            int(self._current_input_sample_rate * max(0, self.utterance_capture_prefix_ms) / 1000.0),
+        )
+        self._recent_input_audio.extend(samples)
+        if len(self._recent_input_audio) > max_samples:
+            self._recent_input_audio = self._recent_input_audio[-max_samples:]
+
+    def _start_user_audio_capture(self):
+        self._capture_user_audio = True
+        self._current_user_audio = list(self._recent_input_audio)
+
+    def _publish_captured_user_audio_segment(self):
+        if not self._capture_user_audio:
+            return
+        self._capture_user_audio = False
+
+        min_samples = max(
+            1,
+            int(self._current_input_sample_rate * max(0, self.utterance_capture_min_ms) / 1000.0),
+        )
+        if len(self._current_user_audio) < min_samples:
+            self._current_user_audio = []
+            return
+
+        out = Audio()
+        out.sample_rate = self._current_input_sample_rate
+        out.channels = self._current_input_channels
+        out.data = list(self._current_user_audio)
+        self.user_audio_segment_pub.publish(out)
+        self._current_user_audio = []
+
     def _build_instructions(self) -> str:
         extras = []
         if self.current_speaker != 'Unknown':
@@ -620,6 +800,15 @@ class OpenAIRealtimeNode(Node):
         preferred_language = self.person_context.get('preferred_language', '')
         if preferred_language:
             extras.append(f'Preferred language for this speaker: {preferred_language}.')
+        conversation_language = self.language_tracker.current_language
+        if conversation_language == 'ro':
+            extras.append(
+                'Current conversation language is Romanian. Keep speaking Romanian unless the user clearly asks to switch language.'
+            )
+        elif conversation_language == 'en':
+            extras.append(
+                'Current conversation language is English. Keep speaking English unless the user clearly asks to switch language.'
+            )
         facts = self.person_context.get('facts', []) or []
         if facts:
             extras.append('Known personal facts: ' + '; '.join(str(fact) for fact in facts[:8]) + '.')
@@ -654,6 +843,7 @@ class OpenAIRealtimeNode(Node):
         return ' '.join([self.base_instructions, *extras]).strip()
 
     def _cancel_and_clear(self):
+        self._cancel_pending_response_create()
         if not self._connected.is_set():
             return
         if self._response_active:
@@ -664,6 +854,10 @@ class OpenAIRealtimeNode(Node):
         self._seen_output_audio_for_response.clear()
         self._clear_playback_progress()
         self._clear_pending_resume()
+        self._last_response_request_item_id = ''
+        self._capture_user_audio = False
+        self._current_user_audio = []
+        self._recent_input_audio = []
         self._mark_response_inactive()
 
     def _truncate_current_audio(self, reason: str):
@@ -703,6 +897,47 @@ class OpenAIRealtimeNode(Node):
             f'Truncated current assistant audio ({reason}): item={item_id}, played_ms={played_ms}'
         )
         self._refresh_session()
+
+    def _cancel_pending_response_create(self):
+        timer = self._pending_response_timer
+        self._pending_response_timer = None
+        self._pending_response_item_id = ''
+        self._pending_response_reason = ''
+        if timer is None:
+            return
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+
+    def _schedule_response_create(self, item_id: str, *, reason: str) -> bool:
+        if self.response_create_delay_ms <= 0:
+            return self._request_response_create(item_id, reason=reason)
+        if self.conversation_paused or self.waiting_for_robot_confirmation:
+            return False
+        if self._response_active:
+            return False
+        if item_id and item_id == self._last_response_request_item_id:
+            return False
+
+        self._cancel_pending_response_create()
+        self._pending_response_item_id = item_id
+        self._pending_response_reason = reason
+        delay_s = self.response_create_delay_ms / 1000.0
+        self._pending_response_timer = self.create_timer(
+            delay_s,
+            self._fire_pending_response_create,
+        )
+        self.get_logger().debug(
+            f'Scheduled realtime response in {delay_s:.3f}s ({reason}) for item={item_id or "n/a"}'
+        )
+        return True
+
+    def _fire_pending_response_create(self):
+        item_id = self._pending_response_item_id
+        reason = self._pending_response_reason or 'delayed_response'
+        self._cancel_pending_response_create()
+        self._request_response_create(item_id, reason=reason)
 
     def _send_event(self, event: dict) -> bool:
         if not self._connected.is_set() or self._ws_app is None:
@@ -779,11 +1014,33 @@ class OpenAIRealtimeNode(Node):
         self.status_pub.publish(msg)
 
     def _cancel_current_pending_response(self, reason: str):
+        self._cancel_pending_response_create()
         if self._response_active:
             self._send_event({'type': 'response.cancel'})
             self._mark_response_inactive()
         self._send_event({'type': 'input_audio_buffer.clear'})
         self.get_logger().debug(f'Canceled pending realtime response ({reason})')
+
+    def _delete_conversation_item(self, item_id: str, reason: str):
+        if not item_id:
+            return
+        self._send_event({
+            'type': 'conversation.item.delete',
+            'item_id': item_id,
+        })
+        self.get_logger().debug(f'Deleted realtime conversation item {item_id} ({reason})')
+
+    def _consume_focus_candidate(self) -> str:
+        now = time.monotonic()
+        candidate = self.pending_focus_speaker
+        candidate_at = self.pending_focus_at
+        self.pending_focus_speaker = 'Unknown'
+        self.pending_focus_at = 0.0
+        if candidate == 'Unknown':
+            return 'Unknown'
+        if (now - candidate_at) > self.focus_recognition_window_s:
+            return 'Unknown'
+        return candidate
 
     @staticmethod
     def _is_benign_realtime_error(message: str) -> bool:
@@ -809,6 +1066,22 @@ class OpenAIRealtimeNode(Node):
         self._pending_resume_played_ms = 0
         self._resume_requested = False
 
+    def _request_response_create(self, item_id: str, *, reason: str) -> bool:
+        self._cancel_pending_response_create()
+        if self.conversation_paused or self.waiting_for_robot_confirmation:
+            return False
+        if self._response_active:
+            return False
+        if item_id and item_id == self._last_response_request_item_id:
+            return False
+        if not self._send_event({'type': 'response.create'}):
+            return False
+        self._last_response_request_item_id = item_id
+        self.get_logger().debug(
+            f'Requested realtime response ({reason}) for item={item_id or "n/a"}'
+        )
+        return True
+
     def _estimate_remaining_text(self, text: str, played_ms: int) -> str:
         clean_text = text.strip()
         if not clean_text:
@@ -832,22 +1105,10 @@ class OpenAIRealtimeNode(Node):
         return clean_text[cut_idx:].lstrip(' ,.;:!?-')
 
     def _is_resume_request(self, text: str) -> bool:
-        normalized = self._normalize_text(text)
-        resume_patterns = (
-            'continue',
-            'resume',
-            'continue please',
-            'continua',
-            'continua te rog',
-            'reia',
-            'reia raspunsul',
-            'reia de unde ai ramas',
-            'continua raspunsul',
-            'continue the answer',
-            'continue your answer',
-            'pick up where you left off',
-        )
-        return any(pattern in normalized for pattern in resume_patterns)
+        return is_resume_request(text)
+
+    def _should_preserve_paused_transcript(self, text: str) -> bool:
+        return should_preserve_paused_transcript(text)
 
     def _ignored_transcript_reason(self, text: str) -> str:
         normalized = self._normalize_text(text)
@@ -905,10 +1166,7 @@ class OpenAIRealtimeNode(Node):
 
     @staticmethod
     def _normalize_text(text: str) -> str:
-        normalized = unicodedata.normalize('NFKD', text.lower())
-        normalized = ''.join(ch for ch in normalized if not unicodedata.combining(ch))
-        normalized = re.sub(r'[^a-z0-9\\s]+', ' ', normalized)
-        return ' '.join(normalized.split())
+        return normalize_realtime_text(text)
 
 
 def main(args=None):

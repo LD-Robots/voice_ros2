@@ -35,7 +35,8 @@ if __name__ == '__main__':
         print("❌ Niciun fișier .wav în enrollment. Rulează mai întâi: python3 enroll_speaker.py")
         sys.exit(1)
 
-    print(f"\n📂 Testare SpeakerManager cu {wav_count} voci...\n")
+    print(f"\n📂 Checking SpeakerManager with {wav_count} enrolled voices...\n")
+    print("ℹ️  This command validates the enrollment database only. It does not record a new voice.\n")
     manager = SpeakerManager(enrollment_path)
-    print(f"\n✅ Vorbitori încărcați: {manager.get_speakers()}")
-    print("   SpeakerManager funcționează corect!")
+    print(f"\n✅ Loaded speakers: {manager.get_speakers()}")
+    print("   SpeakerManager is working correctly.")

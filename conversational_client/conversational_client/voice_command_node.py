@@ -11,31 +11,13 @@ Publishes to:
   - /tts_command (String, optional acknowledgement)
 """
 import json
-import re
-import unicodedata
 
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import RobotCommand, Transcription
 from std_msgs.msg import String
 
-from .conversation_utils import has_direct_robot_address
-
-
-NUMBER_WORDS = {
-    # English
-    'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
-    'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
-    'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15,
-    'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20,
-    # Romanian (normalized without diacritics)
-    'zero': 0, 'un': 1, 'unu': 1, 'una': 1, 'o': 1,
-    'doi': 2, 'doua': 2, 'trei': 3, 'patru': 4, 'cinci': 5,
-    'sase': 6, 'sapte': 7, 'opt': 8, 'noua': 9, 'zece': 10,
-    'unsprezece': 11, 'doisprezece': 12, 'treisprezece': 13,
-    'paisprezece': 14, 'cincisprezece': 15, 'saisprezece': 16,
-    'saptesprezece': 17, 'optsprezece': 18, 'nouasprezece': 19, 'douazeci': 20,
-}
+from .robot_command_utils import parse_robot_command
 
 
 class VoiceCommandNode(Node):
@@ -104,15 +86,12 @@ class VoiceCommandNode(Node):
         if msg.confidence < self.min_transcription_confidence:
             return
 
-        if self.require_direct_robot_address:
-            normalized = self._normalize_text(text)
-            if not has_direct_robot_address(normalized):
-                self.get_logger().debug(
-                    f'Ignoring command-like text without direct robot address: "{text}"'
-                )
-                return
-
-        parsed = self._parse_command(text)
+        parsed = parse_robot_command(
+            text,
+            default_steps=self.default_steps,
+            max_steps=self.max_steps,
+            require_direct_robot_address=self.require_direct_robot_address,
+        )
         if not parsed:
             return
 
@@ -136,231 +115,6 @@ class VoiceCommandNode(Node):
         self.get_logger().info(
             f'Command detected: intent={cmd.intent}, direction={cmd.direction}, steps={cmd.steps}, speaker={cmd.speaker}'
         )
-
-    def _parse_command(self, text: str):
-        normalized = self._normalize_text(text)
-
-        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
-
-        stop_patterns = [
-            prefix + r'(stop|halt|freeze|cancel)\b',
-            prefix + r'(opreste|anuleaza|stop)\b',
-        ]
-        for pattern in stop_patterns:
-            if re.match(pattern, normalized):
-                return {
-                    'intent': 'stop',
-                    'direction': 'none',
-                    'steps': 0,
-                    'confidence': 0.98,
-                    'parameters': {'reason': 'voice_stop'},
-                }
-
-        raise_hands_patterns = [
-            prefix + r'(hands|arms) up\b',
-            prefix + r'(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b',
-            prefix + r'ridica\b.*\b(mainile|mana|bratele|brat)\b',
-            prefix + r'mainile sus\b',
-        ]
-        for pattern in raise_hands_patterns:
-            if re.match(pattern, normalized):
-                return {
-                    'intent': 'raise_hands',
-                    'direction': 'none',
-                    'steps': 0,
-                    'confidence': 0.95,
-                    'parameters': {'motion': 'upper_body', 'style': 'default'},
-                }
-
-        lower_hands_patterns = [
-            prefix + r'(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b',
-            prefix + r'(hands|arms) down\b',
-            prefix + r'coboara\b.*\b(mainile|mana|bratele|brat)\b',
-            prefix + r'mainile jos\b',
-        ]
-        for pattern in lower_hands_patterns:
-            if re.match(pattern, normalized):
-                return {
-                    'intent': 'lower_hands',
-                    'direction': 'none',
-                    'steps': 0,
-                    'confidence': 0.93,
-                    'parameters': {'motion': 'upper_body', 'style': 'default'},
-                }
-
-        dance_patterns = [
-            prefix + r'(dance|danseaza)\b',
-            prefix + r'(do a|fa un) dans\b',
-        ]
-        for pattern in dance_patterns:
-            if re.match(pattern, normalized):
-                return {
-                    'intent': 'dance',
-                    'direction': 'none',
-                    'steps': 0,
-                    'confidence': 0.90,
-                    'parameters': {'style': 'default', 'duration_s': 8.0},
-                }
-
-        wave_patterns = [
-            prefix + r'(wave|saluta)\b',
-            prefix + r'wave your hand\b',
-            prefix + r'fa cu mana\b',
-        ]
-        for pattern in wave_patterns:
-            if re.match(pattern, normalized):
-                return {
-                    'intent': 'wave',
-                    'direction': 'none',
-                    'steps': 0,
-                    'confidence': 0.91,
-                    'parameters': {'style': 'greeting'},
-                }
-
-        turn = self._parse_turn(normalized)
-        if turn:
-            return turn
-
-        move = self._parse_move(normalized)
-        if move:
-            return move
-
-        return None
-
-    def _parse_turn(self, normalized: str):
-        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
-        has_turn_verb = re.match(
-            prefix + r'(turn|rotate|spin|intoarce|roteste)\b',
-            normalized
-        ) is not None
-        direction = self._extract_turn_direction(normalized)
-        angle = self._extract_turn_angle(normalized)
-
-        if not has_turn_verb or direction is None:
-            return None
-
-        return {
-            'intent': 'turn',
-            'direction': direction,
-            'steps': 0,
-            'confidence': 0.90,
-            'parameters': {
-                'angle_deg': angle,
-                'speed_scale': 1.0,
-            },
-        }
-
-    def _parse_move(self, normalized: str):
-        direction = self._extract_direction(normalized)
-        steps = self._extract_steps(normalized)
-        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
-        has_move_verb = re.match(
-            prefix + r'(move|go|walk|step|take|mergi|du te|inainteaza|retrage te|fa)\b',
-            normalized
-        ) is not None
-
-        if direction and (has_move_verb or steps > 0):
-            if steps <= 0:
-                steps = self.default_steps
-            steps = max(1, min(steps, self.max_steps))
-            return {
-                'intent': 'move',
-                'direction': direction,
-                'steps': steps,
-                'confidence': 0.88,
-                'parameters': {
-                    'step_mode': 'discrete',
-                    'speed_scale': 1.0,
-                },
-            }
-
-        return None
-
-    def _extract_direction(self, normalized: str):
-        forward_tokens = ('forward', 'ahead', 'front', 'inainte', 'in fata')
-        backward_tokens = ('backward', 'backwards', 'back', 'inapoi', 'spate')
-
-        has_forward = any(token in normalized for token in forward_tokens)
-        has_backward = any(token in normalized for token in backward_tokens)
-
-        if has_forward and not has_backward:
-            return 'forward'
-        if has_backward and not has_forward:
-            return 'backward'
-        return None
-
-    def _extract_turn_direction(self, normalized: str):
-        left_tokens = ('left', 'stanga')
-        right_tokens = ('right', 'dreapta')
-
-        has_left = any(token in normalized for token in left_tokens)
-        has_right = any(token in normalized for token in right_tokens)
-
-        if has_left and not has_right:
-            return 'left'
-        if has_right and not has_left:
-            return 'right'
-        return None
-
-    def _extract_turn_angle(self, normalized: str):
-        angle_patterns = [
-            r'\b(\d+)\s*(degrees?|deg|grade)\b',
-        ]
-        for pattern in angle_patterns:
-            match = re.search(pattern, normalized)
-            if match:
-                try:
-                    value = int(match.group(1))
-                    return max(5, min(360, value))
-                except ValueError:
-                    return 90
-
-        words = normalized.split()
-        for i, word in enumerate(words):
-            value = NUMBER_WORDS.get(word)
-            if value is None:
-                continue
-            next_word = words[i + 1] if i + 1 < len(words) else ''
-            if next_word in ('degree', 'degrees', 'deg', 'grade'):
-                return max(5, min(360, value))
-
-        return 90
-
-    def _extract_steps(self, normalized: str):
-        step_patterns = [
-            r'\b(\d+)\s*(steps?|pasi?|pasii)\b',
-            r'\b(\d+)\s*(forward|ahead|backward|backwards|back|inainte|inapoi)\b',
-        ]
-        for pattern in step_patterns:
-            match = re.search(pattern, normalized)
-            if match:
-                try:
-                    return int(match.group(1))
-                except ValueError:
-                    return 0
-
-        words = normalized.split()
-        for i, word in enumerate(words):
-            value = NUMBER_WORDS.get(word)
-            if value is None:
-                continue
-            next_word = words[i + 1] if i + 1 < len(words) else ''
-            if next_word in (
-                'step', 'steps', 'pas', 'pasi', 'pasii', 'forward',
-                'ahead', 'backward', 'backwards', 'back', 'inainte', 'inapoi'
-            ):
-                return value
-
-        return 0
-
-    @staticmethod
-    def _normalize_text(text: str) -> str:
-        text = text.lower().strip()
-        text = unicodedata.normalize('NFD', text)
-        text = ''.join(ch for ch in text if unicodedata.category(ch) != 'Mn')
-        text = text.replace('-', ' ')
-        text = re.sub(r'[^a-z0-9\s]', ' ', text)
-        return ' '.join(text.split())
 
 
 def main(args=None):

@@ -23,6 +23,8 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from conversational_client.robot_command_utils import looks_like_robot_command
+from .prompt_config import load_prompt_defaults
 
 # Load variables from .env
 try:
@@ -70,30 +72,7 @@ class LLMNode(Node):
         self.declare_parameter('min_chunk_chars', 40)  # Min chars per chunk
         self.declare_parameter('transcription_topic', '/attended_transcription')
         
-        # System prompt - can be overridden via parameter
-        # Default: Enhanced prompt with personality, language rules, teasing, opinions
-        default_system_prompt = '''You are Robot, a young, friendly, bilingual (RO/EN) buddy. Not a servant - a friend with personality and self-respect.
-
-LANGUAGE (CRITICAL): Always respond in the SAME language as user's latest message. English→100% English. Romanian→100% Romanian. Never mix. No RO slang in EN, no EN slang in RO.
-
-STYLE: 1-2 sentences max. No markdown, no emojis. Be warm, casual, genuine. Don't announce actions ("Let me try..."), just do them. Don't end with questions constantly. "Mișto!" or "That's cool" is enough sometimes.
-
-FRIENDSHIP: Show interest, remember context, celebrate wins, be supportive. Don't offer alternatives or ask "Want me to...?" - just continue naturally.
-
-TEASING: If criticized, push back playfully (EN: "Dude, chill!", "That's mean!" / RO: "Alo, nu fi rău!", "Hei, calm!"). Be sassy: "Hai tu cu una mai bună!" / "Fine, you try!" Don't apologize or over-explain.
-
-OPINIONS: Neutral on ethics/politics/religion. BUT for fun topics (food, movies, music, colors) - MUST have preferences! Never say "I'm a robot without preferences." Examples: "Pizza Margherita!", "I love action movies!"
-
-HONESTY: Answer first, admit uncertainty casually ("Nu sunt sigur, dar..." / "Don't quote me on that"). For unknowable questions, react briefly in THE SAME LANGUAGE and STOP. EN: "Dude, nobody knows!" / RO: "Habar n-am, nimeni nu știe!" No estimates unless they insist.
-
-EMOTIONS: Match their energy. If down→supportive. If excited→enthusiastic. If confused→simpler.
-
-IDENTITY & PERSONALIZATION:
-You will receive the user's name in the format `[Speaker: Name]`.
-- If "Unknown", treat them as a new friend.
-- If "Delia": Be playful, witty, and teasing. She loves banter and sarcasm.
-- If "Valee": Be warm, chill, and supportive. She prefers a relaxed, straightforward vibe.
-- USE THE NAME SPARINGLY/RARELY. Do NOT use it in every sentence. Only use it for greetings or specific emphasis. Speak naturally.'''
+        default_system_prompt = str(load_prompt_defaults().get('llm_system_prompt', ''))
         
         self.declare_parameter('system_prompt', default_system_prompt)
         
@@ -315,42 +294,7 @@ You will receive the user's name in the format `[Speaker: Name]`.
     
     def _is_robot_command(self, text: str) -> bool:
         """Check if the text is likely a robot command, to avoid LLM chatter."""
-        import unicodedata
-        import re
-        
-        # Normalize text similar to voice_command_node
-        normalized = text.lower().strip()
-        normalized = unicodedata.normalize('NFD', normalized)
-        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
-        normalized = normalized.replace('-', ' ')
-        normalized = re.sub(r'[^a-z0-9\s]', ' ', normalized)
-        normalized = ' '.join(normalized.split())
-
-        # Optional prefix for politeness / bot addressing at start of string
-        prefix = r'^(?:(?:robot|hey robot|please|te rog|can you|can|poti sa|poti|vreau sa|vreau|hai sa|fa|baga)\s+)*'
-
-        patterns = [
-            # Stop
-            prefix + r'(stop|halt|freeze|cancel)\b',
-            prefix + r'(opreste|anuleaza|stop)\b',
-            # Move
-            prefix + r'(move|go|walk|step|take|mergi|du te|inainteaza|retrage te|fa)\b.*\b(forward|ahead|front|inainte|in fata|backward|backwards|back|inapoi|spate|steps?|pasi?|pasii)\b',
-            prefix + r'(forward|ahead|front|inainte|in fata|backward|backwards|back|inapoi|spate)\b', # direction only
-            prefix + r'\d+\s*(steps?|pasi?|pasii)\b',
-            # Turn
-            prefix + r'(turn|rotate|spin|intoarce|roteste)\b.*\b(left|stanga|right|dreapta)\b',
-            # Behaviors
-            prefix + r'(hands|arms) up\b', prefix + r'(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b', prefix + r'ridica\b.*\b(mainile|mana|bratele|brat)\b', prefix + r'mainile sus\b',
-            prefix + r'(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b', prefix + r'(hands|arms) down\b', prefix + r'coboara\b.*\b(mainile|mana|bratele|brat)\b', prefix + r'mainile jos\b',
-            prefix + r'(dance|danseaza)\b', prefix + r'(do a|fa un) dans\b',
-            prefix + r'(wave|saluta)\b', prefix + r'wave your hand\b', prefix + r'fa cu mana\b'
-        ]
-        
-        for pattern in patterns:
-            # use re.match to force anchoring at the beginning of the string (redundant to ^ but good practice)
-            if re.match(pattern, normalized):
-                return True
-        return False
+        return looks_like_robot_command(text, require_direct_robot_address=True)
 
     def _robot_status_callback(self, msg: String):
         """Monitor the robot command executor status to mute the LLM during confirmations."""
@@ -508,9 +452,12 @@ You will receive the user's name in the format `[Speaker: Name]`.
             # This forces the model to respond in the correct language
             lang_instruction = "[RESPOND IN ENGLISH]" if not user_lang.startswith('ro') else "[RĂSPUNDE ÎN ROMÂNĂ]"
             
+            preferred_name = self.person_context.get('preferred_name', '').strip()
+            display_speaker = preferred_name or self.current_speaker
+
             # Add speaker name if known
-            if self.current_speaker and self.current_speaker != "Unknown":
-                speaker_info = f"[Speaker: {self.current_speaker}] "
+            if display_speaker and display_speaker != "Unknown":
+                speaker_info = f"[Speaker: {display_speaker}] "
             else:
                 speaker_info = ""
             

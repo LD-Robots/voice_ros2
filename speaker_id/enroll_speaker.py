@@ -153,9 +153,11 @@ def main():
     # 5. Tips
     print("\n" + "─" * 50)
     print("💡 Pași următori:")
-    print("   1. Pentru rezultate mai bune, poți înregistra din nou")
+    print("   1. Pentru recunoaștere mai stabilă, poți reînregistra")
     print("      într-un mediu mai silențios.")
-    print("   2. După ce ai enrollment pentru toți vorbitorii,")
+    print("   2. Acesta este scriptul corect pentru enrollment manual.")
+    print("      `speaker_manager.py` doar verifică baza de date.")
+    print("   3. După ce ai enrollment pentru toți vorbitorii,")
     print("      pornește sistemul ROS2 și speaker_id_node va folosi")
     print("      automat baza de date.")
 
