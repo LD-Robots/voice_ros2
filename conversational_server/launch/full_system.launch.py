@@ -78,6 +78,76 @@ def generate_launch_description():
             default_value='false',
             description='Stream microphone audio to OpenAI while robot playback is active'
         ),
+        DeclareLaunchArgument(
+            'speaker_similarity_threshold',
+            default_value='0.35',
+            description='Minimum similarity score for speaker identification'
+        ),
+        DeclareLaunchArgument(
+            'speaker_similarity_margin',
+            default_value='0.08',
+            description='Minimum margin between top-1 and top-2 speaker matches'
+        ),
+        DeclareLaunchArgument(
+            'speaker_switch_hits_required',
+            default_value='2',
+            description='Consecutive positive speaker-ID hits required before switching from one known speaker to another'
+        ),
+        DeclareLaunchArgument(
+            'auto_enroll_unknown_speakers',
+            default_value='true',
+            description='Allow automatic enrollment when a new person explicitly introduces their name'
+        ),
+        DeclareLaunchArgument(
+            'min_enrollment_segment_seconds',
+            default_value='1.2',
+            description='Minimum audio length used for automatic enrollment'
+        ),
+        DeclareLaunchArgument(
+            'realtime_local_response_gating',
+            default_value='true',
+            description='Only create Realtime responses after local pause/attention filtering accepts the transcript'
+        ),
+        DeclareLaunchArgument(
+            'language_switch_hits_required',
+            default_value='2',
+            description='Consecutive language detections required before switching the active conversation language without an explicit request'
+        ),
+        DeclareLaunchArgument(
+            'realtime_vad_silence_duration_ms',
+            default_value='1000',
+            description='Silence duration before OpenAI Realtime finalizes a user turn'
+        ),
+        DeclareLaunchArgument(
+            'realtime_response_create_delay_ms',
+            default_value='450',
+            description='Extra local wait before creating a Realtime response after transcript acceptance'
+        ),
+        DeclareLaunchArgument(
+            'vad_min_silence_frames',
+            default_value='14',
+            description='Consecutive non-speech audio frames required before local VAD ends the user turn'
+        ),
+        DeclareLaunchArgument(
+            'stop_keyword_prob_threshold',
+            default_value='0.98',
+            description='Minimum stop-keyword probability required to interrupt TTS'
+        ),
+        DeclareLaunchArgument(
+            'stop_keyword_logit_margin',
+            default_value='0.6',
+            description='Minimum stop-vs-other logit margin required to interrupt TTS'
+        ),
+        DeclareLaunchArgument(
+            'stop_keyword_hits_required',
+            default_value='3',
+            description='Consecutive stop-keyword detections required before interrupting TTS'
+        ),
+        DeclareLaunchArgument(
+            'stop_keyword_requires_voice_signature',
+            default_value='true',
+            description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
+        ),
         
         # ========== SERVER NODES ==========
         Node(
@@ -146,9 +216,13 @@ def generate_launch_description():
                 'model': LaunchConfiguration('realtime_model'),
                 'voice': LaunchConfiguration('realtime_voice'),
                 'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
+                'local_response_gating': LaunchConfiguration('realtime_local_response_gating'),
+                'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
+                'language_switch_hits_required': LaunchConfiguration('language_switch_hits_required'),
                 'vad_threshold': 0.65,
                 'vad_prefix_padding_ms': 400,
-                'vad_silence_duration_ms': 800,
+                'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
+                'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),
                 'short_transcript_dedupe_window_s': 4.0,
             }]
         ),
@@ -175,6 +249,7 @@ def generate_launch_description():
             parameters=[{
                 'wake_word_enabled': True,   # Gate audio until wake word
                 'session_timeout': 30.0,     # Reset to standby after 30s silence (was 8s)
+                'min_silence_frames': LaunchConfiguration('vad_min_silence_frames'),
             }]
         ),
 
@@ -207,11 +282,12 @@ def generate_launch_description():
                 # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
                 'stop_model_path': stop_model_path,
                 'stop_enabled': True,  # ACTIVAT - la cererea userului
-                'stop_prob_threshold': 0.95,
-                'stop_logit_margin': 0.3,
-                'stop_hits_required': 2,      # 2 detectări consecutive
+                'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
+                'stop_logit_margin': LaunchConfiguration('stop_keyword_logit_margin'),
+                'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
                 'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
+                'stop_requires_voice_signature': LaunchConfiguration('stop_keyword_requires_voice_signature'),
             }]
         ),
 
@@ -222,7 +298,8 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'enrollment_dir': enrollment_dir,
-                'similarity_threshold': 0.25,
+                'similarity_threshold': LaunchConfiguration('speaker_similarity_threshold'),
+                'similarity_margin': LaunchConfiguration('speaker_similarity_margin'),
             }]
         ),
 
@@ -231,6 +308,9 @@ def generate_launch_description():
             executable='attention_manager_node',
             name='attention_manager_node',
             output='screen',
+            parameters=[{
+                'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
+            }]
         ),
 
         Node(
@@ -238,6 +318,11 @@ def generate_launch_description():
             executable='person_memory_store_node',
             name='person_memory_store_node',
             output='screen',
+            parameters=[{
+                'auto_enroll_unknown_speakers': LaunchConfiguration('auto_enroll_unknown_speakers'),
+                'min_enrollment_segment_seconds': LaunchConfiguration('min_enrollment_segment_seconds'),
+                'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
+            }]
         ),
 
         Node(
@@ -245,6 +330,9 @@ def generate_launch_description():
             executable='conversation_control_node',
             name='conversation_control_node',
             output='screen',
+            parameters=[{
+                'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
+            }]
         ),
 
         # Wake Word + Stop Keyword (OpenWakeWord unified)
@@ -264,7 +352,7 @@ def generate_launch_description():
                     f'{goodbye_model_path}:stop',
                 ]),
                 # Threshold-uri individuale per model
-                'model_thresholds': 'hello_robot:0.30,stop_robot:0.25,goodbye_robot:0.40',
+                'model_thresholds': 'hello_robot:0.30,stop_robot:0.70,goodbye_robot:0.40',
             }]
         ),
 

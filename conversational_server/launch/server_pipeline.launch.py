@@ -52,6 +52,16 @@ def generate_launch_description():
             default_value='false',
             description='Stream microphone audio to OpenAI while robot playback is active'
         ),
+        DeclareLaunchArgument(
+            'realtime_vad_silence_duration_ms',
+            default_value='1000',
+            description='Silence duration before OpenAI Realtime finalizes a user turn'
+        ),
+        DeclareLaunchArgument(
+            'realtime_response_create_delay_ms',
+            default_value='450',
+            description='Extra local wait before creating a Realtime response after transcript acceptance'
+        ),
         
         # ASR Node
         Node(
@@ -124,7 +134,8 @@ def generate_launch_description():
                 'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
                 'vad_threshold': 0.65,
                 'vad_prefix_padding_ms': 400,
-                'vad_silence_duration_ms': 800,
+                'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
+                'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),
                 'short_transcript_dedupe_window_s': 4.0,
             }]
         ),

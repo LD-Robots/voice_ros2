@@ -14,12 +14,15 @@ from conversational_interfaces.msg import Transcription
 from std_msgs.msg import Bool, String
 
 from .conversation_utils import (
-    detect_control_action,
+    advance_attention_focus,
+    decide_attention,
+    StickySpeakerTracker,
     has_direct_robot_address,
     is_reengagement_phrase,
-    is_robot_directive,
     normalize_text,
+    detect_control_action,
 )
+from .robot_command_utils import looks_like_robot_command
 
 
 class AttentionManagerNode(Node):
@@ -27,16 +30,29 @@ class AttentionManagerNode(Node):
         super().__init__('attention_manager_node')
 
         self.declare_parameter('focus_timeout_s', 45.0)
+        self.declare_parameter('focus_recognition_window_s', 3.0)
         self.declare_parameter('unknown_speaker_grace_s', 20.0)
+        self.declare_parameter('sticky_speaker_timeout_s', 60.0)
+        self.declare_parameter('speaker_switch_hits_required', 2)
 
         self.focus_timeout_s = float(self.get_parameter('focus_timeout_s').value)
+        self.focus_recognition_window_s = float(
+            self.get_parameter('focus_recognition_window_s').value
+        )
         self.unknown_speaker_grace_s = float(self.get_parameter('unknown_speaker_grace_s').value)
+        self.speaker_tracker = StickySpeakerTracker(
+            float(self.get_parameter('sticky_speaker_timeout_s').value),
+            int(self.get_parameter('speaker_switch_hits_required').value),
+        )
 
         self.session_active = False
         self.conversation_paused = False
         self.current_speaker = 'Unknown'
+        self.last_raw_speaker = 'Unknown'
         self.focused_speaker = 'Unknown'
         self.last_focus_time = 0.0
+        self.pending_focus_speaker = 'Unknown'
+        self.pending_focus_at = 0.0
 
         self.session_sub = self.create_subscription(Bool, '/session_active', self._session_callback, 10)
         self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self._pause_callback, 10)
@@ -56,35 +72,46 @@ class AttentionManagerNode(Node):
     def _session_callback(self, msg: Bool):
         self.session_active = bool(msg.data)
         if not self.session_active:
+            self.speaker_tracker.reset()
+            self.current_speaker = 'Unknown'
+            self.last_raw_speaker = 'Unknown'
             self.focused_speaker = 'Unknown'
             self.last_focus_time = 0.0
+            self.pending_focus_speaker = 'Unknown'
+            self.pending_focus_at = 0.0
             self._publish_status(False, False, 'session_inactive')
 
     def _pause_callback(self, msg: Bool):
         self.conversation_paused = bool(msg.data)
 
     def _speaker_callback(self, msg: String):
-        speaker = msg.data.strip() or 'Unknown'
-        self.current_speaker = speaker
+        raw_speaker = msg.data.strip() or 'Unknown'
+        self.last_raw_speaker = raw_speaker
+        self.current_speaker = self.speaker_tracker.update(raw_speaker)
+        if raw_speaker != 'Unknown' and self.current_speaker == raw_speaker:
+            self.pending_focus_speaker = raw_speaker
+            self.pending_focus_at = time.monotonic()
 
     def _transcription_callback(self, msg: Transcription):
         text = (msg.text or '').strip()
         if not text:
             return
 
+        focus_candidate = self._consume_focus_candidate()
         normalized = normalize_text(text)
         if not normalized:
             return
 
         direct_address = has_direct_robot_address(normalized)
         reengagement = is_reengagement_phrase(normalized)
-        robot_directive = is_robot_directive(normalized)
+        robot_directive = looks_like_robot_command(text, require_direct_robot_address=True)
         control_action = detect_control_action(normalized)
         allow, reason = self._should_allow(
             direct_address,
             reengagement,
             robot_directive,
             control_action,
+            normalized,
         )
         self._publish_status(allow, direct_address, reason)
 
@@ -94,15 +121,17 @@ class AttentionManagerNode(Node):
             )
             return
 
-        if self.current_speaker != 'Unknown':
-            if self.focused_speaker != self.current_speaker:
-                self.get_logger().info(
-                    f'Attention focus switched: {self.focused_speaker} -> {self.current_speaker}'
-                )
-            self.focused_speaker = self.current_speaker
-            self.last_focus_time = time.monotonic()
-        elif self.focused_speaker == 'Unknown':
-            self.last_focus_time = time.monotonic()
+        if focus_candidate != 'Unknown' and self.focused_speaker != focus_candidate:
+            self.get_logger().info(
+                f'Attention focus switched: {self.focused_speaker} -> {focus_candidate}'
+            )
+        self.focused_speaker, self.last_focus_time = advance_attention_focus(
+            current_speaker=self.current_speaker,
+            focused_speaker=self.focused_speaker,
+            last_focus_time=self.last_focus_time,
+            allow=allow,
+            recognized_speaker=focus_candidate,
+        )
 
         self.attended_pub.publish(msg)
 
@@ -112,40 +141,24 @@ class AttentionManagerNode(Node):
         reengagement: bool,
         robot_directive: bool,
         control_action: str | None,
+        normalized_text: str,
     ):
-        if not self.session_active:
-            return False, 'session_inactive'
-
-        if self.conversation_paused:
-            if control_action in ('continue', 'repeat', 'hold_on', 'stop'):
-                return True, f'paused_control_{control_action}'
-            if reengagement:
-                return True, 'paused_reengagement'
-            if direct_address:
-                return True, 'paused_direct_address'
-            return False, 'paused_side_conversation'
-
-        now = time.monotonic()
-        if self.focused_speaker != 'Unknown' and (now - self.last_focus_time) > self.focus_timeout_s:
-            self.focused_speaker = 'Unknown'
-
-        if self.focused_speaker == 'Unknown':
-            return True, 'no_focus_yet'
-
-        if self.current_speaker == 'Unknown':
-            if direct_address or robot_directive:
-                return True, 'unknown_but_directed'
-            if (now - self.last_focus_time) <= self.unknown_speaker_grace_s:
-                return True, 'sticky_focus_unknown_segment'
-            return False, 'unknown_side_conversation'
-
-        if self.current_speaker == self.focused_speaker:
-            return True, 'focused_speaker'
-
-        if direct_address or robot_directive:
-            return True, 'speaker_switch_with_direct_address'
-
-        return False, 'different_speaker_without_address'
+        allow, reason, effective_focus, effective_focus_time = decide_attention(
+            session_active=self.session_active,
+            conversation_paused=self.conversation_paused,
+            current_speaker=self.current_speaker,
+            focused_speaker=self.focused_speaker,
+            last_focus_time=self.last_focus_time,
+            focus_timeout_s=self.focus_timeout_s,
+            direct_address=direct_address,
+            reengagement=reengagement,
+            robot_directive=robot_directive,
+            control_action=control_action,
+            normalized_text=normalized_text,
+        )
+        self.focused_speaker = effective_focus
+        self.last_focus_time = effective_focus_time
+        return allow, reason
 
     def _publish_status(self, allow: bool, direct_address: bool, reason: str):
         payload = {
@@ -160,6 +173,18 @@ class AttentionManagerNode(Node):
         msg = String()
         msg.data = json.dumps(payload, separators=(',', ':'))
         self.status_pub.publish(msg)
+
+    def _consume_focus_candidate(self) -> str:
+        now = time.monotonic()
+        candidate = self.pending_focus_speaker
+        candidate_at = self.pending_focus_at
+        self.pending_focus_speaker = 'Unknown'
+        self.pending_focus_at = 0.0
+        if candidate == 'Unknown':
+            return 'Unknown'
+        if (now - candidate_at) > self.focus_recognition_window_s:
+            return 'Unknown'
+        return candidate
 
 
 def main(args=None):

@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import inspect
 import numpy as np
+import soundfile as sf
 import torch
 import torchaudio
 # ─────────────────────────────────────────────────────────────────
@@ -67,7 +68,7 @@ class SpeakerManager:
         speaker = manager.identify(audio_float32_array)
     """
 
-    def __init__(self, enrollment_dir, threshold=0.25):
+    def __init__(self, enrollment_dir, threshold=0.25, min_margin=0.08):
         """
         Initialize SpeakerManager.
 
@@ -79,6 +80,7 @@ class SpeakerManager:
         """
         self.enrollment_dir = enrollment_dir
         self.threshold = threshold
+        self.min_margin = max(0.0, float(min_margin))
         self.model_cache_dir = os.path.expanduser(
             "~/.cache/speechbrain/spkrec-ecapa-voxceleb"
         )
@@ -124,8 +126,7 @@ class SpeakerManager:
 
         for wav_file in wav_files:
             # Person name = file name without extension
-            # ex: vale.wav → "Vale" (capitalized)
-            speaker_name = os.path.splitext(wav_file)[0].capitalize()
+            speaker_name = os.path.splitext(wav_file)[0]
             wav_path = os.path.join(self.enrollment_dir, wav_file)
 
             try:
@@ -163,7 +164,7 @@ class SpeakerManager:
         Returns:
             torch.Tensor: Voice embedding (vector)
         """
-        signal, sr = torchaudio.load(wav_path)
+        signal, sr = self._load_audio_file(wav_path)
 
         # Resample to 16kHz if needed
         if sr != 16000:
@@ -177,6 +178,22 @@ class SpeakerManager:
         # Compute embedding
         embedding = self.classifier.encode_batch(signal)
         return embedding.squeeze()
+
+    @staticmethod
+    def _load_audio_file(wav_path):
+        """
+        Load enrollment audio without depending on TorchCodec.
+
+        soundfile handles the common PCM .wav files used for enrollment and avoids
+        the torchaudio backend path that started requiring torchcodec.
+        """
+        try:
+            signal, sr = sf.read(wav_path, dtype='float32', always_2d=True)
+            signal = torch.from_numpy(signal.T.copy())
+            return signal, int(sr)
+        except Exception:
+            signal, sr = torchaudio.load(wav_path)
+            return signal, int(sr)
 
     def _compute_embedding_from_array(self, audio_float):
         """
@@ -231,19 +248,37 @@ class SpeakerManager:
         # ─────────────────────────────────────────────────────────
         best_name = "Unknown"
         best_score = -1.0
+        second_best_score = -1.0
 
         for name, stored_embedding in self.speaker_db.items():
             score = self._cosine_similarity(new_embedding, stored_embedding)
 
             if score > best_score:
+                second_best_score = best_score
                 best_score = score
                 best_name = name
+            elif score > second_best_score:
+                second_best_score = score
 
         # Check if the score exceeds the threshold
+        if best_score < threshold:
+            return "Unknown"
+        if second_best_score > -1.0 and (best_score - second_best_score) < self.min_margin:
+            return "Unknown"
         if best_score >= threshold:
             return best_name
         else:
             return "Unknown"
+
+    def identify_file(self, wav_path, threshold=None):
+        signal, sr = self._load_audio_file(wav_path)
+        if sr != 16000:
+            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
+            signal = resampler(signal)
+        if signal.shape[0] > 1:
+            signal = torch.mean(signal, dim=0, keepdim=True)
+        audio_float = signal.squeeze(0).detach().cpu().numpy().astype(np.float32)
+        return self.identify(audio_float, threshold=threshold)
 
     # ═══════════════════════════════════════════════════════════════════
     # COSINE SIMILARITY

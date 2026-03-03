@@ -163,11 +163,16 @@ python3 speaker_id/enroll_speaker.py
 ```
 
 Scriptul va cere numele și va salva amprenta vocală în `voices/enrollment/<nume>.wav`. Repetă pentru fiecare utilizator.
+Acesta este modul recomandat pentru enrollment stabil al unei persoane noi.
 
 Verifică baza de date:
 ```bash
 python3 speaker_id/speaker_manager.py
 ```
+
+`speaker_manager.py` doar verifică ce voci sunt încărcabile din baza de date. Nu înregistrează o voce nouă.
+
+Enrollment automat din conversație este intenționat mai strict: pornește doar când persoana se prezintă explicit, de exemplu `my name is Vasile`, `call me Vasile`, `ma numesc Vasile`.
 
 După enrollment, `speaker_id_node` va identifica automat vorbitorul la pornirea sistemului și va comunica numele către LLM.
 

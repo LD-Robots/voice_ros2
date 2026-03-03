@@ -56,6 +56,8 @@ class VADNode(Node):
         self.declare_parameter('energy_threshold', 500)  # RMS energy threshold
         self.declare_parameter('wake_word_enabled', True)
         self.declare_parameter('session_timeout', 8.0)
+        self.declare_parameter('min_speech_frames', 5)
+        self.declare_parameter('min_silence_frames', 14)
 
         
         self.sample_rate = self.get_parameter('sample_rate').value
@@ -63,6 +65,8 @@ class VADNode(Node):
         self.energy_threshold = self.get_parameter('energy_threshold').value
         self.wake_word_enabled = self.get_parameter('wake_word_enabled').value
         self.session_timeout = self.get_parameter('session_timeout').value
+        self.min_speech_frames = max(1, int(self.get_parameter('min_speech_frames').value))
+        self.min_silence_frames = max(1, int(self.get_parameter('min_silence_frames').value))
         
         # ─────────────────────────────────────────────────────────
         # STATE
@@ -70,8 +74,6 @@ class VADNode(Node):
         self.is_speaking = False          # Current state
         self.speech_frames = 0            # Consecutive frames with voice
         self.silence_frames = 0           # Consecutive frames without voice
-        self.min_speech_frames = 5        # Frames to confirm voice (raised to reduce false positives)
-        self.min_silence_frames = 10      # Frames to confirm silence
         self.is_robot_speaking = False    # True when the robot is speaking (TTS playback)
         self.is_gate_open = not self.wake_word_enabled
         self.session_timer = None
