@@ -32,7 +32,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 ### System Dependencies
 ```bash
 sudo apt update
-sudo apt install -y python3-pip portaudio19-dev
+sudo apt install -y python3-pip python3-dev portaudio19-dev ffmpeg libsndfile1
 ```
 
 ### ROS2
@@ -41,22 +41,19 @@ https://docs.ros.org/en/humble/Installation.html
 
 ### Python Dependencies
 ```bash
-pip install --break-system-packages \
-    faster-whisper \
-    groq \
-    piper-tts \
-    openwakeword \
-    webrtcvad \
-    soundfile \
-    python-dotenv \
-    pyaudio \
-    numpy \
-    websocket-client \
-    speechbrain \
-    torch \
-    torchaudio \
-    torchcodec
+cd /path/to/ros2_ws/src/voice_ros2
+python3 -m pip install --break-system-packages -r requirements.txt
 ```
+
+The runtime code currently depends on these Python modules:
+- Audio and DSP: `numpy`, `scipy`, `sounddevice`, `pyaudio`, `soundfile`, `webrtcvad`
+- ASR and text filtering: `faster-whisper`, `rapidfuzz`
+- LLM and realtime: `groq`, `python-dotenv`, `requests`, `websocket-client`
+- TTS: `edge-tts`, `piper-tts`, `num2words`
+- Wake word and stop keyword detection: `openwakeword`, `onnxruntime`
+- Speaker identification: `speechbrain`, `torch`, `torchaudio`, `huggingface_hub`, `torchcodec`
+
+For the current `full_system.launch.py`, install the full list even if you mostly use OpenAI Realtime, because the launch file still starts helper and legacy-side nodes alongside the realtime node.
 
 ## 🔧 Setup
 

@@ -134,6 +134,11 @@ def generate_launch_description():
             description='Extra local wait before creating a Realtime response after transcript acceptance'
         ),
         DeclareLaunchArgument(
+            'realtime_continued_turn_response_delay_ms',
+            default_value='650',
+            description='Delay before answering a transcript that arrived after the user resumed speaking'
+        ),
+        DeclareLaunchArgument(
             'vad_min_silence_frames',
             default_value='14',
             description='Consecutive non-speech audio frames required before local VAD ends the user turn'
@@ -233,6 +238,9 @@ def generate_launch_description():
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),
+                'continued_turn_response_delay_ms': LaunchConfiguration(
+                    'realtime_continued_turn_response_delay_ms'
+                ),
                 'short_transcript_dedupe_window_s': 4.0,
             }]
         ),
