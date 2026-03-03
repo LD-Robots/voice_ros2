@@ -44,6 +44,21 @@ except ImportError:
     WHISPER_AVAILABLE = False
     print("⚠️ faster-whisper not installed. Run: pip install faster-whisper")
 
+# Known Whisper hallucination phrases (normalized, no diacritics)
+# These are checked as full-match or dominant-content patterns
+HALLUCINATION_BLACKLIST = {
+    # Romanian hallucinations
+    'va multumim', 'multumesc', 'subtitrare', 'subtitrari',
+    'traducere', 'va multumim pentru vizionare',
+    'va multumim ca ati vizionat', 'va multumim ca ne urmariti',
+    # English hallucinations
+    'thank you', 'thank you for watching', 'thanks for watching',
+    'thank you for listening', 'thanks for listening',
+    'please subscribe', 'subscribe', 'like and subscribe',
+    'see you next time', 'see you in the next video',
+    'bye bye', 'goodbye',
+}
+
 
 class ASRNode(Node):
     def __init__(self):
@@ -252,6 +267,76 @@ class ASRNode(Node):
         
         return False
 
+    def _is_hallucination(self, text: str, segments=None) -> bool:
+        """
+        Detect Whisper hallucinations using three heuristics:
+        1. Blacklist of known hallucination phrases
+        2. Repetition detection (same word/phrase repeated many times)
+        3. High no_speech_prob across all segments
+        Returns True if the transcription should be dropped.
+        """
+        normalized = self._normalize_text(text)
+        if not normalized:
+            return False
+
+        # --- 1. Blacklist check ---
+        # Check if the entire normalized text IS a known hallucination
+        if normalized in HALLUCINATION_BLACKLIST:
+            self.get_logger().warn(f'🚫 Hallucination blocked (blacklist exact): "{text[:60]}"')
+            return True
+        # Check if normalized text STARTS WITH a known hallucination
+        for phrase in HALLUCINATION_BLACKLIST:
+            if normalized.startswith(phrase) and len(normalized) > len(phrase):
+                # Only block if the rest is just repetition of the same phrase
+                remainder = normalized[len(phrase):].strip()
+                words_in_remainder = set(remainder.split())
+                words_in_phrase = set(phrase.split())
+                if words_in_remainder.issubset(words_in_phrase | {'sa', 'si', 'ca', 'ne', 'va', 'de', 'pentru', 'a', 'and', 'to', 'for', 'the'}):
+                    self.get_logger().warn(f'🚫 Hallucination blocked (blacklist+repeat): "{text[:80]}"')
+                    return True
+
+        # --- 2. Repetition detection ---
+        words = normalized.split()
+        if len(words) >= 4:
+            from collections import Counter
+            word_counts = Counter(words)
+            most_common_word, most_common_count = word_counts.most_common(1)[0]
+            # If one word makes up >60% of all words, it's likely repetition
+            if most_common_count / len(words) > 0.60 and most_common_count >= 3:
+                self.get_logger().warn(
+                    f'🚫 Hallucination blocked (repetition): "{most_common_word}" '
+                    f'appears {most_common_count}/{len(words)} times in "{text[:80]}"'
+                )
+                return True
+
+        # Check for repeated 2-3 word phrases using a simple approach
+        if len(words) >= 6:
+            for phrase_len in (2, 3):
+                for i in range(len(words) - phrase_len + 1):
+                    phrase = ' '.join(words[i:i + phrase_len])
+                    count = normalized.count(phrase)
+                    if count >= 3 and len(phrase) >= 4:
+                        self.get_logger().warn(
+                            f'🚫 Hallucination blocked (phrase repeat): "{phrase}" '
+                            f'appears {count}x in "{text[:80]}"'
+                        )
+                        return True
+
+        # --- 3. no_speech_prob filter ---
+        if segments:
+            no_speech_probs = [
+                getattr(s, 'no_speech_prob', 0.0) or 0.0
+                for s in segments
+            ]
+            if no_speech_probs and all(p > 0.6 for p in no_speech_probs):
+                avg_nsp = sum(no_speech_probs) / len(no_speech_probs)
+                self.get_logger().warn(
+                    f'🚫 Hallucination blocked (no_speech_prob={avg_nsp:.2f}): "{text[:60]}"'
+                )
+                return True
+
+        return False
+
     def _process_buffer(self):
         """Process the buffered audio and publish the transcription."""
         if not self.audio_buffer:
@@ -284,28 +369,38 @@ class ASRNode(Node):
             wav_io.seek(0)
             
             # Use RO/EN detection if set
+            segs = None
             if self.language == 'ro_en':
                 # Pentru ro_en avem nevoie să citim de două ori, deci BytesIO e perfect (seek(0))
                 result = self._transcribe_ro_en(wav_io)
                 text = result["text"]
                 lang = result["lang"]
                 confidence = result["language_probability"]
+                segs = result.get("segments")
             else:
                 # Transcrie cu Faster Whisper - cu fallback fără VAD
                 try:
-                    text, lang, confidence, _ = self._run_once(wav_io, self.language, use_vad=True)
+                    text, lang, confidence, _, segs = self._run_once(wav_io, self.language, use_vad=True)
                 except ValueError as e:
                     if "max() iterable argument is empty" in str(e):
                         self.get_logger().warn("VAD error, retrying without VAD filter...")
                         wav_io.seek(0) # Reset for the second attempt
                         fallback_lang = self.language or "en"
-                        text, lang, confidence, _ = self._run_once(wav_io, fallback_lang, use_vad=False)
+                        text, lang, confidence, _, segs = self._run_once(wav_io, fallback_lang, use_vad=False)
                     else:
                         raise
             
+            # Get segments for hallucination check (may not exist for ro_en mode)
+            transcription_segments = segs if 'segs' in dir() else None
+
             if text:
                 self.get_logger().info(f'🧏 [{lang}] {text}')
                 
+                # Anti-hallucination filter
+                if self._is_hallucination(text, transcription_segments):
+                    self.audio_buffer = []
+                    return
+
                 # Anti-echo: check if it is an echo from TTS
                 if self._is_echo(text):
                     self.audio_buffer = []
@@ -383,7 +478,7 @@ class ASRNode(Node):
         score = avg_lp + 0.01 * len(text)
         out_lang = info.language or (language or "en")
         prob = float(getattr(info, "language_probability", 0.0) or 0.0)
-        return text, out_lang, prob, score
+        return text, out_lang, prob, score, segs
 
     def _transcribe_ro_en(self, audio_source):
         """
@@ -399,13 +494,13 @@ class ASRNode(Node):
                     return self._run_once(audio_source, lang, use_vad=False)
                 raise
         
-        en_text, _, _, en_score = safe("en")
-        ro_text, _, _, ro_score = safe("ro")
+        en_text, _, _, en_score, en_segs = safe("en")
+        ro_text, _, _, ro_score, ro_segs = safe("ro")
         
         if (ro_score > en_score) and ro_text:
-            return {"text": ro_text, "lang": "ro", "language_probability": 1.0}
+            return {"text": ro_text, "lang": "ro", "language_probability": 1.0, "segments": ro_segs}
         else:
-            return {"text": en_text, "lang": "en", "language_probability": 1.0}
+            return {"text": en_text, "lang": "en", "language_probability": 1.0, "segments": en_segs}
 
 
 def main(args=None):
