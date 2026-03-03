@@ -57,6 +57,7 @@ class ASRNode(Node):
         self.declare_parameter('language', '')  # Empty = auto-detect, 'ro_en' = detect best
         self.declare_parameter('beam_size', 5)
         self.declare_parameter('vad_min_silence_ms', 300)
+        self.declare_parameter('speech_pause_s', 5.0)  # Grace period before processing
         self.declare_parameter('warmup_enabled', True)
         
         # Anti-echo textual parameters
@@ -71,6 +72,7 @@ class ASRNode(Node):
         self.language = self.get_parameter('language').value or None
         self.beam_size = self.get_parameter('beam_size').value
         self.vad_min_silence_ms = self.get_parameter('vad_min_silence_ms').value
+        self.speech_pause_s = self.get_parameter('speech_pause_s').value
         self.warmup_enabled = self.get_parameter('warmup_enabled').value
         
         # Anti-echo settings
@@ -101,6 +103,7 @@ class ASRNode(Node):
         self.channels = 1
         self.is_speaking = False
         self.was_speaking = False
+        self.pause_timer = None  # Timer for speech pause
         
         # Anti-echo: last robot response
         self.last_bot_reply = ""
@@ -148,8 +151,8 @@ class ASRNode(Node):
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
-        # Buffers audio when the user is speaking (or slightly before)
-        if self.is_speaking:
+        # Buffer audio when the user is speaking OR during the pause window
+        if self.is_speaking or self.pause_timer is not None:
             self.audio_buffer.extend(msg.data)
         else:
             # Keep the last 0.5 seconds for context
@@ -163,10 +166,30 @@ class ASRNode(Node):
         self.was_speaking = self.is_speaking
         self.is_speaking = msg.data
         
-        # Când userul termină de vorbit, transcrie
         if self.was_speaking and not self.is_speaking:
-            self.get_logger().debug(f'🔚 Speech ended, processing {len(self.audio_buffer)} frames...')
-            self._process_buffer()
+            # User stopped speaking — start grace period before processing
+            self._start_pause_timer()
+        elif not self.was_speaking and self.is_speaking:
+            # User resumed speaking — cancel pending processing
+            self._cancel_pause_timer()
+
+    def _start_pause_timer(self):
+        """Start the speech pause timer."""
+        self._cancel_pause_timer()
+        self.pause_timer = self.create_timer(self.speech_pause_s, self._on_pause_timeout)
+        self.get_logger().debug(f'⏳ Waiting {self.speech_pause_s}s for more speech...')
+
+    def _cancel_pause_timer(self):
+        """Cancel the speech pause timer if running."""
+        if self.pause_timer is not None:
+            self.pause_timer.cancel()
+            self.pause_timer = None
+
+    def _on_pause_timeout(self):
+        """Called when the speech pause expires — process the buffered audio."""
+        self._cancel_pause_timer()
+        self.get_logger().debug(f'🔚 Pause expired, processing {len(self.audio_buffer)} frames...')
+        self._process_buffer()
 
     def llm_response_callback(self, msg: Transcription):
         """Store the last robot response for anti-echo."""

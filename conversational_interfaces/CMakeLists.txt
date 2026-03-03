@@ -10,6 +10,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Transcription.msg"
   "msg/TextChunk.msg"
   "msg/WakeWord.msg"
+  "msg/RobotCommand.msg"
   DEPENDENCIES std_msgs
 )
 
