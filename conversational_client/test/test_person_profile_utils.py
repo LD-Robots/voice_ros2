@@ -8,6 +8,7 @@ from conversational_client.person_profile_utils import (
     extract_preferred_name,
     load_speaker_profile_sidecars,
     migrate_legacy_auto_voice_labels,
+    resolve_preferred_name_update,
     write_speaker_profile_sidecar,
 )
 
@@ -20,6 +21,12 @@ def test_extract_preferred_name_requires_explicit_introduction():
     assert extract_preferred_name('i am back') == ''
     assert extract_preferred_name('i am working today') == ''
     assert extract_preferred_name('this is important for today') == ''
+
+
+def test_resolve_preferred_name_update_protects_existing_profiles():
+    assert resolve_preferred_name_update('', 'alex') == ('set', '', 'Alex')
+    assert resolve_preferred_name_update('Alex', 'alex') == ('keep', 'Alex', 'Alex')
+    assert resolve_preferred_name_update('Vasile', 'Alex') == ('conflict', 'Vasile', 'Alex')
 
 
 def test_extract_language_preference_supports_multiple_variants():

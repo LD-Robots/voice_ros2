@@ -42,6 +42,21 @@ def extract_preferred_name(normalized: str) -> str:
     return ''
 
 
+def resolve_preferred_name_update(
+    existing_preferred_name: str,
+    introduced_preferred_name: str,
+) -> tuple[str, str, str]:
+    existing = normalize_person_name(existing_preferred_name)
+    introduced = normalize_person_name(introduced_preferred_name)
+    if not introduced:
+        return 'ignore', existing, introduced
+    if not existing:
+        return 'set', existing, introduced
+    if existing == introduced:
+        return 'keep', existing, introduced
+    return 'conflict', existing, introduced
+
+
 def extract_language_preference(normalized: str) -> str:
     for language in ('en', 'ro'):
         if any(token in normalized for token in LANGUAGE_PREFERENCES.get(language, ())):
