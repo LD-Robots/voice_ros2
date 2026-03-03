@@ -9,6 +9,8 @@ from rclpy.node import Node
 from std_msgs.msg import Bool, String
 from conversational_interfaces.msg import Transcription
 
+from .session_text_utils import detect_goodbye_keyword, goodbye_tts_command
+
 class SessionManagerNode(Node):
     def __init__(self):
         super().__init__('session_manager_node')
@@ -25,29 +27,29 @@ class SessionManagerNode(Node):
         
         # Publisher pentru controlul sesiunii
         self.session_pub = self.create_publisher(Bool, '/end_session_external', 10)
-        
-        # Cuvinte cheie pentru închidere
-        self.goodbye_keywords = [
-            "goodbye", "bye bye", "see you", "later", "shut down",
-            "la revedere", "pa pa", "ne vedem", "opreste-te", "închide"
-        ]
+        self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
         
         self.get_logger().info('✅ Session Manager started. Listening for Goodbye...')
 
     def transcription_callback(self, msg: Transcription):
         """Check if text contains goodbye words."""
-        text = msg.text.lower().strip()
-        
-        # Checkm dacă userul a zis ceva de genul goodbye
-        for kw in self.goodbye_keywords:
-            if kw in text:
-                self.get_logger().info(f'👋 Goodbye detected in text: "{kw}". Closing session.')
-                
-                # Send semnal de închidere
-                end_msg = Bool()
-                end_msg.data = True
-                self.session_pub.publish(end_msg)
-                return
+        text = (msg.text or '').strip()
+        detected_keyword = detect_goodbye_keyword(text)
+        if not detected_keyword:
+            return
+
+        self.get_logger().info(
+            f'👋 Goodbye detected in text: "{detected_keyword}". Closing session.'
+        )
+
+        tts_cmd = String()
+        tts_cmd.data = goodbye_tts_command(msg.language)
+        self.tts_cmd_pub.publish(tts_cmd)
+
+        end_msg = Bool()
+        end_msg.data = True
+        self.session_pub.publish(end_msg)
+        return
 
 def main(args=None):
     rclpy.init(args=args)
