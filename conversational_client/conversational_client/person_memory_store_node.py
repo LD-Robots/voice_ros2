@@ -26,8 +26,8 @@ from .person_profile_utils import (
     extract_language_preference,
     extract_preferred_name,
     migrate_legacy_auto_voice_labels,
-    normalize_person_name,
     normalize_person_record,
+    resolve_preferred_name_update,
     write_speaker_profile_sidecar,
 )
 
@@ -150,19 +150,32 @@ class PersonMemoryStoreNode(Node):
         preferred_language = self._extract_language_preference(normalized)
         fact = self._extract_fact(normalized)
 
-        should_attempt_enrollment = preferred_name and self.last_raw_speaker == 'Unknown'
+        should_attempt_enrollment = bool(preferred_name) and self.last_raw_speaker == 'Unknown'
 
-        if self.current_speaker == 'Unknown' or should_attempt_enrollment:
+        if should_attempt_enrollment:
             if preferred_name and self.auto_enroll_unknown_speakers:
                 self._request_speaker_enrollment(preferred_name, preferred_language, fact)
+            return
+
+        if self.current_speaker == 'Unknown':
             return
 
         record = self._touch_person(self.current_speaker)
         updated = False
 
-        if preferred_name and record.get('preferred_name') != preferred_name:
-            record['preferred_name'] = preferred_name
-            updated = True
+        if preferred_name:
+            action, existing_name, introduced_name = resolve_preferred_name_update(
+                str(record.get('preferred_name', '') or ''),
+                preferred_name,
+            )
+            if action == 'set':
+                record['preferred_name'] = introduced_name
+                updated = True
+            elif action == 'conflict':
+                self.get_logger().warning(
+                    f'Ignoring introduced name "{introduced_name}" for speaker={self.current_speaker}; '
+                    f'profile already stores "{existing_name}"'
+                )
 
         if preferred_language and record.get('preferred_language') != preferred_language:
             record['preferred_language'] = preferred_language
@@ -216,7 +229,6 @@ class PersonMemoryStoreNode(Node):
             'preferred_language': preferred_language,
             'facts': [fact] if fact else [],
             'source_wav': source_wav,
-            'target_voice_label': self._find_voice_label_by_preferred_name(preferred_name),
         }
         msg = String()
         msg.data = json.dumps(payload, separators=(',', ':'))
@@ -292,17 +304,6 @@ class PersonMemoryStoreNode(Node):
         record['last_seen'] = datetime.now(timezone.utc).isoformat()
         self._save_memory()
         return record
-
-    def _find_voice_label_by_preferred_name(self, preferred_name: str) -> str:
-        target = normalize_person_name(preferred_name)
-        if not target:
-            return ''
-        people = self.memory.get('people', {})
-        for voice_label, record in people.items():
-            stored = normalize_person_name(record.get('preferred_name', ''))
-            if stored and stored == target:
-                return voice_label
-        return ''
 
     def _publish_context(self):
         if self.current_speaker == 'Unknown':

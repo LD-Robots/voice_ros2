@@ -79,7 +79,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('vad_threshold', 0.65)
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 800)
-        self.declare_parameter('response_create_delay_ms', 450)
+        self.declare_parameter('response_create_delay_ms', 250)
         self.declare_parameter('local_response_gating', True)
         self.declare_parameter('short_transcript_dedupe_window_s', 4.0)
         self.declare_parameter('reconnect_delay_s', 3.0)

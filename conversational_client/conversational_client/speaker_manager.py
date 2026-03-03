@@ -58,6 +58,8 @@ except Exception:
 
 from speechbrain.inference.speaker import EncoderClassifier
 
+from .speaker_match_utils import SpeakerMatchResult, select_speaker_match
+
 
 class SpeakerManager:
     """
@@ -223,7 +225,7 @@ class SpeakerManager:
     # SPEAKER IDENTIFICATION
     # ═══════════════════════════════════════════════════════════════════
 
-    def identify(self, audio_float, threshold=None):
+    def identify(self, audio_float, threshold=None, min_margin=None):
         """
         Identify the speaker based on an audio segment.
 
@@ -234,8 +236,20 @@ class SpeakerManager:
         Returns:
             str: Speaker name (e.g., "Vale") or "Unknown"
         """
+        return self.identify_with_details(
+            audio_float,
+            threshold=threshold,
+            min_margin=min_margin,
+        ).speaker_name
+
+    def identify_with_details(self, audio_float, threshold=None, min_margin=None) -> SpeakerMatchResult:
+        """Identify the speaker and return decision details for logging."""
+        if min_margin is None:
+            min_margin = self.min_margin
+        else:
+            min_margin = max(0.0, float(min_margin))
         if not self.speaker_db:
-            return "Unknown"
+            return select_speaker_match({}, threshold or self.threshold, min_margin)
 
         if threshold is None:
             threshold = self.threshold
@@ -246,31 +260,14 @@ class SpeakerManager:
         # ─────────────────────────────────────────────────────────
         # Compare with all speakers in the database (cosine similarity)
         # ─────────────────────────────────────────────────────────
-        best_name = "Unknown"
-        best_score = -1.0
-        second_best_score = -1.0
+        scores = {}
 
         for name, stored_embedding in self.speaker_db.items():
-            score = self._cosine_similarity(new_embedding, stored_embedding)
+            scores[name] = self._cosine_similarity(new_embedding, stored_embedding)
 
-            if score > best_score:
-                second_best_score = best_score
-                best_score = score
-                best_name = name
-            elif score > second_best_score:
-                second_best_score = score
+        return select_speaker_match(scores, threshold, min_margin)
 
-        # Check if the score exceeds the threshold
-        if best_score < threshold:
-            return "Unknown"
-        if second_best_score > -1.0 and (best_score - second_best_score) < self.min_margin:
-            return "Unknown"
-        if best_score >= threshold:
-            return best_name
-        else:
-            return "Unknown"
-
-    def identify_file(self, wav_path, threshold=None):
+    def identify_file(self, wav_path, threshold=None, min_margin=None):
         signal, sr = self._load_audio_file(wav_path)
         if sr != 16000:
             resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
@@ -278,7 +275,7 @@ class SpeakerManager:
         if signal.shape[0] > 1:
             signal = torch.mean(signal, dim=0, keepdim=True)
         audio_float = signal.squeeze(0).detach().cpu().numpy().astype(np.float32)
-        return self.identify(audio_float, threshold=threshold)
+        return self.identify(audio_float, threshold=threshold, min_margin=min_margin)
 
     # ═══════════════════════════════════════════════════════════════════
     # COSINE SIMILARITY

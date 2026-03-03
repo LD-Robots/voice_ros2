@@ -78,13 +78,17 @@ class SpeakerIdNode(Node):
         )
         
         self.declare_parameter('enrollment_dir', default_enrollment_dir)
-        self.declare_parameter('similarity_threshold', 0.35)
-        self.declare_parameter('similarity_margin', 0.08)
+        self.declare_parameter('similarity_threshold', 0.45)
+        self.declare_parameter('similarity_margin', 0.12)
+        self.declare_parameter('enrollment_reuse_threshold', 0.58)
+        self.declare_parameter('enrollment_reuse_margin', 0.16)
         self.declare_parameter('sample_rate', 16000)
 
         self.enrollment_dir = self.get_parameter('enrollment_dir').value
         self.similarity_threshold = self.get_parameter('similarity_threshold').value
         self.similarity_margin = self.get_parameter('similarity_margin').value
+        self.enrollment_reuse_threshold = self.get_parameter('enrollment_reuse_threshold').value
+        self.enrollment_reuse_margin = self.get_parameter('enrollment_reuse_margin').value
         self.sample_rate = self.get_parameter('sample_rate').value
         self.memory_file = os.path.join(
             str(workspace_root) if workspace_root else os.getcwd(),
@@ -225,15 +229,33 @@ class SpeakerIdNode(Node):
         if self.db_loaded and self.speaker_manager is not None:
             try:
                 # Identifică vorbitorul
-                speaker_name = self.speaker_manager.identify(audio_float)
+                match = self.speaker_manager.identify_with_details(audio_float)
+                speaker_name = match.speaker_name
                 
                 # LOGGING INTELIGENT:
                 # - Afișează INFO doar dacă e cineva cunoscut
                 # - Dacă e Unknown, afișează doar DEBUG (ca să nu spammeze consola)
                 if speaker_name != "Unknown":
-                    self.get_logger().info(f'🗣️ Speaker identified: {speaker_name}')
+                    self.get_logger().info(
+                        f'🗣️ Speaker identified: {speaker_name} '
+                        f'(score={match.best_score:.3f}, reason={match.reason})'
+                    )
                 else:
-                    self.get_logger().debug(f'👤 Speaker neidentificat (Unknown)')
+                    margin = (
+                        match.best_score - match.second_best_score
+                        if match.second_best_score > -1.0
+                        else -1.0
+                    )
+                    if match.best_name != 'Unknown':
+                        self.get_logger().debug(
+                            f'👤 Speaker neidentificat (reason={match.reason}, '
+                            f'top={match.best_name}:{match.best_score:.3f}, '
+                            f'margin={margin:.3f})'
+                        )
+                    else:
+                        self.get_logger().debug(
+                            f'👤 Speaker neidentificat (reason={match.reason})'
+                        )
 
             except Exception as e:
                 self.get_logger().error(f'❌ Eroare la identificare: {e}')
@@ -321,7 +343,11 @@ class SpeakerIdNode(Node):
             matched_existing_label = ''
             if not target_voice_label and self.speaker_manager is not None:
                 try:
-                    matched_existing_label = self.speaker_manager.identify_file(source_wav)
+                    matched_existing_label = self.speaker_manager.identify_file(
+                        source_wav,
+                        threshold=self.enrollment_reuse_threshold,
+                        min_margin=self.enrollment_reuse_margin,
+                    )
                 except Exception as exc:
                     self.get_logger().warning(
                         f'Could not match enrollment audio to existing speaker: {exc}'

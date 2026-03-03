@@ -80,13 +80,23 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'speaker_similarity_threshold',
-            default_value='0.35',
+            default_value='0.45',
             description='Minimum similarity score for speaker identification'
         ),
         DeclareLaunchArgument(
             'speaker_similarity_margin',
-            default_value='0.08',
+            default_value='0.12',
             description='Minimum margin between top-1 and top-2 speaker matches'
+        ),
+        DeclareLaunchArgument(
+            'enrollment_reuse_threshold',
+            default_value='0.58',
+            description='Minimum similarity score required to reuse an existing speaker label during automatic enrollment'
+        ),
+        DeclareLaunchArgument(
+            'enrollment_reuse_margin',
+            default_value='0.16',
+            description='Minimum top-1 vs top-2 margin required to reuse an existing speaker label during automatic enrollment'
         ),
         DeclareLaunchArgument(
             'speaker_switch_hits_required',
@@ -115,12 +125,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_vad_silence_duration_ms',
-            default_value='1000',
+            default_value='800',
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
             'realtime_response_create_delay_ms',
-            default_value='450',
+            default_value='250',
             description='Extra local wait before creating a Realtime response after transcript acceptance'
         ),
         DeclareLaunchArgument(
@@ -300,6 +310,8 @@ def generate_launch_description():
                 'enrollment_dir': enrollment_dir,
                 'similarity_threshold': LaunchConfiguration('speaker_similarity_threshold'),
                 'similarity_margin': LaunchConfiguration('speaker_similarity_margin'),
+                'enrollment_reuse_threshold': LaunchConfiguration('enrollment_reuse_threshold'),
+                'enrollment_reuse_margin': LaunchConfiguration('enrollment_reuse_margin'),
             }]
         ),
 
