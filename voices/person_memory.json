@@ -12,7 +12,7 @@
       "preferred_name": "Vasile",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-03-03T20:07:42.826370+00:00"
+      "last_seen": "2026-03-05T20:10:57.420911+00:00"
     },
     "speaker_002": {
       "voice_label": "speaker_002",
@@ -20,6 +20,13 @@
       "preferred_language": "",
       "facts": [],
       "last_seen": "2026-03-03T15:26:05.702678+00:00"
+    },
+    "speaker_003": {
+      "voice_label": "speaker_003",
+      "preferred_name": "Ana",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-03-05T20:11:58.452644+00:00"
     },
     "valee": {
       "voice_label": "valee",

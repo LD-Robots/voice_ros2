@@ -172,10 +172,21 @@ class PersonMemoryStoreNode(Node):
                 record['preferred_name'] = introduced_name
                 updated = True
             elif action == 'conflict':
-                self.get_logger().warning(
-                    f'Ignoring introduced name "{introduced_name}" for speaker={self.current_speaker}; '
-                    f'profile already stores "{existing_name}"'
-                )
+                if (
+                    self._looks_like_name_correction(normalized)
+                    or self._looks_like_explicit_self_introduction(normalized)
+                ):
+                    record['preferred_name'] = introduced_name
+                    updated = True
+                    self.get_logger().info(
+                        f'Corrected preferred name for speaker={self.current_speaker}: '
+                        f'"{existing_name}" -> "{introduced_name}"'
+                    )
+                else:
+                    self.get_logger().warning(
+                        f'Ignoring introduced name "{introduced_name}" for speaker={self.current_speaker}; '
+                        f'profile already stores "{existing_name}"'
+                    )
 
         if preferred_language and record.get('preferred_language') != preferred_language:
             record['preferred_language'] = preferred_language
@@ -375,6 +386,40 @@ class PersonMemoryStoreNode(Node):
     @staticmethod
     def _extract_fact(normalized: str) -> str:
         return extract_fact(normalized)
+
+    @staticmethod
+    def _looks_like_name_correction(normalized: str) -> bool:
+        text = (normalized or '').strip()
+        if not text:
+            return False
+        cues = (
+            ' no ',
+            ' wrong ',
+            ' not ',
+            ' actually ',
+            ' nu ',
+            ' gresit ',
+            ' de fapt ',
+        )
+        hay = f' {text} '
+        return any(cue in hay for cue in cues)
+
+    @staticmethod
+    def _looks_like_explicit_self_introduction(normalized: str) -> bool:
+        text = (normalized or '').strip()
+        if not text:
+            return False
+        cues = (
+            'my name is ',
+            'call me ',
+            'i am called ',
+            'i m called ',
+            'i go by ',
+            'ma numesc ',
+            'ma cheama ',
+            'numele meu este ',
+        )
+        return any(cue in text for cue in cues)
 
 
 def main(args=None):

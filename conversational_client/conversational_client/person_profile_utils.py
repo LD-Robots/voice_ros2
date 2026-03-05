@@ -39,6 +39,34 @@ def extract_preferred_name(normalized: str) -> str:
         candidate = normalize_person_name(match.group(1))
         if candidate:
             return candidate
+    spelled = _extract_spelled_name(normalized)
+    if spelled:
+        return spelled
+    return ''
+
+
+def _extract_spelled_name(normalized: str) -> str:
+    text = (normalized or '').strip()
+    if not text:
+        return ''
+
+    full_match = re.fullmatch(r'[a-z](?:\s+[a-z]){2,7}', text)
+    if full_match:
+        candidate = normalize_person_name(''.join(re.findall(r'[a-z]', full_match.group(0))))
+        if candidate:
+            return candidate
+
+    cue_patterns = (
+        r'\b(?:it s|it is|este|e)\s+([a-z](?:\s+[a-z]){2,7})\b',
+        r'\b(?:name is|ma numesc|ma cheama)\s+([a-z](?:\s+[a-z]){2,7})\b',
+    )
+    for pattern in cue_patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        candidate = normalize_person_name(''.join(re.findall(r'[a-z]', match.group(1))))
+        if candidate:
+            return candidate
     return ''
 
 

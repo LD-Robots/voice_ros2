@@ -95,6 +95,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('focus_recognition_window_s', 3.0)
         self.declare_parameter('utterance_capture_prefix_ms', 400)
         self.declare_parameter('utterance_capture_min_ms', 800)
+        self.declare_parameter('name_context_wait_ms', 950)
         self.declare_parameter(
             'instructions',
             str(load_prompt_defaults().get('realtime_instructions', '')),
@@ -135,6 +136,10 @@ class OpenAIRealtimeNode(Node):
         )
         self.utterance_capture_min_ms = int(
             self.get_parameter('utterance_capture_min_ms').value
+        )
+        self.name_context_wait_ms = max(
+            0,
+            int(self.get_parameter('name_context_wait_ms').value),
         )
         self.base_instructions = str(self.get_parameter('instructions').value)
         self.speaker_tracker = StickySpeakerTracker(
@@ -210,6 +215,7 @@ class OpenAIRealtimeNode(Node):
         self._pending_response_reason = ''
         self._deferred_response_item_id = ''
         self._deferred_response_reason = ''
+        self._assistant_name_question_active = False
         self._paused_transcript_pending = ''
         self._paused_transcript_at = 0.0
         self._last_accepted_user_transcript_norm = ''
@@ -606,13 +612,25 @@ class OpenAIRealtimeNode(Node):
                     transcript,
                     preferred_language=self.person_context.get('preferred_language', ''),
                 )
+                self._assistant_name_question_active = self._is_assistant_name_question(normalized)
                 self._refresh_session()
                 out = Transcription()
                 out.text = transcript
                 out.language = active_language
                 out.confidence = 1.0
                 self.transcription_pub.publish(out)
-                self._schedule_response_create(item_id, reason='accepted_transcript')
+                if (
+                    self._is_name_identity_question(normalized)
+                    and not self._voice_correlated_preferred_name()
+                ):
+                    wait_delay_ms = max(self.response_create_delay_ms, self.name_context_wait_ms)
+                    self._schedule_response_create_with_delay(
+                        item_id,
+                        reason='await_voice_name_context',
+                        delay_ms=wait_delay_ms,
+                    )
+                else:
+                    self._schedule_response_create(item_id, reason='accepted_transcript')
             return
 
         if event_type in ('response.audio.delta', 'response.output_audio.delta'):
@@ -734,6 +752,7 @@ class OpenAIRealtimeNode(Node):
         else:
             self._mark_response_inactive()
         self._last_response_request_item_id = ''
+        self._assistant_name_question_active = False
         if self._pending_resume_text:
             self._clear_pending_resume()
             self._refresh_session()
@@ -807,11 +826,35 @@ class OpenAIRealtimeNode(Node):
 
     def _build_instructions(self) -> str:
         extras = []
+        assistant_name_question = self._assistant_name_question_active
+        extras.append(
+            'Your own assistant name is Robot. '
+            'If the user asks your name, answer "Robot". '
+            'Do not use any speaker preferred name as your own identity.'
+        )
+        if assistant_name_question:
+            extras.append(
+                'The user is asking your name right now. '
+                'Answer clearly with "My name is Robot." and do not mention any user name.'
+            )
+            extras.append(
+                'For this turn, ignore user profile names when composing the answer.'
+            )
         if self.current_speaker != 'Unknown':
-            extras.append(f'Current identified speaker: {self.current_speaker}.')
-        preferred_name = self.person_context.get('preferred_name', '')
-        if preferred_name:
-            extras.append(f'Preferred name for this speaker: {preferred_name}.')
+            extras.append(
+                f'Current internal speaker label: {self.current_speaker}. '
+                'This is a technical identifier, not a spoken name.'
+            )
+        preferred_name = self._voice_correlated_preferred_name()
+        if preferred_name and not assistant_name_question:
+            extras.append(
+                f'Preferred spoken name for the current speaker: {preferred_name}. '
+                'Never call the user by internal labels like speaker_001.'
+            )
+            extras.append(
+                'If the user asks whether you remember their name or asks what their name is, '
+                'answer directly with the preferred spoken name.'
+            )
         preferred_language = self.person_context.get('preferred_language', '')
         if preferred_language:
             extras.append(f'Preferred language for this speaker: {preferred_language}.')
@@ -856,6 +899,50 @@ class OpenAIRealtimeNode(Node):
                 'ignore the interrupted reply.'
             )
         return ' '.join([self.base_instructions, *extras]).strip()
+
+    def _voice_correlated_preferred_name(self) -> str:
+        if self.current_speaker == 'Unknown':
+            return ''
+        context_speaker = str(self.person_context.get('speaker', 'Unknown') or 'Unknown')
+        if context_speaker != self.current_speaker:
+            return ''
+        return str(self.person_context.get('preferred_name', '') or '').strip()
+
+    @staticmethod
+    def _is_name_identity_question(normalized_text: str) -> bool:
+        text = (normalized_text or '').strip()
+        if not text:
+            return False
+        patterns = (
+            'do you know my name',
+            'do you remember my name',
+            'what is my name',
+            'what s my name',
+            'know my name',
+            'remember my name',
+            'numele meu',
+            'cum ma cheama',
+            'stii numele meu',
+            'imi stii numele',
+            'tii minte numele meu',
+        )
+        return any(pattern in text for pattern in patterns)
+
+    @staticmethod
+    def _is_assistant_name_question(normalized_text: str) -> bool:
+        text = (normalized_text or '').strip()
+        if not text:
+            return False
+        patterns = (
+            'what is your name',
+            'what s your name',
+            'who are you',
+            'numele tau',
+            'cum te cheama',
+            'cum te numesti',
+            'care e numele tau',
+        )
+        return any(pattern in text for pattern in patterns)
 
     def _cancel_and_clear(self):
         self._cancel_pending_response_create()
