@@ -12,7 +12,7 @@
       "preferred_name": "Vasile",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-03-05T20:10:57.420911+00:00"
+      "last_seen": "2026-03-06T13:48:57.655477+00:00"
     },
     "speaker_002": {
       "voice_label": "speaker_002",
@@ -23,17 +23,31 @@
     },
     "speaker_003": {
       "voice_label": "speaker_003",
-      "preferred_name": "Ana",
+      "preferred_name": "Dragos",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-03-05T20:11:58.452644+00:00"
+      "last_seen": "2026-03-06T13:39:54.120649+00:00"
+    },
+    "speaker_005": {
+      "voice_label": "speaker_005",
+      "preferred_name": "Vasile",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-03-06T12:56:41.462655+00:00"
+    },
+    "speaker_007": {
+      "voice_label": "speaker_007",
+      "preferred_name": "Alex",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-03-06T12:54:47.506368+00:00"
     },
     "valee": {
       "voice_label": "valee",
       "preferred_name": "Valee",
       "preferred_language": "",
       "facts": [],
-      "last_seen": ""
+      "last_seen": "2026-03-06T13:08:18.352153+00:00"
     }
   }
 }

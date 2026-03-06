@@ -121,7 +121,7 @@ ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
-    realtime_capture_during_playback:=false
+    realtime_capture_during_playback:=true
 ```
 
 ### Server Only
@@ -139,7 +139,7 @@ ros2 launch conversational_server server_pipeline.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
-    realtime_capture_during_playback:=false
+    realtime_capture_during_playback:=true
 ```
 
 ### Client Only (on robot hardware)
@@ -203,14 +203,14 @@ ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
-    realtime_capture_during_playback:=false
+    realtime_capture_during_playback:=true
 ```
 
 Recommended first test:
 - `conversation_backend:=openai_realtime`
 - `realtime_model:=gpt-realtime-mini`
 - `realtime_voice:=cedar`
-- `realtime_capture_during_playback:=false`
+- `realtime_capture_during_playback:=true`
 
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:

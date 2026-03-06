@@ -77,7 +77,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('api_base_url', 'wss://api.openai.com/v1/realtime')
         self.declare_parameter('input_sample_rate', 16000)
         self.declare_parameter('api_sample_rate', 24000)
-        self.declare_parameter('capture_during_playback', False)
+        self.declare_parameter('capture_during_playback', True)
         self.declare_parameter('input_transcription_enabled', True)
         self.declare_parameter('input_transcription_model', 'gpt-4o-mini-transcribe')
         self.declare_parameter('vad_threshold', 0.65)
