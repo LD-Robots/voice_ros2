@@ -75,7 +75,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_capture_during_playback',
-            default_value='false',
+            default_value='true',
             description='Stream microphone audio to OpenAI while robot playback is active'
         ),
         DeclareLaunchArgument(
