@@ -53,7 +53,9 @@ def generate_launch_description():
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
+                'device_index': -1,  # Auto-detect (use OS default/PulseAudio/Pipewire)
+                'respeaker_mode': True,
+                'respeaker_channel': 0, # AEC procesat
             }]
         ),
         

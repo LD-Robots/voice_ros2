@@ -171,13 +171,15 @@ class WakeWordNode(Node):
                 if model_paths:
                     # Load custom models
                     self.oww_model = OWWModel(wakeword_models=model_paths)
-                    self.get_logger().debug(f'🔔 Wake Word Node started with {len(model_paths)} custom models')
+                    self.get_logger().info(f'🔔 Wake Word Node started with custom models: {", ".join(self.keywords.keys())}')
+                    for kw, cfg in self.keywords.items():
+                        self.get_logger().info(f'   - {kw}: threshold={cfg["threshold"]}, kind={cfg["kind"]}')
                 else:
                     # Use default built-in models
                     self.oww_model = OWWModel()
-                    self.get_logger().debug('🔔 Wake Word Node started with default models')
+                    self.get_logger().info('🔔 Wake Word Node started with default models')
                 
-                self.get_logger().debug(f'   threshold={self.threshold}, cooldown={self.cooldown_ms}ms')
+                self.get_logger().info(f'   Global threshold={self.threshold}, cooldown={self.cooldown_ms}ms')
                 
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to load OpenWakeWord: {e}')
@@ -186,6 +188,10 @@ class WakeWordNode(Node):
         else:
             self.get_logger().warn('⚠️ OpenWakeWord not available - using dummy mode')
             self.get_logger().info('🔔 Wake Word Node started (dummy mode)')
+            
+        # For periodic diagnostic logging
+        self.max_scores = {kw: 0.0 for kw in self.keywords.keys()}
+        self.last_score_log_time = time.time()
     
     # ═══════════════════════════════════════════════════════════════════
     # AUDIO CALLBACK - process each audio chunk
@@ -204,64 +210,33 @@ class WakeWordNode(Node):
         self.audio_debug_count += 1
         
         # OpenWakeWord typically expects chunks of 1280 samples (80ms at 16kHz)
-        # for optimal performance (though it handles streaming internally).
         MIN_SAMPLES = 1280
         
         if len(self.audio_buffer) >= MIN_SAMPLES:
             # Extract exactly MIN_SAMPLES
             audio_chunk = np.array(self.audio_buffer[:MIN_SAMPLES], dtype=np.int16)
-            
-            # --- DEBUG: Save Audio to WAV for verification (DISABLED) ---
-            # if not hasattr(self, 'debug_wav_buffer'):
-            #     self.debug_wav_buffer = []
-
-            # # Capture first 3 seconds (16000 * 3 = 48000 samples)
-            # if len(self.debug_wav_buffer) < 48000:
-            #     self.debug_wav_buffer.extend(audio_chunk.tolist())
-            #     # self.get_logger().info(f'🎤 Debug buffer filling: {len(self.debug_wav_buffer)}/48000')
-                
-            #     if len(self.debug_wav_buffer) >= 48000:
-            #         try:
-            #             import soundfile as sf
-            #             wav_path = '/home/delia/ros2_ws/debug_wake_audio.wav'
-                        
-            #             # Convert to numpy int16 array explicitly
-            #             wav_data = np.array(self.debug_wav_buffer, dtype=np.int16)
-                        
-            #             # Verify it's not silence
-            #             rms_debug = np.sqrt(np.mean(wav_data.astype(np.float32)**2))
-            #             self.get_logger().info(f'🎤 Debug WAV RMS: {rms_debug:.2f}')
-                        
-            #             # Write with explicit subtype
-            #             sf.write(wav_path, wav_data, 16000, subtype='PCM_16')
-                        
-            #             self.get_logger().warn(f'💾 DEBUG WAV SAVED: {wav_path}')
-            #             self.get_logger().warn('👉 Please play this file to verify audio quality!')
-            #         except ImportError:
-            #             self.get_logger().error("Cannot save debug WAV: soundfile not installed")
-            #         except Exception as e:
-            #             self.get_logger().error(f"Error saving WAV: {e}")
-            # -------------------------------------------------
-
-            # Slide window: In standard OWW streaming, we usually feed chunks of 1280.
-            # We can either consume all 1280 (no overlap) or slide by a smaller step.
-            # The standard OWW `predict` method is stateful, so we just feed it sequential chunks.
-            # We will consume the whole chunk to keep it real-time and simple.
             self.audio_buffer = self.audio_buffer[MIN_SAMPLES:]
             
             if self.oww_model is not None:
                 try:
-                    # ✅ OpenWakeWord expects int16 audio directly!
-                    # Do NOT convert to float32 - that was causing near-zero scores
                     prediction = self.oww_model.predict(audio_chunk)
                     
-                    # Check scores for all models
+                    # Update rolling max scores for diagnostics
+                    for kw, score in prediction.items():
+                        if kw in self.max_scores:
+                            self.max_scores[kw] = max(self.max_scores[kw], score)
+                    
+                    # Check scores against thresholds
                     self._check_predictions(prediction)
 
-
-                    if self.audio_debug_count % 25 == 0:
-                        scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in prediction.items()])
-                        self.get_logger().debug(f'👀 Scores: {scores_str}')
+                    # Periodic diagnostic log (every 5 seconds)
+                    now = time.time()
+                    if now - self.last_score_log_time > 5.0:
+                        scores_str = " | ".join([f"{k}: {v:.3f} (max)" for k, v in self.max_scores.items()])
+                        self.get_logger().info(f'📊 Detection feedback: {scores_str}')
+                        # Reset max scores
+                        self.max_scores = {kw: 0.0 for kw in self.keywords.keys()}
+                        self.last_score_log_time = now
                     
                 except Exception as e:
                     self.get_logger().error(f'OpenWakeWord prediction error: {e}')
