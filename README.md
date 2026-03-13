@@ -122,6 +122,11 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
+    realtime_web_search_model:=gpt-4.1-mini \
+    realtime_web_search_context_size:=low \
+    realtime_vad_silence_duration_ms:=550 \
+    realtime_response_create_delay_ms:=100 \
+    realtime_continued_turn_response_delay_ms:=350 \
     realtime_capture_during_playback:=true
 ```
 
@@ -141,6 +146,11 @@ ros2 launch conversational_server server_pipeline.launch.py \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
+    realtime_web_search_model:=gpt-4.1-mini \
+    realtime_web_search_context_size:=low \
+    realtime_vad_silence_duration_ms:=550 \
+    realtime_response_create_delay_ms:=100 \
+    realtime_continued_turn_response_delay_ms:=350 \
     realtime_capture_during_playback:=true
 ```
 
@@ -206,6 +216,11 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
+    realtime_web_search_model:=gpt-4.1-mini \
+    realtime_web_search_context_size:=low \
+    realtime_vad_silence_duration_ms:=550 \
+    realtime_response_create_delay_ms:=100 \
+    realtime_continued_turn_response_delay_ms:=350 \
     realtime_capture_during_playback:=true
 ```
 
@@ -214,6 +229,11 @@ Recommended first test:
 - `realtime_model:=gpt-realtime-mini`
 - `realtime_voice:=cedar`
 - `realtime_web_search_enabled:=true`
+- `realtime_web_search_model:=gpt-4.1-mini`
+- `realtime_web_search_context_size:=low`
+- `realtime_vad_silence_duration_ms:=550`
+- `realtime_response_create_delay_ms:=100`
+- `realtime_continued_turn_response_delay_ms:=350`
 - `realtime_capture_during_playback:=true`
 
 When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
