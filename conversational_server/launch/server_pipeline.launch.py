@@ -79,7 +79,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_continued_turn_response_delay_ms',
-            default_value='350',
+            default_value='450',
             description='Delay before answering a transcript that arrived after the user resumed speaking'
         ),
         
