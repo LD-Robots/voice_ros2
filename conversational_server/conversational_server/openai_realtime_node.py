@@ -91,7 +91,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('capture_during_playback', True)
         self.declare_parameter('input_transcription_enabled', True)
         self.declare_parameter('input_transcription_model', 'gpt-4o-mini-transcribe')
-        self.declare_parameter('vad_threshold', 0.65)
+        self.declare_parameter('vad_threshold', 0.75)
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 550)
         self.declare_parameter('response_create_delay_ms', 100)
