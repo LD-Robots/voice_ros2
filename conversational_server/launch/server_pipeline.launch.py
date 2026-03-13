@@ -155,7 +155,7 @@ def generate_launch_description():
                 'web_search_enabled': LaunchConfiguration('realtime_web_search_enabled'),
                 'web_search_model': LaunchConfiguration('realtime_web_search_model'),
                 'web_search_context_size': LaunchConfiguration('realtime_web_search_context_size'),
-                'vad_threshold': 0.65,
+                'vad_threshold': 0.75,
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),

@@ -252,7 +252,7 @@ def generate_launch_description():
                 'local_response_gating': LaunchConfiguration('realtime_local_response_gating'),
                 'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
                 'language_switch_hits_required': LaunchConfiguration('language_switch_hits_required'),
-                'vad_threshold': 0.65,
+                'vad_threshold': 0.75,
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),
