@@ -79,6 +79,21 @@ def generate_launch_description():
             description='Stream microphone audio to OpenAI while robot playback is active'
         ),
         DeclareLaunchArgument(
+            'realtime_web_search_enabled',
+            default_value='true',
+            description='Allow OpenAI Realtime to call a web-search tool via the Responses API'
+        ),
+        DeclareLaunchArgument(
+            'realtime_web_search_model',
+            default_value='gpt-4.1-mini',
+            description='Responses API model used to execute web search tool calls'
+        ),
+        DeclareLaunchArgument(
+            'realtime_web_search_context_size',
+            default_value='medium',
+            description='OpenAI web-search context size (low/medium/high)'
+        ),
+        DeclareLaunchArgument(
             'speaker_similarity_threshold',
             default_value='0.45',
             description='Minimum similarity score for speaker identification'
@@ -231,6 +246,9 @@ def generate_launch_description():
                 'model': LaunchConfiguration('realtime_model'),
                 'voice': LaunchConfiguration('realtime_voice'),
                 'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
+                'web_search_enabled': LaunchConfiguration('realtime_web_search_enabled'),
+                'web_search_model': LaunchConfiguration('realtime_web_search_model'),
+                'web_search_context_size': LaunchConfiguration('realtime_web_search_context_size'),
                 'local_response_gating': LaunchConfiguration('realtime_local_response_gating'),
                 'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
                 'language_switch_hits_required': LaunchConfiguration('language_switch_hits_required'),

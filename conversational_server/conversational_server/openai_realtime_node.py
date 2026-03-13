@@ -28,6 +28,17 @@ from conversational_client.conversation_utils import (
 )
 from std_msgs.msg import Bool, String
 from .language_utils import ConversationLanguageTracker
+from .openai_web_search import (
+    DEFAULT_WEB_SEARCH_CONTEXT_SIZE,
+    DEFAULT_WEB_SEARCH_MAX_OUTPUT_TOKENS,
+    DEFAULT_WEB_SEARCH_MODEL,
+    DEFAULT_WEB_SEARCH_SOURCES_LIMIT,
+    DEFAULT_WEB_SEARCH_TIMEOUT_S,
+    WEB_SEARCH_FUNCTION_NAME,
+    build_realtime_web_search_tool,
+    build_web_search_tool_output,
+    call_openai_web_search,
+)
 from .prompt_config import load_prompt_defaults
 from .realtime_text_utils import (
     StickySpeakerTracker,
@@ -96,6 +107,18 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('utterance_capture_prefix_ms', 400)
         self.declare_parameter('utterance_capture_min_ms', 800)
         self.declare_parameter('name_context_wait_ms', 950)
+        self.declare_parameter('web_search_enabled', True)
+        self.declare_parameter('web_search_model', DEFAULT_WEB_SEARCH_MODEL)
+        self.declare_parameter('web_search_context_size', DEFAULT_WEB_SEARCH_CONTEXT_SIZE)
+        self.declare_parameter('web_search_timeout_s', DEFAULT_WEB_SEARCH_TIMEOUT_S)
+        self.declare_parameter(
+            'web_search_max_output_tokens',
+            DEFAULT_WEB_SEARCH_MAX_OUTPUT_TOKENS,
+        )
+        self.declare_parameter(
+            'web_search_sources_limit',
+            DEFAULT_WEB_SEARCH_SOURCES_LIMIT,
+        )
         self.declare_parameter(
             'instructions',
             str(load_prompt_defaults().get('realtime_instructions', '')),
@@ -140,6 +163,20 @@ class OpenAIRealtimeNode(Node):
         self.name_context_wait_ms = max(
             0,
             int(self.get_parameter('name_context_wait_ms').value),
+        )
+        self.web_search_enabled = bool(self.get_parameter('web_search_enabled').value)
+        self.web_search_model = str(self.get_parameter('web_search_model').value)
+        self.web_search_context_size = str(
+            self.get_parameter('web_search_context_size').value
+        )
+        self.web_search_timeout_s = float(self.get_parameter('web_search_timeout_s').value)
+        self.web_search_max_output_tokens = max(
+            32,
+            int(self.get_parameter('web_search_max_output_tokens').value),
+        )
+        self.web_search_sources_limit = max(
+            1,
+            int(self.get_parameter('web_search_sources_limit').value),
         )
         self.base_instructions = str(self.get_parameter('instructions').value)
         self.speaker_tracker = StickySpeakerTracker(
@@ -225,6 +262,8 @@ class OpenAIRealtimeNode(Node):
         self._capture_user_audio = False
         self._current_input_sample_rate = self.input_sample_rate
         self._current_input_channels = 1
+        self._handled_tool_call_ids = set()
+        self._tool_call_lock = threading.Lock()
 
         self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
         self.user_audio_segment_pub = self.create_publisher(Audio, '/realtime_user_audio_segment', 10)
@@ -653,6 +692,13 @@ class OpenAIRealtimeNode(Node):
             self._handle_text_done(event)
             return
 
+        if event_type in (
+            'response.output_item.done',
+            'response.function_call_arguments.done',
+        ):
+            self._handle_function_call_event(event)
+            return
+
         if event_type == 'response.done':
             self._handle_response_done(event)
             return
@@ -779,6 +825,9 @@ class OpenAIRealtimeNode(Node):
             'output_audio_format': 'pcm16',
             'turn_detection': turn_detection,
         }
+        if self.web_search_enabled:
+            session['tools'] = [build_realtime_web_search_tool()]
+            session['tool_choice'] = 'auto'
         if self.input_transcription_enabled:
             session['input_audio_transcription'] = {
                 'model': self.input_transcription_model,
@@ -897,6 +946,12 @@ class OpenAIRealtimeNode(Node):
             extras.append(
                 'If the user asks a different question or changes topic, answer the new request normally and '
                 'ignore the interrupted reply.'
+            )
+        if self.web_search_enabled:
+            extras.append(
+                'When the user asks for current, live, recent, online, or otherwise time-sensitive information, '
+                'or explicitly asks you to search the internet, call the web_search tool before answering. '
+                'Do not pretend to have browsed if you did not use the tool.'
             )
         return ' '.join([self.base_instructions, *extras]).strip()
 
@@ -1324,6 +1379,87 @@ class OpenAIRealtimeNode(Node):
             reason=self._deferred_response_reason or 'continued_turn_after_resume',
             delay_ms=delay_ms,
         )
+
+    def _handle_function_call_event(self, event: dict):
+        item = event.get('item', {}) or {}
+        item_type = str(item.get('type', '') or '').strip()
+        name = str(item.get('name', '') or event.get('name', '') or '').strip()
+        call_id = str(item.get('call_id', '') or event.get('call_id', '') or '').strip()
+        arguments = str(item.get('arguments', '') or event.get('arguments', '') or '')
+
+        if item_type and item_type != 'function_call':
+            return
+        if name != WEB_SEARCH_FUNCTION_NAME or not call_id:
+            return
+
+        with self._tool_call_lock:
+            if call_id in self._handled_tool_call_ids:
+                return
+            self._handled_tool_call_ids.add(call_id)
+            if len(self._handled_tool_call_ids) > 256:
+                self._handled_tool_call_ids.clear()
+                self._handled_tool_call_ids.add(call_id)
+
+        self.get_logger().info(f'OpenAI Realtime requested web search via tool call {call_id}')
+        thread = threading.Thread(
+            target=self._execute_web_search_tool_call,
+            args=(call_id, arguments),
+            daemon=True,
+            name=f'web-search-{call_id[:8]}',
+        )
+        thread.start()
+
+    def _execute_web_search_tool_call(self, call_id: str, arguments: str):
+        query = ''
+        output = ''
+
+        try:
+            parsed_arguments = json.loads(arguments) if arguments else {}
+            if not isinstance(parsed_arguments, dict):
+                raise ValueError('Tool arguments must be a JSON object.')
+            query = str(parsed_arguments.get('query', '') or '').strip()
+            if not query:
+                raise ValueError('Missing required "query" argument.')
+
+            payload = call_openai_web_search(
+                self.api_key,
+                query,
+                model=self.web_search_model,
+                search_context_size=self.web_search_context_size,
+                timeout_s=self.web_search_timeout_s,
+                max_output_tokens=self.web_search_max_output_tokens,
+            )
+            output = build_web_search_tool_output(
+                query,
+                payload=payload,
+                max_sources=self.web_search_sources_limit,
+            )
+            self.get_logger().info(f'OpenAI Responses web search completed for: {query}')
+        except Exception as exc:
+            message = str(exc).strip() or 'Unknown web search failure.'
+            self.get_logger().error(f'OpenAI web search tool failed: {message}')
+            output = build_web_search_tool_output(query, error=message)
+
+        if not self._send_event({
+            'type': 'conversation.item.create',
+            'item': {
+                'type': 'function_call_output',
+                'call_id': call_id,
+                'output': output,
+            },
+        }):
+            return
+
+        if self.current_backend != 'openai_realtime':
+            return
+        if self.conversation_paused or self.waiting_for_robot_confirmation:
+            return
+        if self._user_speaking:
+            self._remember_deferred_response('', 'tool_output_ready')
+            return
+
+        if self._send_event({'type': 'response.create'}):
+            self.get_logger().debug(f'Requested follow-up realtime response after tool call {call_id}')
 
 
 def main(args=None):
