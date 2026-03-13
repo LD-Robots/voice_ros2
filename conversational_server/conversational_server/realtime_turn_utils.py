@@ -3,6 +3,7 @@ def can_request_realtime_response(
     user_speaking: bool,
     conversation_paused: bool,
     waiting_for_robot_confirmation: bool,
+    response_create_pending: bool,
     response_active: bool,
     item_id: str,
     last_response_request_item_id: str,
@@ -11,6 +12,8 @@ def can_request_realtime_response(
         return False, 'user_speaking'
     if conversation_paused or waiting_for_robot_confirmation:
         return False, 'blocked'
+    if response_create_pending:
+        return False, 'response_pending'
     if response_active:
         return False, 'response_active'
     if item_id and item_id == last_response_request_item_id:

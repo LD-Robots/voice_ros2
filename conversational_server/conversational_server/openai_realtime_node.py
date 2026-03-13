@@ -95,7 +95,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 550)
         self.declare_parameter('response_create_delay_ms', 100)
-        self.declare_parameter('continued_turn_response_delay_ms', 350)
+        self.declare_parameter('continued_turn_response_delay_ms', 450)
         self.declare_parameter('local_response_gating', True)
         self.declare_parameter('short_transcript_dedupe_window_s', 4.0)
         self.declare_parameter('reconnect_delay_s', 3.0)
@@ -231,6 +231,7 @@ class OpenAIRealtimeNode(Node):
         self._published_final_items = set()
         self._active_response_id = ''
         self._response_active = False
+        self._response_create_pending = False
         self._user_speaking = False
         self._audio_chunks_sent = 0
         self._seen_output_audio_for_response = set()
@@ -707,6 +708,8 @@ class OpenAIRealtimeNode(Node):
             error = event.get('error', {})
             message = error.get('message') or str(error)
             if self._is_benign_realtime_error(message):
+                if 'already has an active response in progress' in message.lower():
+                    self._clear_response_create_pending()
                 self.get_logger().warn(f'OpenAI Realtime benign API warning: {message}')
             else:
                 self._publish_status('error')
@@ -802,6 +805,12 @@ class OpenAIRealtimeNode(Node):
         if self._pending_resume_text:
             self._clear_pending_resume()
             self._refresh_session()
+        if (
+            not self._user_speaking
+            and not self.conversation_paused
+            and not self.waiting_for_robot_confirmation
+        ):
+            self._schedule_deferred_response_after_response_done()
 
     def _refresh_session(self):
         if not self._connected.is_set() or self.current_backend != 'openai_realtime':
@@ -1003,7 +1012,7 @@ class OpenAIRealtimeNode(Node):
         self._cancel_pending_response_create()
         if not self._connected.is_set():
             return
-        if self._response_active:
+        if self._response_active or self._response_create_pending:
             self._send_event({'type': 'response.cancel'})
         self._send_event({'type': 'input_audio_buffer.clear'})
         self._assistant_text.clear()
@@ -1038,11 +1047,13 @@ class OpenAIRealtimeNode(Node):
         self._last_truncate_time = now
 
         should_truncate = self._response_active or bool(item_id)
+        if self._response_create_pending:
+            should_truncate = True
         if not should_truncate:
             return
 
         self._capture_pending_resume(item_id, played_ms)
-        if self._response_active:
+        if self._response_active or self._response_create_pending:
             self._send_event({'type': 'response.cancel'})
         if item_id:
             self._send_event({
@@ -1087,6 +1098,7 @@ class OpenAIRealtimeNode(Node):
             user_speaking=self._user_speaking,
             conversation_paused=self.conversation_paused,
             waiting_for_robot_confirmation=self.waiting_for_robot_confirmation,
+            response_create_pending=self._response_create_pending,
             response_active=self._response_active,
             item_id=item_id,
             last_response_request_item_id=self._last_response_request_item_id,
@@ -1096,6 +1108,11 @@ class OpenAIRealtimeNode(Node):
                 self._remember_deferred_response(item_id, reason)
                 self.get_logger().debug(
                     f'Deferred realtime response ({reason}) while user is still speaking'
+                )
+            elif block_reason in ('response_pending', 'response_active'):
+                self._remember_deferred_response(item_id, reason)
+                self.get_logger().debug(
+                    f'Queued realtime response ({reason}) while another response is still busy'
                 )
             return False
 
@@ -1174,14 +1191,22 @@ class OpenAIRealtimeNode(Node):
         self._published_final_items.add(item_id)
 
     def _mark_response_active(self, response_id: str = ''):
+        self._response_create_pending = False
         self._response_active = True
         if response_id:
             self._active_response_id = response_id
 
     def _mark_response_inactive(self, response_id: str = ''):
+        self._response_create_pending = False
         if not response_id or response_id == self._active_response_id:
             self._response_active = False
             self._active_response_id = ''
+
+    def _mark_response_create_pending(self):
+        self._response_create_pending = True
+
+    def _clear_response_create_pending(self):
+        self._response_create_pending = False
 
     def _clear_playback_progress(self):
         self._last_playback_progress = {
@@ -1199,7 +1224,7 @@ class OpenAIRealtimeNode(Node):
 
     def _cancel_current_pending_response(self, reason: str):
         self._cancel_pending_response_create()
-        if self._response_active:
+        if self._response_active or self._response_create_pending:
             self._send_event({'type': 'response.cancel'})
             self._mark_response_inactive()
         self._send_event({'type': 'input_audio_buffer.clear'})
@@ -1231,6 +1256,7 @@ class OpenAIRealtimeNode(Node):
         normalized = (message or '').strip().lower()
         return (
             'cancellation failed: no active response found' in normalized
+            or 'already has an active response in progress' in normalized
             or ('audio content of' in normalized and 'already shorter than' in normalized)
         )
 
@@ -1256,6 +1282,7 @@ class OpenAIRealtimeNode(Node):
             user_speaking=self._user_speaking,
             conversation_paused=self.conversation_paused,
             waiting_for_robot_confirmation=self.waiting_for_robot_confirmation,
+            response_create_pending=self._response_create_pending,
             response_active=self._response_active,
             item_id=item_id,
             last_response_request_item_id=self._last_response_request_item_id,
@@ -1263,10 +1290,13 @@ class OpenAIRealtimeNode(Node):
         if not allowed:
             if block_reason == 'user_speaking':
                 self._remember_deferred_response(item_id, reason)
+            elif block_reason in ('response_pending', 'response_active'):
+                self._remember_deferred_response(item_id, reason)
             return False
         self._clear_deferred_response()
         if not self._send_event({'type': 'response.create'}):
             return False
+        self._mark_response_create_pending()
         self._last_response_request_item_id = item_id
         self.get_logger().debug(
             f'Requested realtime response ({reason}) for item={item_id or "n/a"}'
@@ -1380,6 +1410,15 @@ class OpenAIRealtimeNode(Node):
             delay_ms=delay_ms,
         )
 
+    def _schedule_deferred_response_after_response_done(self) -> bool:
+        if not self._deferred_response_item_id and not self._deferred_response_reason:
+            return False
+        return self._schedule_response_create_with_delay(
+            self._deferred_response_item_id,
+            reason=self._deferred_response_reason or 'deferred_after_response_done',
+            delay_ms=self.response_create_delay_ms,
+        )
+
     def _handle_function_call_event(self, event: dict):
         item = event.get('item', {}) or {}
         item_type = str(item.get('type', '') or '').strip()
@@ -1458,7 +1497,7 @@ class OpenAIRealtimeNode(Node):
             self._remember_deferred_response('', 'tool_output_ready')
             return
 
-        if self._send_event({'type': 'response.create'}):
+        if self._request_response_create('', reason='tool_output_ready'):
             self.get_logger().debug(f'Requested follow-up realtime response after tool call {call_id}')
 
 
