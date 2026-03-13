@@ -90,7 +90,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_web_search_context_size',
-            default_value='medium',
+            default_value='low',
             description='OpenAI web-search context size (low/medium/high)'
         ),
         DeclareLaunchArgument(
@@ -140,17 +140,17 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_vad_silence_duration_ms',
-            default_value='800',
+            default_value='550',
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
             'realtime_response_create_delay_ms',
-            default_value='250',
+            default_value='100',
             description='Extra local wait before creating a Realtime response after transcript acceptance'
         ),
         DeclareLaunchArgument(
             'realtime_continued_turn_response_delay_ms',
-            default_value='650',
+            default_value='350',
             description='Delay before answering a transcript that arrived after the user resumed speaking'
         ),
         DeclareLaunchArgument(
