@@ -1,6 +1,6 @@
 # Voice ROS2 - Conversational Robot System
 
-A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend.
+A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with optional OpenAI-backed web search.
 
 ## 🏗️ Architecture
 
@@ -121,6 +121,7 @@ ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
+    realtime_web_search_enabled:=true \
     realtime_capture_during_playback:=true
 ```
 
@@ -139,6 +140,7 @@ ros2 launch conversational_server server_pipeline.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
+    realtime_web_search_enabled:=true \
     realtime_capture_during_playback:=true
 ```
 
@@ -203,6 +205,7 @@ ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
+    realtime_web_search_enabled:=true \
     realtime_capture_during_playback:=true
 ```
 
@@ -210,7 +213,10 @@ Recommended first test:
 - `conversation_backend:=openai_realtime`
 - `realtime_model:=gpt-realtime-mini`
 - `realtime_voice:=cedar`
+- `realtime_web_search_enabled:=true`
 - `realtime_capture_during_playback:=true`
+
+When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
 
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
@@ -223,7 +229,7 @@ Edit `full_system.launch.py` and adjust:
 ### ✅ Implemented
 - ✅ **Bilingual** - Romanian and English automatic detection
 - ✅ **Streaming LLM** - Real-time response generation
-- ✅ **Web Search** - Auto-enabled for current events (news, weather, etc.)
+- ✅ **Web Search** - OpenAI Realtime can trigger OpenAI web search for current events and live facts
 - ✅ **Wake Word** - "Hello robot" / "Hey robot" detection
 - ✅ **Barge-in** - Interrupt TTS when user speaks
 - ✅ **Voice Activity Detection** - Automatic speech end detection
