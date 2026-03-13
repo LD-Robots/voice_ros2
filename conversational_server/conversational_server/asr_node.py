@@ -72,7 +72,7 @@ class ASRNode(Node):
         self.declare_parameter('language', '')  # Empty = auto-detect, 'ro_en' = detect best
         self.declare_parameter('beam_size', 5)
         self.declare_parameter('vad_min_silence_ms', 300)
-        self.declare_parameter('speech_pause_s', 2.0)  # Grace period before processing
+        self.declare_parameter('speech_pause_s', 0.0)  # Grace period before processing (0.0 = immediate)
         self.declare_parameter('min_speech_duration', 0.3)  # Min seconds of actual speech to trigger processing
         self.declare_parameter('warmup_enabled', True)
         
@@ -126,19 +126,11 @@ class ASRNode(Node):
         # Anti-echo: last robot response
         self.last_bot_reply = ""
         
-        # Audio subscriber
+        # Audio subscriber - now listens for complete segments from the client
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            '/audio_segment',
             self.audio_callback,
-            10
-        )
-        
-        # VAD subscriber
-        self.vad_sub = self.create_subscription(
-            Bool,
-            '/voice_activity',
-            self.vad_callback,
             10
         )
         
@@ -162,61 +154,21 @@ class ASRNode(Node):
         else:
             self.get_logger().debug('🔇 Anti-echo DISABLED')
         
-        self.get_logger().debug('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
+        self.get_logger().info('ASR Node started! Listening on /audio_segment for complete utterances.')
     
     def audio_callback(self, msg: Audio):
-        """Buffers audio during speech."""
+        """Processes a complete audio segment immediately."""
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
-        # Buffer audio when the user is speaking OR during the pause window
-        if self.is_speaking or self.pause_timer is not None:
-            self.audio_buffer.extend(msg.data)
-        else:
-            # Keep the last 0.5 seconds for context
-            max_pre_buffer = int(self.sample_rate * 0.5)
-            self.audio_buffer.extend(msg.data)
-            if len(self.audio_buffer) > max_pre_buffer:
-                self.audio_buffer = self.audio_buffer[-max_pre_buffer:]
-
-    def vad_callback(self, msg: Bool):
-        """Primește statusul VAD (vorbește/nu vorbește)."""
-        self.was_speaking = self.is_speaking
-        self.is_speaking = msg.data
+        # The segment is already complete, so we just set the buffer and process it
+        self.audio_buffer = list(msg.data)
         
-        if self.is_speaking:
-            # User is speaking — count speech frames and cancel pending processing
-            self.speech_frame_count += 1
-            self._cancel_pause_timer()
-        elif self.was_speaking and not self.is_speaking:
-            # User stopped speaking — only start pause timer if there was enough actual speech
-            min_frames = int(self.min_speech_duration * self.sample_rate / 320)  # ~320 samples per VAD frame
-            if self.speech_frame_count >= min_frames:
-                self._start_pause_timer()
-            else:
-                # Too short — probably just noise, ignore
-                self.get_logger().debug(
-                    f'🔇 Ignoring short noise burst ({self.speech_frame_count} frames < {min_frames} min)'
-                )
-                self.speech_frame_count = 0
-
-    def _start_pause_timer(self):
-        """Start the speech pause timer."""
-        self._cancel_pause_timer()
-        self.pause_timer = self.create_timer(self.speech_pause_s, self._on_pause_timeout)
-        self.get_logger().debug(f'⏳ Waiting {self.speech_pause_s}s for more speech...')
-
-    def _cancel_pause_timer(self):
-        """Cancel the speech pause timer if running."""
-        if self.pause_timer is not None:
-            self.pause_timer.cancel()
-            self.pause_timer = None
-
-    def _on_pause_timeout(self):
-        """Called when the speech pause expires — process the buffered audio."""
-        self._cancel_pause_timer()
-        self.get_logger().debug(f'🔚 Pause expired, processing {len(self.audio_buffer)} frames...')
-        self.speech_frame_count = 0  # Reset for next utterance
+        if not self.audio_buffer:
+            self.get_logger().warn('Received empty audio segment, skipping')
+            return
+            
+        self.get_logger().debug(f'📥 Received segment: {len(self.audio_buffer)/self.sample_rate:.2f}s. Processing immediately...')
         self._process_buffer()
 
     def llm_response_callback(self, msg: Transcription):

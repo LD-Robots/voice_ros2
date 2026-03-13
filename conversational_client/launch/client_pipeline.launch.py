@@ -35,10 +35,9 @@ def generate_launch_description():
     # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
     custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
-    # Individual thresholds per model (stop_robot_oww lower for better detection)
     # stop_robot_oww lower (0.25) for detection even when the robot is speaking
     # stop_robot lower (0.15) for detection even when the robot is speaking
-    model_thresholds = "hello_robot:0.10,goodbye_robot:0.50"
+    model_thresholds = "hello_robot:0.10,goodbye_robot:0.50,stop_robot:0.30"
     stop_keyword_path = os.path.join(voices_dir, 'stop_keyword.onnx')
     if not os.path.exists(stop_keyword_path):
         stop_keyword_path = os.path.join(models_dir, 'stop_keyword.onnx')
@@ -112,9 +111,9 @@ def generate_launch_description():
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
                 'stop_model_path': stop_keyword_path,
-                'stop_prob_threshold': 0.95,  # Increased to prevent false positives
+                'stop_prob_threshold': 0.75,  # Reduced from 0.95 for desk-distance sensitivity
                 'stop_logit_margin': 0.5,
-                'stop_hits_required': 2,      # Remote suggests 2, safer
+                'stop_hits_required': 1,      # Reduced from 2 for instant response
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
                 'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
             }]

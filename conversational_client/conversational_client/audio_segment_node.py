@@ -116,6 +116,14 @@ class AudioSegmentNode(Node):
             10
         )
         
+        # De asemenea ascultăm de /tts_stop (semnalul universal de stop)
+        self.tts_stop_sub = self.create_subscription(
+            Bool,
+            '/tts_stop',
+            self.barge_in_callback,
+            10
+        )
+        
         # ─────────────────────────────────────────────────────────
         # PUBLISHER - send complete segments to the server
         # ─────────────────────────────────────────────────────────
