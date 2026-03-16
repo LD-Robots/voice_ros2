@@ -228,9 +228,11 @@ class BargeInNode(Node):
         was_speaking = self.is_tts_speaking
         self.is_tts_speaking = msg.data
         
-        # When TTS starts speaking, reset the anti-echo baseline
+        # When TTS starts speaking, reset the anti-echo baseline and stop detector
         if msg.data and not was_speaking:
             self.leak_baseline_dbfs = None
+            if self.stop_detector:
+                self.stop_detector.reset()
     
     def audio_callback(self, msg: Audio):
         """Process audio for stop keyword detection."""
@@ -363,6 +365,11 @@ class BargeInNode(Node):
         
         # Send stop directly to TTS
         self.stop_pub.publish(msg)
+        
+        # Reset stop detector buffer to prevent phantom re-triggers
+        if self.stop_detector:
+            self.get_logger().debug('Resetting stop detector buffer after trigger')
+            self.stop_detector.reset()
 
 
 # ═══════════════════════════════════════════════════════════════════

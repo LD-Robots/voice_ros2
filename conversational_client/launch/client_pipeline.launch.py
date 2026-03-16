@@ -29,15 +29,15 @@ def generate_launch_description():
     # Build the string for custom_models
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
-    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # testăm modelul original
+    be_quiet_path = os.path.join(models_dir, 'be_quiet.onnx')
+    stop_path = os.path.join(models_dir, 'stop_robot.onnx')
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
-    # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
-    custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
+    # Definim modelele: hello=wake, be_quiet=barge_in, goodbye=stop
+    custom_models = f"{hello_path}:wake,{be_quiet_path}:barge_in,{goodbye_path}:stop"
     
-    # stop_robot_oww lower (0.25) for detection even when the robot is speaking
-    # stop_robot lower (0.15) for detection even when the robot is speaking
-    model_thresholds = "hello_robot:0.10,goodbye_robot:0.50,stop_robot:0.30"
+    # Thresholds for detection
+    model_thresholds = "hello_robot:0.10,goodbye_robot:0.50,be_quiet:0.15"
     stop_keyword_path = os.path.join(voices_dir, 'stop_keyword.onnx')
     if not os.path.exists(stop_keyword_path):
         stop_keyword_path = os.path.join(models_dir, 'stop_keyword.onnx')
@@ -54,7 +54,8 @@ def generate_launch_description():
             parameters=[{
                 'device_index': -1,  # Auto-detect (use OS default/PulseAudio/Pipewire)
                 'respeaker_mode': True,
-                'respeaker_channel': 0, # AEC procesat
+                'respeaker_channel': 5, # AEC procesat (Testele au arătat că 5 e mai bun)
+                'gain': 3.0,            # Gain digital pentru a nu avea clipping
             }]
         ),
         
@@ -108,7 +109,7 @@ def generate_launch_description():
             parameters=[{
                 # Voice-based barge-in params (original)
                 'min_voice_ms': 600,
-                # PyTorch stop keyword detector
+                # Stop keyword detector (Specialized model with stop/other scores)
                 'stop_enabled': True,
                 'stop_model_path': stop_keyword_path,
                 'stop_prob_threshold': 0.75,  # Reduced from 0.95 for desk-distance sensitivity

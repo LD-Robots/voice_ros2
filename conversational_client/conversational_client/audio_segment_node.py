@@ -155,7 +155,7 @@ class AudioSegmentNode(Node):
             self.get_logger().info('🔇 Robot speaking - muting input')
             # Clear buffer immediately when robot starts speaking to remove any leak
             self.audio_buffer = []
-            self.ignore_segment = True  # Ignore any pending segment as it might be echo
+            # self.ignore_segment = True  # REMOVED: This causes the next real segment to be blocked if echo doesn't trigger VAD
         elif not msg.data and was_speaking:
             self.get_logger().info('🔊 Robot stopped - listening again')
 

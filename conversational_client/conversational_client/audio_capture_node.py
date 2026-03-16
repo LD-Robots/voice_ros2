@@ -29,7 +29,8 @@ class AudioCaptureNode(Node):
         self.declare_parameter('chunk_ms', 20)
         self.declare_parameter('device_index', -1)
         self.declare_parameter('respeaker_mode', False)  # Use ReSpeaker 6-ch special mode
-        self.declare_parameter('respeaker_channel', 0)   # Which channel to extract (0 = AEC)
+        self.declare_parameter('respeaker_channel', 5)   # Which channel to extract (5 = AEC for this device)
+        self.declare_parameter('gain', 1.0)              # Digital gain multiplier
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
@@ -37,6 +38,7 @@ class AudioCaptureNode(Node):
         self.device_index = self.get_parameter('device_index').value
         self.respeaker_mode = self.get_parameter('respeaker_mode').value
         self.respeaker_channel = self.get_parameter('respeaker_channel').value
+        self.gain = self.get_parameter('gain').value
         
         # Calculate block size (frames per chunk)
         self.block_size = int(self.sample_rate * self.chunk_ms / 1000)
@@ -123,12 +125,14 @@ class AudioCaptureNode(Node):
             
         try:
             # Convert float32 [-1, 1] to int16 [-32768, 32767]
-            # Clip to be safe
-            audio_f32 = np.clip(indata, -1.0, 1.0)
+            # Apply digital gain and clip to be safe
+            audio_f32 = indata * self.gain
+            audio_f32 = np.clip(audio_f32, -1.0, 1.0)
+            
             # Handle multi-channel extraction for ReSpeaker
             if self.respeaker_mode:
                 # indata shape is (frames, 6)
-                # Extragem doar canalul dorit (0 = AEC procesat)
+                # Extragem doar canalul dorit (5 = AEC procesat)
                 audio_f32 = audio_f32[:, self.respeaker_channel]
             
             # Scale and cast
