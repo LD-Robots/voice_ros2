@@ -91,7 +91,7 @@ class AudioPlaybackNode(Node):
         self._stop_requested = False           # Flag for immediate stop during playback
         self._playback_chunk_size = 1024       # Small chunks for responsive stop (~42ms at 24kHz)
         self._last_audio_time = 0.0            # Timestamp of last audio received (for grace period)
-        self._speaking_grace_period = 2.0      # Keep is_speaking True for 2s after last audio
+        self._speaking_grace_period = 0.3      # REDUCED: allow user to respond faster (from 2.0s)
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - listen on /audio_out
@@ -243,7 +243,9 @@ class AudioPlaybackNode(Node):
                     # Take the first chunk from the buffer
                     chunk = self.audio_buffer.popleft()
                 else:
-                    # Empty buffer - wait a bit
+                    # Empty buffer - mark as not playing
+                    if self.is_playing:
+                        self.get_logger().info('🔄 Playback buffer empty - is_playing → False')
                     self.is_playing = False
             
             if chunk is not None:
@@ -324,21 +326,33 @@ class AudioPlaybackNode(Node):
         import time
         
         # Calculate current state with grace period
-        # Stay "speaking" for grace period after last audio (covers gaps between chunks)
-        in_grace_period = (time.time() - self._last_audio_time) < self._speaking_grace_period
+        now = time.time()
+        time_since_last = now - self._last_audio_time
+        in_grace_period = time_since_last < self._speaking_grace_period
+        
+        # SAFETY TIMEOUT: If no new audio for >2s, force-clear is_playing
+        # This protects against PyAudio's stream.write() blocking forever
+        if self.is_playing and self._last_audio_time > 0 and time_since_last > 2.0:
+            self.get_logger().warn(
+                f'⚠️ Force-clearing is_playing (stream.write blocked for {time_since_last:.1f}s)'
+            )
+            self.is_playing = False
+            self.audio_buffer.clear()
+        
         current_state = self.is_playing or (in_grace_period and self._last_audio_time > 0)
         
-        # Publish only when state changes (optimization)
+        # Publish only when state changes
         if current_state != self._last_speaking_state:
             msg = Bool()
             msg.data = current_state
             self.speaking_pub.publish(msg)
-            self._last_speaking_state = current_state
             
             if current_state:
-                self.get_logger().debug('🔊 Speaking: True')
+                self.get_logger().info('🔊 Speaking: True → Published')
             else:
-                self.get_logger().debug('🔇 Speaking: False')
+                self.get_logger().info('🔇 Speaking: False (Mute lifted) → Published')
+            
+            self._last_speaking_state = current_state
     
     # ═══════════════════════════════════════════════════════════════════
     # CLEANUP - on node shutdown

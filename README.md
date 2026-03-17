@@ -61,6 +61,13 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
+### 🛑 Troubleshooting Audio Deadlocks
+If the robot stops listening entirely after speaking (and you see `⚠️ Force-clearing is_playing` in the logs), it means PyAudio's `stream.write()` has blocked indefinitely. This happens when the ALSA/PulseAudio sink is dead or disconnected.
+**Fix**:
+1. Ensure the `Combined_Sink` is running: `pactl list sinks short`
+2. Set it as the default sink: `pactl set-default-sink combined`
+3. Restart the client pipeline.
+
 ## 🚀 Running the System
 
 ### Full Pipeline

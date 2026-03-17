@@ -157,7 +157,7 @@ class AudioSegmentNode(Node):
             self.audio_buffer = []
             # self.ignore_segment = True  # REMOVED: This causes the next real segment to be blocked if echo doesn't trigger VAD
         elif not msg.data and was_speaking:
-            self.get_logger().info('🔊 Robot stopped - listening again')
+            self.get_logger().info('🔊 Robot stopped - listening again (Mute lifted)')
 
     def barge_in_callback(self, msg: Bool):
         """Callback pentru evenimentul de barge-in."""

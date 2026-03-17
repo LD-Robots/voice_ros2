@@ -176,11 +176,12 @@ class VADNode(Node):
             if self.session_timer:
                 self.session_timer.cancel()
                 self.session_timer = None
-            self.get_logger().debug('🤖 Robot is SPEAKING - please wait...')
+            self.get_logger().info('🤖 Robot is SPEAKING - VAD paused to avoid echo')
         
         # When the robot finishes speaking, restart the timer and reminder
         elif not self.is_robot_speaking and was_speaking:
             if self.is_gate_open:
+                self.get_logger().info('👂 Robot stopped - VAD resumed')
                 self._reset_session_timer()
                 self._start_reminder_timer()
 
