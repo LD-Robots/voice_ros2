@@ -87,6 +87,7 @@ class PersonMemoryStoreNode(Node):
 
         self.current_speaker = 'Unknown'
         self.last_raw_speaker = 'Unknown'
+        self.current_backend = 'legacy'
         self.memory = self._load_memory()
         self.latest_segment = None
         self.pending_enrollment_paths = set()
@@ -95,13 +96,13 @@ class PersonMemoryStoreNode(Node):
         self.audio_segment_sub = self.create_subscription(
             Audio,
             '/audio_segment',
-            self._remember_latest_segment,
+            self._remember_legacy_segment,
             10,
         )
         self.realtime_audio_segment_sub = self.create_subscription(
             Audio,
             '/realtime_user_audio_segment',
-            self._remember_latest_segment,
+            self._remember_realtime_segment,
             10,
         )
         self.transcription_sub = self.create_subscription(
@@ -114,6 +115,12 @@ class PersonMemoryStoreNode(Node):
             String,
             '/speaker_enrollment_status',
             self._enrollment_status_callback,
+            10,
+        )
+        self.backend_sub = self.create_subscription(
+            String,
+            '/conversation_backend',
+            self._backend_callback,
             10,
         )
         self.context_pub = self.create_publisher(String, '/person_context', 10)
@@ -131,7 +138,18 @@ class PersonMemoryStoreNode(Node):
         self._touch_person(speaker)
         self._publish_context()
 
-    def _remember_latest_segment(self, msg: Audio):
+    def _backend_callback(self, msg: String):
+        self.current_backend = msg.data.strip() or 'legacy'
+
+    def _remember_legacy_segment(self, msg: Audio):
+        self._remember_latest_segment(msg, source='legacy')
+
+    def _remember_realtime_segment(self, msg: Audio):
+        self._remember_latest_segment(msg, source='realtime')
+
+    def _remember_latest_segment(self, msg: Audio, *, source: str):
+        if not self._accept_segment_source(source):
+            return
         if not msg.data:
             return
         self.latest_segment = {
@@ -335,6 +353,11 @@ class PersonMemoryStoreNode(Node):
         msg = String()
         msg.data = json.dumps(payload, separators=(',', ':'))
         self.context_pub.publish(msg)
+
+    def _accept_segment_source(self, source: str) -> bool:
+        if self.current_backend == 'openai_realtime':
+            return source == 'realtime'
+        return source == 'legacy'
 
     def _load_memory(self):
         try:

@@ -101,6 +101,7 @@ class SpeakerIdNode(Node):
         # ─────────────────────────────────────────────────────────
         self.speaker_manager = None
         self.db_loaded = False
+        self.current_backend = 'legacy'
 
         self._migrate_legacy_auto_enrollment()
         self._init_speaker_manager()
@@ -111,19 +112,25 @@ class SpeakerIdNode(Node):
         self.segment_sub = self.create_subscription(
             Audio,
             '/audio_segment',
-            self.segment_callback,
+            self._legacy_segment_callback,
             10
         )
         self.realtime_segment_sub = self.create_subscription(
             Audio,
             '/realtime_user_audio_segment',
-            self.segment_callback,
+            self._realtime_segment_callback,
             10,
         )
         self.enrollment_request_sub = self.create_subscription(
             String,
             '/speaker_enrollment_request',
             self._enrollment_request_callback,
+            10,
+        )
+        self.backend_sub = self.create_subscription(
+            String,
+            '/conversation_backend',
+            self._backend_callback,
             10,
         )
 
@@ -196,11 +203,22 @@ class SpeakerIdNode(Node):
     # CALLBACK — AUDIO SEGMENT PROCESSING
     # ═══════════════════════════════════════════════════════════════════
 
-    def segment_callback(self, msg: Audio):
+    def _backend_callback(self, msg: String):
+        self.current_backend = msg.data.strip() or 'legacy'
+
+    def _legacy_segment_callback(self, msg: Audio):
+        self._segment_callback(msg, source='legacy')
+
+    def _realtime_segment_callback(self, msg: Audio):
+        self._segment_callback(msg, source='realtime')
+
+    def _segment_callback(self, msg: Audio, *, source: str):
         """
         Receives a full audio segment (from audio_segment_node)
         and identifies the speaker.
         """
+        if not self._accept_segment_source(source):
+            return
         if not msg.data:
             return
 
@@ -281,6 +299,11 @@ class SpeakerIdNode(Node):
             self.get_logger().debug(
                 f'📤 /speaker_id: "Unknown" (segment: {duration:.2f}s)'
             )
+
+    def _accept_segment_source(self, source: str) -> bool:
+        if self.current_backend == 'openai_realtime':
+            return source == 'realtime'
+        return source == 'legacy'
 
     def _enrollment_request_callback(self, msg: String):
         try:

@@ -69,7 +69,6 @@ class AudioSegmentNode(Node):
         self.was_speaking = False       # Previous state
         self.session_active = False     # True when session is active (after wake word)
         self.is_robot_speaking = False  # True when the robot is speaking (TTS playback)
-        self.ignore_segment = False     # Flag to ignore segment sending
         self.channels = 1
         
         # ─────────────────────────────────────────────────────────
@@ -145,9 +144,10 @@ class AudioSegmentNode(Node):
         
         if msg.data and not was_speaking:
             self.get_logger().info('🔇 Robot speaking - muting input')
-            # Clear buffer immediately when robot starts speaking to remove any leak
-            self.audio_buffer = []
-            self.ignore_segment = True  # Ignore any pending segment as it might be echo
+            self._reset_capture_state(
+                clear_pre_buffer=True,
+                reason='robot_speaking',
+            )
         elif not msg.data and was_speaking:
             self.get_logger().info('🔊 Robot stopped - listening again')
 
@@ -155,10 +155,10 @@ class AudioSegmentNode(Node):
         """Callback pentru evenimentul de barge-in."""
         if msg.data:
             self.get_logger().warn('🚫 Barge-in detected - clearing audio buffer to prevent transcription')
-            self.audio_buffer = []
-            self.pre_buffer = []
-            self.is_speaking = False  # Reset VAD state locally
-            self.ignore_segment = True # Flag to ignore sending segment if VAD triggers later
+            self._reset_capture_state(
+                clear_pre_buffer=True,
+                reason='barge_in',
+            )
 
     def vad_callback(self, msg: Bool):
         """Callback for VAD state (voice activity)."""
@@ -222,12 +222,6 @@ class AudioSegmentNode(Node):
             self.get_logger().warn(f'🚫 Segment BLOCKED - session not active (had {len(self.audio_buffer)} samples)')
             self.audio_buffer = []
             return
-            
-        if getattr(self, 'ignore_segment', False):
-            self.get_logger().warn('🚫 Segment BLOCKED - ignore flag set (barge-in)')
-            self.audio_buffer = []
-            self.ignore_segment = False
-            return
         
         if not self.audio_buffer:
             self.get_logger().warn('Empty buffer, skipping')
@@ -258,6 +252,21 @@ class AudioSegmentNode(Node):
         # Reset buffer
         self.audio_buffer = []
         self.get_logger().debug('✅ Segment sent to server')
+
+    def _reset_capture_state(self, *, clear_pre_buffer: bool, reason: str):
+        """
+        Drop the in-flight local capture state when playback or barge-in invalidates it.
+
+        This avoids publishing stale overlap/echo audio without poisoning the next real turn.
+        """
+        had_capture = self.is_speaking or self.was_speaking or bool(self.audio_buffer)
+        self.audio_buffer = []
+        if clear_pre_buffer:
+            self.pre_buffer = []
+        self.is_speaking = False
+        self.was_speaking = False
+        if had_capture:
+            self.get_logger().debug(f'🧹 Reset local capture state due to {reason}')
 
 
 # ═══════════════════════════════════════════════════════════════════
