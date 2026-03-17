@@ -29,15 +29,18 @@ def generate_launch_description():
     # Build the string for custom_models
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
-    be_quiet_path = os.path.join(models_dir, 'be_quiet.onnx')
     stop_path = os.path.join(models_dir, 'stop_robot.onnx')
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
-    # Definim modelele: hello=wake, be_quiet=barge_in, goodbye=stop
-    custom_models = f"{hello_path}:wake,{be_quiet_path}:barge_in,{goodbye_path}:stop"
+    # Definim modelele: hello=wake, goodbye=stop
+    custom_models = f"{hello_path}:wake,{goodbye_path}:stop"
     
     # Thresholds for detection
-    model_thresholds = "hello_robot:0.10,goodbye_robot:0.50,be_quiet:0.15"
+    model_thresholds = "hello_robot:0.10,goodbye_robot:0.50"
+    
+    # NEW PATH: Centralized voices folder inside the package
+    voices_dir = os.path.join(pkg_share, 'voices')
+    
     stop_keyword_path = os.path.join(voices_dir, 'stop_keyword.onnx')
     if not os.path.exists(stop_keyword_path):
         stop_keyword_path = os.path.join(models_dir, 'stop_keyword.onnx')

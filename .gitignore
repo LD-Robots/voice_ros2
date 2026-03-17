@@ -1,34 +1,36 @@
-# ROS2 build artifacts (NU în repo!)
+# ROS2 build artifacts
 build/
 install/
 log/
-
-# Environment variables
-.env
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 *.egg-info/
+.pytest_cache/
 
-# IDE
+# IDE & OS
 .vscode/
 .idea/
-
-# Temp files
+.DS_Store
 *.swp
 *~
+
+# Environment variables
+.env
+
+# Large models (download selectively)
+*.onnx.data
+conversational_server/models/piper/
+
+# Privacy: Speaker Identification enrollment
+# (Ignore personal voice recordings)
+**/enrollment/*.wav
+
+# Media/Debug artifacts
+debug_audio/
 *.mp3
-
-# Large models (download separately)
-*.onnx
-conversational_server/models/
-__pycache__/
-
-# ROS2 artifacts (nu ar trebui în repo)
-build/
-install/
-log/
-**/__pycache__/
-*.pyc
+*.wav
+!conversational_client/voices/enrollment/*.wav # This rule might be redundant if the one above exists

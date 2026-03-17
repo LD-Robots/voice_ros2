@@ -14,7 +14,10 @@ setup(
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         # Modelele ONNX pentru wake word detection
-        (os.path.join('share', package_name, 'models'), glob('models/*.onnx')),
+        (os.path.join('share', package_name, 'models'), glob('models/*.onnx') + glob('models/*.onnx.data')),
+        # Folderele pentru voci și enrollment
+        (os.path.join('share', package_name, 'voices'), glob('voices/*.*') + glob('voices/*.onnx') + glob('voices/*.onnx.data')),
+        (os.path.join('share', package_name, 'voices/enrollment'), glob('voices/enrollment/*')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

@@ -37,9 +37,10 @@ def _find_workspace_root() -> Path | None:
 
 
 # Canonical enrollment path in this project: <workspace>/voices/enrollment
-_workspace_root = _find_workspace_root()
+# NEW PATH: inside conversational_client package
 ENROLLMENT_DIR = os.path.join(
     str(_workspace_root) if _workspace_root else os.getcwd(),
+    'conversational_client',
     'voices',
     'enrollment'
 )
