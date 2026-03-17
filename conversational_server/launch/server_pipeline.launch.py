@@ -64,7 +64,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_web_search_context_size',
-            default_value='low',
+            default_value='medium',
             description='OpenAI web-search context size (low/medium/high)'
         ),
         DeclareLaunchArgument(
