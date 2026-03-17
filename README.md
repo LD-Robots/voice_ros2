@@ -4,27 +4,27 @@ A bilingual (Romanian/English) conversational robot system built with ROS2. Feat
 
 ## 🏗️ Architecture
 
-The system uses a **client-server architecture** with ROS2 nodes:
+The system follows a **client-server architecture** using dedicated ROS2 nodes:
 
 ### Server Nodes (Heavy Processing)
-- **ASR Node** - Automatic Speech Recognition (Faster-Whisper)
-- **LLM Node** - Language Model processing (Groq API with streaming)
-- **TTS Node** - Text-to-Speech (Piper TTS)
+- **ASR Node**: Automatic Speech Recognition using `Faster-Whisper`.
+- **LLM Node**: Language Model processing via Groq API (includes streaming and speaker awareness).
+- **TTS Node**: Text-to-Speech using `Piper TTS`.
 
 ### Client Nodes (Robot Hardware)
-- **Audio Capture Node** - Microphone input
-- **Audio Playback Node** - Speaker output
-- **Wake Word Node** - OpenWakeWord detection ("Hello robot", "Hey robot")
-- **VAD Node** - Voice Activity Detection (WebRTC VAD)
-- **Barge-in Node** - Interrupt TTS when user speaks
-- **Stop Keyword Node** - Stop command detection
-- **Audio Segment Node** - Audio preprocessing
-- **Speaker ID Node** - Speaker identification via voice fingerprint (SpeechBrain ECAPA-TDNN)
+- **Audio Capture Node**: Microphone input management.
+- **Audio Playback Node**: Speaker output management.
+- **Wake Word Node**: `OpenWakeWord` detection ("Hello robot", "Hey robot").
+- **VAD Node**: Voice Activity Detection using `WebRTC VAD`.
+- **Barge-in Node**: Interrupts TTS playback when the user speaks.
+- **Stop Keyword Node**: Specific command detection to halt operations.
+- **Audio Segment Node**: Audio preprocessing and buffering.
+- **Speaker ID Node**: Speaker identification via voice fingerprints (SpeechBrain ECAPA-TDNN).
 
 ### Message Interfaces
-- `Audio.msg` - Audio data chunks
-- `Transcription.msg` - Speech transcription results
-- `TextChunk.msg` - Streaming LLM responses
+- `Audio.msg`: Raw audio data chunks.
+- `Transcription.msg`: Speech-to-text results.
+- `TextChunk.msg`: Streaming LLM response tokens.
 
 ## 📋 Prerequisites
 
@@ -35,8 +35,8 @@ sudo apt install -y python3-pip portaudio19-dev
 ```
 
 ### ROS2
-This project requires **ROS2 Humble** or newer. Install from:
-https://docs.ros.org/en/humble/Installation.html
+This project requires **ROS2 Humble** or newer. Installation guide:
+[ROS2 Humble Documentation](https://docs.ros.org/en/humble/Installation.html)
 
 ### Python Dependencies
 ```bash
@@ -68,7 +68,7 @@ git clone https://github.com/Delia63/voice_ros2.git
 Create a `.env` file in the `voice_ros2/` directory:
 ```bash
 cd /path/to/ros2_ws/src/voice_ros2
-nano .env
+touch .env
 ```
 
 Add your Groq API key:
@@ -76,7 +76,7 @@ Add your Groq API key:
 GROQ_API_KEY=your_api_key_here
 ```
 
-> **Note:** The `.env` file is already in `.gitignore` to protect your API key.
+> **Note:** The `.env` file is excluded via `.gitignore` to prevent API key exposure.
 
 ### 3. Download Models
 
@@ -94,7 +94,7 @@ wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/mediu
 ```
 
 #### OpenWakeWord Models
-The wake word models are already included in the repository:
+The wake word models are included in the repository:
 - `conversational_client/models/hello_robot.onnx`
 - `conversational_client/models/goodbye_robot.onnx`
 - `conversational_client/models/stop_robot.onnx`
@@ -110,43 +110,36 @@ source install/setup.bash
 
 ### Full System (Server + Client)
 ```bash
-source /path/to/ros2_ws/install/setup.bash
+source ~/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py
 ```
 
 ### Server Only
 ```bash
+source ~/ros2_ws/install/setup.bash
 ros2 launch conversational_server server_pipeline.launch.py
 ```
-corect:
-source ~/voice_ros2/install/setup.bash
-ros2 launch conversational_server server_pipeline.launch.py
 
 ### Client Only (on robot hardware)
 ```bash
+source ~/ros2_ws/install/setup.bash
 ros2 launch conversational_client client_pipeline.launch.py
 ```
-corect:
-source ~/voice_ros2/install/setup.bash
-ros2 launch conversational_client client_pipeline.launch.py
 
 ### 🎤 Speaker Enrollment (Voice Fingerprint)
 
-Înainte de a folosi identificarea vocală, înregistrează vocea fiecărui utilizator:
+Before using speaker identification, you must enroll each user's voice:
 
 ```bash
-# Înregistrează vocea (5 secunde)
-python3 speaker_id/enroll_speaker.py
+# Record voice (5-second sample)
+python3 scripts/enroll_speaker.py
 ```
 
-Scriptul va cere numele și va salva amprenta vocală în `voices/enrollment/<nume>.wav`. Repetă pentru fiecare utilizator.
+1. Enter the name when prompted (e.g., "Delia").
+2. The script will save the voice fingerprint to `conversational_client/voices/enrollment/<name>.wav`.
+3. **Privacy Note**: These `.wav` files are ignored by Git to ensure user privacy. They stay local on your machine.
 
-Verifică baza de date:
-```bash
-python3 speaker_id/speaker_manager.py
-```
-
-După enrollment, `speaker_id_node` va identifica automat vorbitorul la pornirea sistemului și va comunica numele către LLM.
+Once enrolled, the `speaker_id_node` will automatically identify the speaker when the system starts.
 
 ## ⚙️ Configuration
 
@@ -154,11 +147,9 @@ După enrollment, `speaker_id_node` va identifica automat vorbitorul la pornirea
 
 #### ASR Configuration
 ```bash
-ros2 launch conversational_server full_system.launch.py \
-    asr_model_size:=medium
+ros2 launch conversational_server full_system.launch.py asr_model_size:=medium
 ```
-
-Available model sizes: `tiny`, `base`, `small`, `medium`, `large`
+Available sizes: `tiny`, `base`, `small`, `medium`, `large`.
 
 #### LLM Configuration
 ```bash
@@ -166,115 +157,61 @@ ros2 launch conversational_server full_system.launch.py \
     llm_model:=llama-3.1-8b-instant \
     llm_provider:=groq
 ```
-
-Available Groq models:
-- `llama-3.1-8b-instant` (default, fast)
-- `compound-beta` (web search enabled)
-- `mixtral-8x7b-32768`
+Available Groq models: `llama-3.1-8b-instant`, `mixtral-8x7b-32768`.
 
 ### Wake Word Threshold
-Edit `full_system.launch.py` and adjust:
+Adjust the sensitivity in `full_system.launch.py`:
 ```python
-'threshold': 0.5,  # Lower = more sensitive (0.0-1.0)
+'threshold': 0.5,  # Range 0.0-1.0 (Lower = more sensitive)
 ```
 
 ## 🎯 Features
 
 ### ✅ Implemented
-- ✅ **Bilingual** - Romanian and English automatic detection
-- ✅ **Streaming LLM** - Real-time response generation
-- ✅ **Web Search** - Auto-enabled for current events (news, weather, etc.)
-- ✅ **Wake Word** - "Hello robot" / "Hey robot" detection
-- ✅ **Barge-in** - Interrupt TTS when user speaks
-- ✅ **Voice Activity Detection** - Automatic speech end detection
-- ✅ **Conversation History** - Context-aware responses
-- ✅ **Backchannel** - "One moment..." for slow responses
-- ✅ **Fallback Responses** - Error handling
-- ✅ **Speaker Identification** - Voice fingerprint via SpeechBrain ECAPA-TDNN
+- **Bilingual Support**: Automatic Romanian and English detection.
+- **Streaming LLM**: Real-time response generation with optimized buffering.
+- **Wake Word**: Fast detection using `OpenWakeWord`.
+- **Barge-in**: Immediate interruption of TTS when the user speaks.
+- **Speaker ID**: Voice identification using `SpeechBrain`.
+- **Web Search**: Dynamic information retrieval via Groq.
 
 ### 🔄 Future Enhancements
-- Motor commands integration
-- Intent classification
-- Multi-turn clarification
-- Emotion detection
-- Custom wake words
+- Motor command integration for robot movement.
+- Intent classification for complex task handling.
+- Multi-turn conversation clarification.
+- Emotion detection from vocal tone.
 
 ## 🐛 Troubleshooting
 
-### "GROQ_API_KEY not set" Error
-Make sure `.env` file exists and contains your API key:
-```bash
-cat /path/to/ros2_ws/src/voice_ros2/.env
-```
+### "GROQ_API_KEY not set"
+Ensure your `.env` file is in the root directory and contains the correct key.
 
-### Microphone Not Working
-Check audio devices:
+### Microphone Issues
+List and verify your audio devices:
 ```bash
 arecord -l
-pavucontrol
-```
-
-### Build Errors
-Clean and rebuild:
-```bash
-cd /path/to/ros2_ws
-rm -rf build/ install/ log/
-colcon build --symlink-install
-```
-
-### No Wake Word Detection
-Lower the threshold in `full_system.launch.py`:
-```python
-'threshold': 0.3,  # More sensitive
 ```
 
 ## 📚 Project Structure
 
 ```
 voice_ros2/
-├── conversational_server/          # Server-side nodes
-│   ├── conversational_server/
-│   │   ├── asr_node.py            # Speech recognition
-│   │   ├── llm_node.py            # Language model (+ speaker awareness)
-│   │   ├── tts_node.py            # Text-to-speech
-│   │   └── stream_shaper.py       # LLM streaming optimizer
-│   ├── models/piper/              # TTS models
-│   └── launch/                    # Launch files
-├── conversational_client/          # Client-side nodes
-│   ├── conversational_client/
-│   │   ├── audio_capture_node.py
-│   │   ├── audio_playback_node.py
-│   │   ├── wake_word_node.py
-│   │   ├── vad_node.py
-│   │   ├── barge_in_node.py
-│   │   ├── stop_keyword_node.py
-│   │   └── speaker_id_node.py     # Speaker identification
-│   ├── models/                    # Wake word models
-│   └── voices/                    # Stop keyword model + enrollment data
-├── speaker_id/                     # Speaker fingerprint system
-│   ├── speaker_manager.py         # Voice database (SpeechBrain ECAPA)
-│   └── enroll_speaker.py          # Enrollment script
-├── conversational_interfaces/      # ROS2 message definitions
-│   └── msg/
-│       ├── Audio.msg
-│       ├── Transcription.msg
-│       └── TextChunk.msg
-├── .env                           # API keys (not in git)
-└── .gitignore
+├── conversational_server/    # Server nodes (ASR, LLM, TTS)
+├── conversational_client/    # Client nodes & local assets
+│   ├── models/              # Wake word models
+│   └── voices/              # Enrollment data (Git ignored)
+├── scripts/                  # Utility and setup scripts
+├── conversational_interfaces/# Custom ROS2 message definitions
+├── .env                     # Private configuration (ignored)
+└── .gitignore               # Repository exclusion rules
 ```
 
 ## 👥 Authors
-
-- **Delia Stoica** - Server-side implementation
-- **Valentina Sima** - Client-side implementation
+- **Delia Stoica** - Server-side architecture & ASR/LLM implementation.
+- **Valentina Sima** - Client-side architecture & Audio hardware integration.
 
 ## 📄 License
-
-TODO: Add license
+TBD (To Be Determined)
 
 ## 🙏 Acknowledgments
-
-- Faster-Whisper for ASR
-- Groq for LLM inference
-- Piper TTS for voice synthesis
-- OpenWakeWord for wake word detection
+Special thanks to the developers of Faster-Whisper, Groq, Piper TTS, and OpenWakeWord.

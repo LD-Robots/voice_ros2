@@ -3,13 +3,8 @@
 enroll_speaker.py
 Script for recording a user's voice (enrollment).
 
-EXPLANATION:
-- Asks for the person's name
-- Records 5 seconds of audio from the microphone (16kHz, mono)
-- Saves the file in voice_ros2/voices/enrollment/<name>.wav
-
-Usage:
-    python3 enroll_speaker.py
+Modified for organization repo:
+- Saves files in conversational_client/voices/enrollment/
 """
 
 import os
@@ -23,7 +18,7 @@ import numpy as np
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════
 
-SAMPLE_RATE = 16000           # Hz — standard for speech processing
+SAMPLE_RATE = 16000           # Hz
 DURATION = 5                  # recording seconds
 CHANNELS = 1                  # mono
 
@@ -36,27 +31,22 @@ def _find_workspace_root() -> Path | None:
     return None
 
 
-# Canonical enrollment path in this project: <workspace>/voices/enrollment
 _workspace_root = _find_workspace_root()
+# NEW PATH: inside conversational_client package
 ENROLLMENT_DIR = os.path.join(
     str(_workspace_root) if _workspace_root else os.getcwd(),
+    'conversational_client',
     'voices',
     'enrollment'
 )
 
 
-# ═══════════════════════════════════════════════════════════════════
-# FUNCTIONS
-# ═══════════════════════════════════════════════════════════════════
-
 def ensure_enrollment_dir():
-    """Create the enrollment folder if it doesn't exist."""
     os.makedirs(ENROLLMENT_DIR, exist_ok=True)
     print(f"📂 Folder enrollment: {ENROLLMENT_DIR}")
 
 
 def get_speaker_name():
-    """Ask the user for the speaker name."""
     print("\n" + "═" * 50)
     print("  🎤 ENROLLMENT — Înregistrare voce nouă")
     print("═" * 50)
@@ -68,11 +58,9 @@ def get_speaker_name():
             print("   ⚠️ Numele nu poate fi gol!")
             continue
 
-        # Normalize: lowercase for filename
         filename = name.lower().replace(' ', '_')
         wav_path = os.path.join(ENROLLMENT_DIR, f"{filename}.wav")
 
-        # Check if it already exists
         if os.path.exists(wav_path):
             overwrite = input(f"   ⚠️ '{name}' există deja. Suprascrii? (d/n): ").strip().lower()
             if overwrite != 'd':
@@ -82,87 +70,42 @@ def get_speaker_name():
 
 
 def record_audio():
-    """Record DURATION seconds of audio from the microphone."""
     print(f"\n🎙️  Pregătește-te să vorbești {DURATION} secunde...")
-    print("   Vorbește clar și natural (poți spune orice).")
+    print("   Vorbește clar și natural.")
     input("   Apasă ENTER când ești gata...")
 
-    print(f"\n🔴 ÎNREGISTREZ... ({DURATION} secunde)")
-
-    # Record audio
-    audio = sd.rec(
-        int(DURATION * SAMPLE_RATE),
-        samplerate=SAMPLE_RATE,
-        channels=CHANNELS,
-        dtype='float32'
-    )
-    sd.wait()  # Wait for recording to finish
-
+    print(f"\n🔴 ÎNREGISTREZ...")
+    audio = sd.rec(int(DURATION * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=CHANNELS, dtype='float32')
+    sd.wait()
     print("⏹️  Înregistrare completă!")
-
     return audio
 
 
 def check_audio_quality(audio):
-    """Simple audio quality check (not silence)."""
     rms = np.sqrt(np.mean(audio ** 2))
-
     if rms < 0.005:
         print("\n⚠️  ATENȚIE: Audio-ul pare foarte silențios!")
-        print("   Verifică dacă microfonul funcționează corect.")
         retry = input("   Vrei să reînregistrezi? (d/n): ").strip().lower()
         return retry != 'd'
-
-    # Show audio level
-    db = 20 * np.log10(max(rms, 1e-10))
-    print(f"   📊 Nivel audio: {db:.1f} dB RMS")
     return True
 
 
 def save_audio(audio, wav_path, name):
-    """Save audio as a .wav file."""
     sf.write(wav_path, audio, SAMPLE_RATE)
-    file_size = os.path.getsize(wav_path)
     print(f"\n✅ Salvat: {wav_path}")
-    print(f"   📁 Dimensiune: {file_size / 1024:.1f} KB")
     print(f"   👤 Vorbitor: {name}")
-    print(f"   ⏱️  Durată: {DURATION}s | 📻 Sample rate: {SAMPLE_RATE}Hz")
 
-
-# ═══════════════════════════════════════════════════════════════════
-# MAIN
-# ═══════════════════════════════════════════════════════════════════
 
 def main():
     ensure_enrollment_dir()
-
-    # 1. Ask for the name
     name, filename, wav_path = get_speaker_name()
-
-    # 2. Record
     while True:
         audio = record_audio()
-
-        # 3. Check quality
         if check_audio_quality(audio):
             break
-
-    # 4. Save
     save_audio(audio, wav_path, name)
-
-    # 5. Tips
     print("\n" + "─" * 50)
-    print("💡 Pași următori:")
-    print("   1. Pentru rezultate mai bune, poți înregistra din nou")
-    print("      într-un mediu mai silențios.")
-    print("   2. După ce ai enrollment pentru toți vorbitorii,")
-    print("      pornește sistemul ROS2 și speaker_id_node va folosi")
-    print("      automat baza de date.")
-
-    # List existing voices
-    existing = [f.replace('.wav', '').capitalize()
-                for f in os.listdir(ENROLLMENT_DIR) if f.endswith('.wav')]
-    print(f"\n📋 Voci înregistrate: {', '.join(existing)}")
+    print("💡 După enrollment, speaker_id_node va folosi automat noua voce.")
     print("═" * 50)
 
 

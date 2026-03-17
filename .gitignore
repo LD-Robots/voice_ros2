@@ -1,9 +1,16 @@
-# ROS2 build artifacts (NU în repo!)
+# Large models (download separately as per README)
+conversational_server/models/piper/
+*.onnx.data
+
+# Privacy: Speaker Identification enrollment (Ignore personal voice recordings)
+**/enrollment/*.wav
+
+# ROS2 build artifacts
 build/
 install/
 log/
 
-# Environment variables
+# Environment
 .env
 
 # Python
@@ -16,19 +23,9 @@ __pycache__/
 .vscode/
 .idea/
 
-# Temp files
+# Temp/Multimedia
 *.swp
 *~
 *.mp3
-
-# Large models (download separately)
-*.onnx
-conversational_server/models/
-__pycache__/
-
-# ROS2 artifacts (nu ar trebui în repo)
-build/
-install/
-log/
-**/__pycache__/
-*.pyc
+*.wav
+!**/enrollment/*.wav  # This is a bit redundant but ensures we handle specific cases
