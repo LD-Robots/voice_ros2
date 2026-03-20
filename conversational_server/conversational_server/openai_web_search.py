@@ -62,7 +62,7 @@ def call_openai_web_search(
             'model': model,
             'input': query,
             'tools': [{
-                'type': 'web_search_preview',
+                'type': 'web_search',
                 'search_context_size': search_context_size,
             }],
             'max_output_tokens': max_output_tokens,
