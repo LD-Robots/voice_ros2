@@ -68,6 +68,11 @@ def generate_launch_description():
             description='OpenAI web-search context size (low/medium/high)'
         ),
         DeclareLaunchArgument(
+            'realtime_vad_threshold',
+            default_value='0.75',
+            description='Sensitivity threshold for OpenAI VAD (higher means less sensitive to noise)'
+        ),
+        DeclareLaunchArgument(
             'realtime_vad_silence_duration_ms',
             default_value='550',
             description='Silence duration before OpenAI Realtime finalizes a user turn'
@@ -155,7 +160,7 @@ def generate_launch_description():
                 'web_search_enabled': LaunchConfiguration('realtime_web_search_enabled'),
                 'web_search_model': LaunchConfiguration('realtime_web_search_model'),
                 'web_search_context_size': LaunchConfiguration('realtime_web_search_context_size'),
-                'vad_threshold': 0.75,
+                'vad_threshold': LaunchConfiguration('realtime_vad_threshold'),
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),

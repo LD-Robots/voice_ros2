@@ -86,22 +86,22 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'stop_keyword_prob_threshold',
-            default_value='0.98',
+            default_value='0.80',
             description='Minimum stop-keyword probability required to interrupt TTS'
         ),
         DeclareLaunchArgument(
             'stop_keyword_logit_margin',
-            default_value='0.6',
+            default_value='0.5',
             description='Minimum stop-vs-other logit margin required to interrupt TTS'
         ),
         DeclareLaunchArgument(
             'stop_keyword_hits_required',
-            default_value='3',
+            default_value='1',
             description='Consecutive stop-keyword detections required before interrupting TTS'
         ),
         DeclareLaunchArgument(
             'stop_keyword_requires_voice_signature',
-            default_value='true',
+            default_value='false',
             description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
         ),
         
@@ -113,6 +113,9 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
+                'respeaker_mode': True,
+                'respeaker_channel': 5, # AEC procesat (Testele au arătat că 5 e mai bun)
+                'gain': 3.0,            # Gain digital pentru a nu avea clipping
             }]
         ),
         
@@ -164,6 +167,7 @@ def generate_launch_description():
             executable='barge_in_node',
             name='barge_in_node',
             output='screen',
+            arguments=['--ros-args', '--log-level', 'barge_in_node:=DEBUG'],
             parameters=[{
                 # Voice-based barge-in params (original)
                 'min_voice_ms': 600,
@@ -175,7 +179,7 @@ def generate_launch_description():
                 'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
                 'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
-                'stop_requires_voice_signature': LaunchConfiguration('stop_keyword_requires_voice_signature'),
+                'stop_requires_voice_signature': False,
             }]
         ),
         
