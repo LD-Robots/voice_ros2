@@ -133,6 +133,7 @@ class BargeInNode(Node):
         self.declare_parameter('stop_hop_samples', 8000)     # Hop size in samples
         self.declare_parameter('stop_requires_voice_signature', True)
         
+        self.declare_parameter('voice_enabled', False)
         self.sr = self.get_parameter('sample_rate').value
         self.min_voice_ms = self.get_parameter('min_voice_ms').value
         self.debounce_ms = self.get_parameter('debounce_ms').value
@@ -148,6 +149,7 @@ class BargeInNode(Node):
         
         self.leak_margin_db = self.get_parameter('leak_margin_db').value
         self.leak_decay_ms = self.get_parameter('leak_decay_ms').value
+        self.voice_enabled = self.get_parameter('voice_enabled').value
         
         # ─────────────────────────────────────────────────────────
         # STATE
@@ -285,17 +287,17 @@ class BargeInNode(Node):
                 self.get_logger().warning(f'Stop detector error: {e}')
         
         # ══════════════════════════════════════════════════════════
-        # HUMAN VOICE (standard barge-in) - DISABLED (User request)
+        # HUMAN VOICE (standard barge-in)
         # ══════════════════════════════════════════════════════════
-        # if self._is_human_voice(pcm, now_ms):
-        #     self.voiced_ms += 20
-        #     self.last_voice_ms = now_ms
-        # else:
-        #     self.voiced_ms = max(0, self.voiced_ms - self.voice_drop_ms)
+        if self.voice_enabled and self._is_human_voice(pcm, now_ms):
+            self.voiced_ms += 20
+            self.last_voice_ms = now_ms
+        else:
+            self.voiced_ms = max(0, self.voiced_ms - self.voice_drop_ms)
             
-        # if self.voiced_ms > self.min_voice_ms:
-        #     self.get_logger().info(f'🗣️ Voice Barge-in detected ({self.voiced_ms}ms) - Stopping TTS')
-        #     self._trigger_barge_in()
+        if self.voice_enabled and self.voiced_ms > self.min_voice_ms:
+            self.get_logger().info(f'🗣️ Voice Barge-in detected ({self.voiced_ms}ms) - Stopping TTS')
+            self._trigger_barge_in()
     
     # ═══════════════════════════════════════════════════════════════════
     # HUMAN VOICE DETECTION

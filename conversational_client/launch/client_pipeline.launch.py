@@ -145,6 +145,7 @@ def generate_launch_description():
                 'wake_word_enabled': True,
                 'session_timeout': 30.0,
                 'min_silence_frames': LaunchConfiguration('vad_min_silence_frames'),
+                'capture_during_playback': False, # Dezactivăm captarea server-side în timpul redării pentru a evita bucla
             }]
         ),
         
@@ -158,6 +159,7 @@ def generate_launch_description():
             parameters=[{
                 'min_segment_seconds': 0.5,
                 'max_segment_seconds': 30.0,
+                'capture_during_playback': False, # Revenim la Half-Duplex pentru stabilitate
             }]
         ),
         
@@ -169,8 +171,10 @@ def generate_launch_description():
             output='screen',
             arguments=['--ros-args', '--log-level', 'barge_in_node:=DEBUG'],
             parameters=[{
-                # Voice-based barge-in params (original)
-                'min_voice_ms': 600,
+                # Voice-based barge-in params (Intelligent local detection)
+                'voice_enabled': True,
+                'min_voice_ms': 400,          # 400ms de voce continuă peste bot declanșează stop
+                'leak_margin_db': 12.0,       # Margină peste ecou (mai sigură)
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
                 'stop_model_path': stop_keyword_path,

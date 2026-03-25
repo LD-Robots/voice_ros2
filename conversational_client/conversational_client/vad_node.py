@@ -58,6 +58,7 @@ class VADNode(Node):
         self.declare_parameter('session_timeout', 8.0)
         self.declare_parameter('min_speech_frames', 5)
         self.declare_parameter('min_silence_frames', 14)
+        self.declare_parameter('capture_during_playback', False)
 
         
         self.sample_rate = self.get_parameter('sample_rate').value
@@ -67,6 +68,7 @@ class VADNode(Node):
         self.session_timeout = self.get_parameter('session_timeout').value
         self.min_speech_frames = max(1, int(self.get_parameter('min_speech_frames').value))
         self.min_silence_frames = max(1, int(self.get_parameter('min_silence_frames').value))
+        self.capture_during_playback = self.get_parameter('capture_during_playback').value
         
         # ─────────────────────────────────────────────────────────
         # STATE
@@ -258,7 +260,7 @@ class VADNode(Node):
             return
         
         # Do not process VAD when the robot is speaking (prevents false positives)
-        if self.is_robot_speaking:
+        if self.is_robot_speaking and not self.capture_during_playback:
             return
         
         audio = np.array(msg.data, dtype=np.int16)

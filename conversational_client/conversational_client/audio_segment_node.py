@@ -49,11 +49,13 @@ class AudioSegmentNode(Node):
         self.declare_parameter('min_segment_seconds', 0.5)   # Minimum segment to send
         self.declare_parameter('max_segment_seconds', 30.0)  # Maximum segment (protection)
         self.declare_parameter('pre_buffer_seconds', 0.3)    # Audio before voice detection
+        self.declare_parameter('capture_during_playback', False)
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.min_segment_seconds = self.get_parameter('min_segment_seconds').value
         self.max_segment_seconds = self.get_parameter('max_segment_seconds').value
         self.pre_buffer_seconds = self.get_parameter('pre_buffer_seconds').value
+        self.capture_during_playback = self.get_parameter('capture_during_playback').value
         
         # Compute sizes in samples
         self.min_samples = int(self.min_segment_seconds * self.sample_rate)
@@ -140,6 +142,9 @@ class AudioSegmentNode(Node):
     
     def robot_speaking_callback(self, msg: Bool):
         """Callback for TTS playback state."""
+        if self.capture_during_playback:
+            return  # Allow full duplex listening
+            
         was_speaking = self.is_robot_speaking
         self.is_robot_speaking = msg.data
         
