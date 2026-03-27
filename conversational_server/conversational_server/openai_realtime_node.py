@@ -10,7 +10,7 @@ import json
 import os
 import threading
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 
 import numpy as np
@@ -37,11 +37,12 @@ from .openai_web_search import (
     WEB_SEARCH_FUNCTION_NAME,
     build_realtime_web_search_tool,
     build_web_search_tool_output,
-    call_openai_web_search,
+    call_brave_web_search,
 )
 from .prompt_config import load_prompt_defaults
 from .realtime_text_utils import (
     StickySpeakerTracker,
+    extract_opening_signature,
     is_resume_request,
     normalize_realtime_text,
     should_preserve_paused_transcript,
@@ -93,9 +94,9 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('input_transcription_model', 'gpt-4o-mini-transcribe')
         self.declare_parameter('vad_threshold', 0.82)
         self.declare_parameter('vad_prefix_padding_ms', 400)
-        self.declare_parameter('vad_silence_duration_ms', 550)
+        self.declare_parameter('vad_silence_duration_ms', 800)
         self.declare_parameter('response_create_delay_ms', 100)
-        self.declare_parameter('continued_turn_response_delay_ms', 450)
+        self.declare_parameter('continued_turn_response_delay_ms', 700)
         self.declare_parameter('local_response_gating', True)
         self.declare_parameter('short_transcript_dedupe_window_s', 4.0)
         self.declare_parameter('reconnect_delay_s', 3.0)
@@ -195,6 +196,15 @@ class OpenAIRealtimeNode(Node):
         if not self.api_key:
             self.get_logger().error('OPENAI_API_KEY environment variable not set!')
             raise RuntimeError('OPENAI_API_KEY not set')
+        self.web_search_api_key = (
+            os.environ.get('BRAVE_SEARCH_API_KEY')
+            or os.environ.get('BRAVE_WEB_SEARCH_API_KEY')
+            or ''
+        )
+        if self.web_search_enabled and not self.web_search_api_key:
+            self.get_logger().warning(
+                'BRAVE_SEARCH_API_KEY not set; realtime web_search tool calls will fail.'
+            )
         if not WEBSOCKET_AVAILABLE:
             self.get_logger().error('websocket-client package not installed!')
             raise RuntimeError('websocket-client not available')
@@ -258,6 +268,7 @@ class OpenAIRealtimeNode(Node):
         self._paused_transcript_at = 0.0
         self._last_accepted_user_transcript_norm = ''
         self._last_accepted_user_transcript_at = 0.0
+        self._recent_reply_openings = deque(maxlen=4)
         self._recent_input_audio = []
         self._current_user_audio = []
         self._capture_user_audio = False
@@ -593,9 +604,6 @@ class OpenAIRealtimeNode(Node):
                 direct_address = has_direct_robot_address(normalized)
                 control_action = detect_control_action(normalized)
                 reengagement = is_reengagement_phrase(normalized)
-                if normalized:
-                    self._last_accepted_user_transcript_norm = normalized
-                    self._last_accepted_user_transcript_at = time.monotonic()
                 if control_action == 'hold_on' and can_accept_control_action(
                     control_action,
                     current_speaker=self.current_speaker,
@@ -630,13 +638,21 @@ class OpenAIRealtimeNode(Node):
                     )
                     return
                 if self.conversation_paused:
-                    if control_action in ('continue', 'repeat') or reengagement:
+                    if (
+                        control_action in ('continue', 'repeat')
+                        or reengagement
+                        or self._should_preserve_paused_transcript(transcript)
+                    ):
                         self._paused_transcript_pending = transcript
                         self._paused_transcript_at = time.monotonic()
+                        self._delete_conversation_item(item_id, 'pause_resume_signal')
                         self._apply_pause_state(False, publish=True)
                         return
                     self._delete_conversation_item(item_id, reason)
                     return
+                if normalized:
+                    self._last_accepted_user_transcript_norm = normalized
+                    self._last_accepted_user_transcript_at = time.monotonic()
                 self.focused_speaker, self.last_focus_time = advance_attention_focus(
                     current_speaker=self.current_speaker,
                     focused_speaker=self.focused_speaker,
@@ -890,6 +906,12 @@ class OpenAIRealtimeNode(Node):
             'If the user asks your name, answer "Robot". '
             'Do not use any speaker preferred name as your own identity.'
         )
+        extras.append(
+            'Prefer plain spoken language over formal assistant phrasing. '
+            'Do not default to openings like "Sure", "Of course", "Absolutely", or '
+            '"I\'d be happy to" unless they genuinely fit the moment. '
+            'If the answer can start directly, start directly.'
+        )
         if assistant_name_question:
             extras.append(
                 'The user is asking your name right now. '
@@ -935,8 +957,8 @@ class OpenAIRealtimeNode(Node):
             )
         if self.conversation_paused:
             extras.append(
-                'The user told you to wait because they are talking with someone else. '
-                'Stay silent until the local controller resumes the conversation.'
+                'The conversation is paused because the user is speaking with someone else. '
+                'Stay silent, ignore side-conversation content, and wait for a clear direct re-engagement with Robot before resuming.'
             )
         if self._pending_resume_text:
             extras.append(
@@ -956,11 +978,21 @@ class OpenAIRealtimeNode(Node):
                 'If the user asks a different question or changes topic, answer the new request normally and '
                 'ignore the interrupted reply.'
             )
+        if self._recent_reply_openings:
+            openings = ', '.join(f'"{opening}"' for opening in self._recent_reply_openings)
+            extras.append(
+                f'Avoid reusing these recent assistant openings unless they are truly necessary: {openings}. '
+                'Use broader everyday vocabulary and vary acknowledgements naturally.'
+            )
         if self.web_search_enabled:
             extras.append(
                 'When the user asks for current, live, recent, online, or otherwise time-sensitive information, '
                 'or explicitly asks you to search the internet, call the web_search tool before answering. '
-                'Do not pretend to have browsed if you did not use the tool.'
+                'Do not pretend to have browsed if you did not use the tool. '
+                'After using the tool, answer only from the returned summary, sources, results, and rich_data. '
+                'Prefer exact dates, scores, prices, and names from the tool output. '
+                'If the tool output is ambiguous, incomplete, or conflicting, say that explicitly and ask a '
+                'clarifying follow-up instead of guessing.'
             )
         return ' '.join([self.base_instructions, *extras]).strip()
 
@@ -1008,7 +1040,15 @@ class OpenAIRealtimeNode(Node):
         )
         return any(pattern in text for pattern in patterns)
 
-    def _cancel_and_clear(self):
+    def _remember_assistant_opening(self, text: str):
+        opening = extract_opening_signature(text)
+        if not opening:
+            return
+        if self._recent_reply_openings and self._recent_reply_openings[-1] == opening:
+            return
+        self._recent_reply_openings.append(opening)
+
+    def _cancel_and_clear(self, *, clear_pending_resume: bool = True):
         self._cancel_pending_response_create()
         if not self._connected.is_set():
             return
@@ -1019,7 +1059,8 @@ class OpenAIRealtimeNode(Node):
         self._published_final_items.clear()
         self._seen_output_audio_for_response.clear()
         self._clear_playback_progress()
-        self._clear_pending_resume()
+        if clear_pending_resume:
+            self._clear_pending_resume()
         self._last_response_request_item_id = ''
         self._capture_user_audio = False
         self._current_user_audio = []
@@ -1174,6 +1215,7 @@ class OpenAIRealtimeNode(Node):
         text = self._assistant_text.get(item_id, '').strip()
         if not text:
             return
+        self._remember_assistant_opening(text)
 
         out = Transcription()
         out.text = text
@@ -1459,9 +1501,11 @@ class OpenAIRealtimeNode(Node):
             query = str(parsed_arguments.get('query', '') or '').strip()
             if not query:
                 raise ValueError('Missing required "query" argument.')
+            if not self.web_search_api_key:
+                raise RuntimeError('BRAVE_SEARCH_API_KEY not set')
 
-            payload = call_openai_web_search(
-                self.api_key,
+            payload = call_brave_web_search(
+                self.web_search_api_key,
                 query,
                 model=self.web_search_model,
                 search_context_size=self.web_search_context_size,
@@ -1473,10 +1517,10 @@ class OpenAIRealtimeNode(Node):
                 payload=payload,
                 max_sources=self.web_search_sources_limit,
             )
-            self.get_logger().info(f'OpenAI Responses web search completed for: {query}')
+            self.get_logger().info(f'Brave web search completed for: {query}')
         except Exception as exc:
             message = str(exc).strip() or 'Unknown web search failure.'
-            self.get_logger().error(f'OpenAI web search tool failed: {message}')
+            self.get_logger().error(f'Realtime web search tool failed: {message}')
             output = build_web_search_tool_output(query, error=message)
 
         if not self._send_event({

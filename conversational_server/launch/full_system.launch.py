@@ -140,7 +140,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_vad_silence_duration_ms',
-            default_value='550',
+            default_value='800',
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
@@ -150,7 +150,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_continued_turn_response_delay_ms',
-            default_value='450',
+            default_value='700',
             description='Delay before answering a transcript that arrived after the user resumed speaking'
         ),
         DeclareLaunchArgument(

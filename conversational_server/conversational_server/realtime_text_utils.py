@@ -84,6 +84,16 @@ def is_resume_request(text: str) -> bool:
     return any(re.search(rf'\b{re.escape(stem)}[a-z]*\b', normalized) for stem in CONTINUE_STEMS)
 
 
+def extract_opening_signature(text: str, *, max_words: int = 4) -> str:
+    normalized = normalize_realtime_text(text)
+    if not normalized:
+        return ''
+    words = normalized.split()
+    if not words:
+        return ''
+    return ' '.join(words[: max(1, int(max_words))])
+
+
 def should_preserve_paused_transcript(text: str) -> bool:
     normalized = normalize_realtime_text(text)
     if not normalized:

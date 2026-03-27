@@ -1,4 +1,7 @@
-from conversational_server.realtime_text_utils import should_preserve_paused_transcript
+from conversational_server.realtime_text_utils import (
+    extract_opening_signature,
+    should_preserve_paused_transcript,
+)
 
 
 def test_preserve_paused_transcript_for_resume_request():
@@ -17,3 +20,8 @@ def test_drop_paused_transcript_for_side_conversation():
 
 def test_drop_paused_transcript_for_direct_address_without_resume_intent():
     assert should_preserve_paused_transcript('Hello robot') is False
+
+
+def test_extract_opening_signature_normalizes_first_words():
+    assert extract_opening_signature('Sure, I can help with that.') == 'sure i can help'
+    assert extract_opening_signature('') == ''
