@@ -144,6 +144,11 @@ def generate_launch_description():
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
+            'realtime_vad_playback_threshold',
+            default_value='0.92',
+            description='Higher Realtime VAD threshold used only while robot playback is active'
+        ),
+        DeclareLaunchArgument(
             'realtime_response_create_delay_ms',
             default_value='100',
             description='Extra local wait before creating a Realtime response after transcript acceptance'
@@ -253,6 +258,7 @@ def generate_launch_description():
                 'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
                 'language_switch_hits_required': LaunchConfiguration('language_switch_hits_required'),
                 'vad_threshold': 0.82,
+                'playback_vad_threshold': LaunchConfiguration('realtime_vad_playback_threshold'),
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),

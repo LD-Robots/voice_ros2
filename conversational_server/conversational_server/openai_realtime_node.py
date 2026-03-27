@@ -93,6 +93,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('input_transcription_enabled', True)
         self.declare_parameter('input_transcription_model', 'gpt-4o-mini-transcribe')
         self.declare_parameter('vad_threshold', 0.82)
+        self.declare_parameter('playback_vad_threshold', 0.92)
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 800)
         self.declare_parameter('response_create_delay_ms', 100)
@@ -138,6 +139,10 @@ class OpenAIRealtimeNode(Node):
             self.get_parameter('input_transcription_model').value
         )
         self.vad_threshold = float(self.get_parameter('vad_threshold').value)
+        self.playback_vad_threshold = max(
+            self.vad_threshold,
+            float(self.get_parameter('playback_vad_threshold').value),
+        )
         self.vad_prefix_padding_ms = int(self.get_parameter('vad_prefix_padding_ms').value)
         self.vad_silence_duration_ms = int(
             self.get_parameter('vad_silence_duration_ms').value
@@ -378,7 +383,10 @@ class OpenAIRealtimeNode(Node):
             self._cancel_and_clear()
 
     def speaking_callback(self, msg: Bool):
+        was_speaking = self.robot_speaking
         self.robot_speaking = bool(msg.data)
+        if self.robot_speaking != was_speaking:
+            self._refresh_session()
 
     def pause_callback(self, msg: Bool):
         self._apply_pause_state(bool(msg.data), publish=False)
@@ -833,9 +841,12 @@ class OpenAIRealtimeNode(Node):
             return
 
         instructions = self._build_instructions()
+        vad_threshold = self.vad_threshold
+        if self.capture_during_playback and self.robot_speaking:
+            vad_threshold = self.playback_vad_threshold
         turn_detection = {
             'type': 'server_vad',
-            'threshold': self.vad_threshold,
+            'threshold': vad_threshold,
             'prefix_padding_ms': self.vad_prefix_padding_ms,
             'silence_duration_ms': self.vad_silence_duration_ms,
             'create_response': (not self.local_response_gating) and (not self.conversation_paused),

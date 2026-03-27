@@ -88,7 +88,7 @@ class ConversationLanguageTracker:
 
         detected = detect_text_language(text)
         if not self.current_language:
-            self.current_language = preferred or detected
+            self.current_language = detected or preferred
             return self.current_language
 
         if not detected:

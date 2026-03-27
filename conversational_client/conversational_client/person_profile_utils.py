@@ -15,6 +15,20 @@ LANGUAGE_PREFERENCES = {
     str(language): tuple(phrases)
     for language, phrases in (_RULES.get('language_preferences') or {}).items()
 }
+_STORED_LANGUAGE_PREFERENCE_PREFIXES = (
+    'my preferred language is ',
+    'i prefer ',
+    'prefer ',
+    'limba mea preferata este ',
+)
+STORED_LANGUAGE_PREFERENCES = {
+    str(language): tuple(
+        phrase
+        for phrase in LANGUAGE_PREFERENCES.get(language, ())
+        if phrase.startswith(_STORED_LANGUAGE_PREFERENCE_PREFIXES)
+    )
+    for language in LANGUAGE_PREFERENCES
+}
 
 def normalize_person_name(raw_name: str) -> str:
     normalized = unicodedata.normalize('NFKD', raw_name or '')
@@ -86,8 +100,15 @@ def resolve_preferred_name_update(
 
 
 def extract_language_preference(normalized: str) -> str:
+    text = (normalized or '').strip()
+    if not text:
+        return ''
+
     for language in ('en', 'ro'):
-        if any(token in normalized for token in LANGUAGE_PREFERENCES.get(language, ())):
+        if any(
+            re.search(rf'(?<!\w){re.escape(token)}(?!\w)', text)
+            for token in STORED_LANGUAGE_PREFERENCES.get(language, ())
+        ):
             return language
     return ''
 

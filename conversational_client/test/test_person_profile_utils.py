@@ -36,9 +36,13 @@ def test_resolve_preferred_name_update_protects_existing_profiles():
     assert resolve_preferred_name_update('Vasile', 'Alex') == ('conflict', 'Vasile', 'Alex')
 
 
-def test_extract_language_preference_supports_multiple_variants():
-    assert extract_language_preference('answer in english please') == 'en'
+def test_extract_language_preference_requires_explicit_preference_statement():
+    assert extract_language_preference('my preferred language is english') == 'en'
+    assert extract_language_preference('i prefer english') == 'en'
     assert extract_language_preference('limba mea preferata este romana') == 'ro'
+    assert extract_language_preference('answer in english please') == ''
+    assert extract_language_preference('why did you speak romanian') == ''
+    assert extract_language_preference('continue in english') == ''
 
 
 def test_build_unique_voice_label_avoids_collisions():
