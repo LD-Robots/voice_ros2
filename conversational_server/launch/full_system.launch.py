@@ -317,7 +317,7 @@ def generate_launch_description():
             parameters=[{
                 # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
                 'stop_model_path': stop_model_path,
-                'stop_enabled': True,  # ACTIVAT - la cererea userului
+                'stop_enabled': True,  # ACTIVAT
                 'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
                 'stop_logit_margin': LaunchConfiguration('stop_keyword_logit_margin'),
                 'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),

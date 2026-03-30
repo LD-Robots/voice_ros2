@@ -133,7 +133,7 @@ class BargeInNode(Node):
         self.declare_parameter('stop_hop_samples', 8000)     # Hop size in samples
         self.declare_parameter('stop_requires_voice_signature', True)
         
-        self.declare_parameter('voice_enabled', False)
+        self.declare_parameter('voice_enabled', True)
         self.sr = self.get_parameter('sample_rate').value
         self.min_voice_ms = self.get_parameter('min_voice_ms').value
         self.debounce_ms = self.get_parameter('debounce_ms').value
