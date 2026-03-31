@@ -26,6 +26,15 @@ import queue
 import time
 import scipy.signal  # For resampling
 import re
+import wave
+from pathlib import Path
+
+def _find_workspace_root():
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
 
 try:
     from num2words import num2words
@@ -248,12 +257,31 @@ class TTSNode(Node):
             self.stop()
     
     def _precache(self):
-        """Pre-generate audio for common phrases."""
-        self.get_logger().debug('🔄 Pre-generating cached phrases...')
+        """Pre-generate audio for common phrases or load static files."""
+        self.get_logger().info('🔄 Initializing TTS cache (prioritizing OpenAI static voices)...')
+        
+        workspace_root = _find_workspace_root()
+        static_dir = None
+        if workspace_root:
+            static_dir = workspace_root / 'conversational_server' / 'resources' / 'static_audio'
+            if not static_dir.exists():
+                static_dir = None
+
         for key, (text, lang) in self.cache_phrases.items():
             try:
-                voice = self._pick_voice(lang)
-                audio_data, sample_rate = self._synthesize(text, voice)
+                # 1. Check if a static version exists (OpenAI Cedar)
+                static_file = None
+                if static_dir:
+                    static_file = static_dir / f"{key}.wav"
+                
+                if static_file and static_file.exists():
+                    # Load directly from WAV
+                    audio_data, sample_rate = sf.read(str(static_file), dtype='int16')
+                    self.get_logger().info(f'  ✓ Loaded static voice: {key} (OpenAI)')
+                else:
+                    # 2. Fall back to Edge-TTS
+                    voice = self._pick_voice(lang)
+                    audio_data, sample_rate = self._synthesize(text, voice)
                 
                 # Resample immediately for cache
                 if sample_rate != self.target_sample_rate:
@@ -263,10 +291,11 @@ class TTSNode(Node):
                 if len(audio_data.shape) > 1:
                     audio_data = audio_data[:, 0]
                 self.audio_cache[key] = (audio_data, sample_rate)
-                self.get_logger().debug(f'  ✓ Cached: {key}')
+                if not (static_file and static_file.exists()):
+                    self.get_logger().debug(f'  ✓ Cached (dynamic): {key}')
             except Exception as e:
                 self.get_logger().warn(f'  ✗ Failed to cache {key}: {e}')
-        self.get_logger().debug(f'✅ Cached {len(self.audio_cache)} phrases')
+        self.get_logger().info(f'✅ TTS cache complete: {len(self.audio_cache)} phrases ready')
     
     def say_cached(self, key: str) -> bool:
         """Play a cached phrase. Returns True if successful."""
