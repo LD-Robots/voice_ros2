@@ -139,14 +139,29 @@ def generate_launch_description():
             description='Consecutive language detections required before switching the active conversation language without an explicit request'
         ),
         DeclareLaunchArgument(
+            'realtime_vad_threshold',
+            default_value='0.86',
+            description='Base Realtime VAD threshold for normal listening turns'
+        ),
+        DeclareLaunchArgument(
             'realtime_vad_silence_duration_ms',
             default_value='800',
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
             'realtime_vad_playback_threshold',
-            default_value='0.92',
+            default_value='0.94',
             description='Higher Realtime VAD threshold used only while robot playback is active'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_min_rms_dbfs',
+            default_value='-24.0',
+            description='Minimum mic level required before forwarding playback-overlap speech to OpenAI Realtime'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_hits_required',
+            default_value='4',
+            description='Consecutive strong speech chunks required before opening the playback mic gate'
         ),
         DeclareLaunchArgument(
             'realtime_response_create_delay_ms',
@@ -157,6 +172,11 @@ def generate_launch_description():
             'realtime_continued_turn_response_delay_ms',
             default_value='700',
             description='Delay before answering a transcript that arrived after the user resumed speaking'
+        ),
+        DeclareLaunchArgument(
+            'vad_min_speech_frames',
+            default_value='7',
+            description='Consecutive speech frames required before local VAD declares the user is speaking'
         ),
         DeclareLaunchArgument(
             'vad_min_silence_frames',
@@ -257,8 +277,14 @@ def generate_launch_description():
                 'local_response_gating': LaunchConfiguration('realtime_local_response_gating'),
                 'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
                 'language_switch_hits_required': LaunchConfiguration('language_switch_hits_required'),
-                'vad_threshold': 0.82,
+                'vad_threshold': LaunchConfiguration('realtime_vad_threshold'),
                 'playback_vad_threshold': LaunchConfiguration('realtime_vad_playback_threshold'),
+                'playback_input_min_rms_dbfs': LaunchConfiguration(
+                    'realtime_playback_input_min_rms_dbfs'
+                ),
+                'playback_input_hits_required': LaunchConfiguration(
+                    'realtime_playback_input_hits_required'
+                ),
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),
@@ -291,6 +317,7 @@ def generate_launch_description():
             parameters=[{
                 'wake_word_enabled': True,   # Gate audio until wake word
                 'session_timeout': 30.0,     # Reset to standby after 30s silence (was 8s)
+                'min_speech_frames': LaunchConfiguration('vad_min_speech_frames'),
                 'min_silence_frames': LaunchConfiguration('vad_min_silence_frames'),
             }]
         ),

@@ -68,14 +68,29 @@ def generate_launch_description():
             description='OpenAI web-search context size (low/medium/high)'
         ),
         DeclareLaunchArgument(
+            'realtime_vad_threshold',
+            default_value='0.86',
+            description='Base Realtime VAD threshold for normal listening turns'
+        ),
+        DeclareLaunchArgument(
             'realtime_vad_silence_duration_ms',
             default_value='800',
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
             'realtime_vad_playback_threshold',
-            default_value='0.92',
+            default_value='0.94',
             description='Higher Realtime VAD threshold used only while robot playback is active'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_min_rms_dbfs',
+            default_value='-24.0',
+            description='Minimum mic level required before forwarding playback-overlap speech to OpenAI Realtime'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_hits_required',
+            default_value='4',
+            description='Consecutive strong speech chunks required before opening the playback mic gate'
         ),
         DeclareLaunchArgument(
             'realtime_response_create_delay_ms',
@@ -160,8 +175,14 @@ def generate_launch_description():
                 'web_search_enabled': LaunchConfiguration('realtime_web_search_enabled'),
                 'web_search_model': LaunchConfiguration('realtime_web_search_model'),
                 'web_search_context_size': LaunchConfiguration('realtime_web_search_context_size'),
-                'vad_threshold': 0.82,
+                'vad_threshold': LaunchConfiguration('realtime_vad_threshold'),
                 'playback_vad_threshold': LaunchConfiguration('realtime_vad_playback_threshold'),
+                'playback_input_min_rms_dbfs': LaunchConfiguration(
+                    'realtime_playback_input_min_rms_dbfs'
+                ),
+                'playback_input_hits_required': LaunchConfiguration(
+                    'realtime_playback_input_hits_required'
+                ),
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),

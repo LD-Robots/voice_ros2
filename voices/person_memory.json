@@ -10,9 +10,9 @@
     "speaker_001": {
       "voice_label": "speaker_001",
       "preferred_name": "Vasile",
-      "preferred_language": "ro",
+      "preferred_language": "en",
       "facts": [],
-      "last_seen": "2026-03-27T12:30:40.806224+00:00"
+      "last_seen": "2026-03-31T09:10:23.587220+00:00"
     },
     "speaker_002": {
       "voice_label": "speaker_002",

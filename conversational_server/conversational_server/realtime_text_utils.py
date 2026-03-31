@@ -1,3 +1,4 @@
+from difflib import SequenceMatcher
 import re
 import time
 import unicodedata
@@ -9,6 +10,13 @@ REENGAGEMENT_PHRASES = tuple(_RULES['reengagement_phrases'])
 CONTINUE_PHRASES = tuple(_RULES['continue_phrases'])
 CONTINUE_STEMS = tuple(_RULES['continue_stems'])
 MULTIWORD_CONTINUE_PHRASES = tuple(phrase for phrase in CONTINUE_PHRASES if ' ' in phrase)
+
+try:
+    from rapidfuzz import fuzz
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
+
 
 class StickySpeakerTracker:
     """Keep the last known speaker through brief Unknown detections."""
@@ -107,3 +115,34 @@ def should_preserve_paused_transcript(text: str) -> bool:
     has_return_signal = any(token in normalized for token in ('back', 'return', 'revin', 'reven', 'inapoi'))
     has_ready_signal = any(token in normalized for token in ('here', 'ready', 'again', 'gata', 'acum'))
     return has_robot_address and has_return_signal and has_ready_signal
+
+
+def assistant_echo_similarity(user_text: str, assistant_text: str) -> float:
+    user_norm = normalize_realtime_text(user_text)
+    assistant_norm = normalize_realtime_text(assistant_text)
+    if not user_norm or not assistant_norm:
+        return 0.0
+    if user_norm in assistant_norm or assistant_norm in user_norm:
+        return 100.0
+    if RAPIDFUZZ_AVAILABLE:
+        return float(
+            max(
+                fuzz.partial_ratio(user_norm, assistant_norm),
+                fuzz.token_set_ratio(user_norm, assistant_norm),
+            )
+        )
+    return float(SequenceMatcher(None, user_norm, assistant_norm).ratio() * 100.0)
+
+
+def is_probable_assistant_echo(
+    user_text: str,
+    assistant_text: str,
+    *,
+    threshold: float = 85.0,
+    min_length: int = 8,
+) -> bool:
+    user_norm = normalize_realtime_text(user_text)
+    assistant_norm = normalize_realtime_text(assistant_text)
+    if len(user_norm) < max(1, int(min_length)) or len(assistant_norm) < max(1, int(min_length)):
+        return False
+    return assistant_echo_similarity(user_norm, assistant_norm) >= float(threshold)

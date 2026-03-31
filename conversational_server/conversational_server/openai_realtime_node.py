@@ -40,9 +40,12 @@ from .openai_web_search import (
     call_brave_web_search,
 )
 from .prompt_config import load_prompt_defaults
+from .realtime_audio_filter import PlaybackInputFilter, PlaybackInputFilterConfig
 from .realtime_text_utils import (
     StickySpeakerTracker,
+    assistant_echo_similarity,
     extract_opening_signature,
+    is_probable_assistant_echo,
     is_resume_request,
     normalize_realtime_text,
     should_preserve_paused_transcript,
@@ -92,14 +95,27 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('capture_during_playback', True)
         self.declare_parameter('input_transcription_enabled', True)
         self.declare_parameter('input_transcription_model', 'gpt-4o-mini-transcribe')
-        self.declare_parameter('vad_threshold', 0.82)
-        self.declare_parameter('playback_vad_threshold', 0.92)
+        self.declare_parameter('vad_threshold', 0.86)
+        self.declare_parameter('playback_vad_threshold', 0.94)
+        self.declare_parameter('playback_input_filter_enabled', True)
+        self.declare_parameter('playback_input_min_rms_dbfs', -24.0)
+        self.declare_parameter('playback_input_highpass_hz', 300.0)
+        self.declare_parameter('playback_input_zcr_min', 0.05)
+        self.declare_parameter('playback_input_zcr_max', 0.35)
+        self.declare_parameter('playback_input_leak_margin_db', 6.0)
+        self.declare_parameter('playback_input_leak_decay_ms', 1200)
+        self.declare_parameter('playback_input_hits_required', 4)
+        self.declare_parameter('playback_input_hold_ms', 240)
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 800)
         self.declare_parameter('response_create_delay_ms', 100)
         self.declare_parameter('continued_turn_response_delay_ms', 700)
         self.declare_parameter('local_response_gating', True)
         self.declare_parameter('short_transcript_dedupe_window_s', 4.0)
+        self.declare_parameter('echo_enabled', True)
+        self.declare_parameter('echo_threshold', 87.0)
+        self.declare_parameter('echo_min_length', 8)
+        self.declare_parameter('echo_after_playback_window_s', 1.75)
         self.declare_parameter('reconnect_delay_s', 3.0)
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
@@ -143,6 +159,28 @@ class OpenAIRealtimeNode(Node):
             self.vad_threshold,
             float(self.get_parameter('playback_vad_threshold').value),
         )
+        self.playback_input_filter_enabled = bool(
+            self.get_parameter('playback_input_filter_enabled').value
+        )
+        self.playback_input_filter = PlaybackInputFilter(
+            PlaybackInputFilterConfig(
+                min_rms_dbfs=float(self.get_parameter('playback_input_min_rms_dbfs').value),
+                highpass_hz=float(self.get_parameter('playback_input_highpass_hz').value),
+                zcr_min=float(self.get_parameter('playback_input_zcr_min').value),
+                zcr_max=float(self.get_parameter('playback_input_zcr_max').value),
+                leak_margin_db=float(
+                    self.get_parameter('playback_input_leak_margin_db').value
+                ),
+                leak_decay_ms=int(
+                    self.get_parameter('playback_input_leak_decay_ms').value
+                ),
+                hits_required=max(
+                    1,
+                    int(self.get_parameter('playback_input_hits_required').value),
+                ),
+                hold_ms=max(0, int(self.get_parameter('playback_input_hold_ms').value)),
+            )
+        )
         self.vad_prefix_padding_ms = int(self.get_parameter('vad_prefix_padding_ms').value)
         self.vad_silence_duration_ms = int(
             self.get_parameter('vad_silence_duration_ms').value
@@ -158,6 +196,13 @@ class OpenAIRealtimeNode(Node):
         self.local_response_gating = bool(self.get_parameter('local_response_gating').value)
         self.short_transcript_dedupe_window_s = float(
             self.get_parameter('short_transcript_dedupe_window_s').value
+        )
+        self.echo_enabled = bool(self.get_parameter('echo_enabled').value)
+        self.echo_threshold = float(self.get_parameter('echo_threshold').value)
+        self.echo_min_length = max(1, int(self.get_parameter('echo_min_length').value))
+        self.echo_after_playback_window_s = max(
+            0.0,
+            float(self.get_parameter('echo_after_playback_window_s').value),
         )
         self.reconnect_delay_s = float(self.get_parameter('reconnect_delay_s').value)
         self.utterance_capture_prefix_ms = int(
@@ -274,6 +319,7 @@ class OpenAIRealtimeNode(Node):
         self._last_accepted_user_transcript_norm = ''
         self._last_accepted_user_transcript_at = 0.0
         self._recent_reply_openings = deque(maxlen=4)
+        self._recent_assistant_replies = deque(maxlen=6)
         self._recent_input_audio = []
         self._current_user_audio = []
         self._capture_user_audio = False
@@ -281,6 +327,8 @@ class OpenAIRealtimeNode(Node):
         self._current_input_channels = 1
         self._handled_tool_call_ids = set()
         self._tool_call_lock = threading.Lock()
+        self._playback_gate_logged_open = False
+        self._last_robot_speaking_end_at = 0.0
 
         self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
         self.user_audio_segment_pub = self.create_publisher(Audio, '/realtime_user_audio_segment', 10)
@@ -386,6 +434,12 @@ class OpenAIRealtimeNode(Node):
         was_speaking = self.robot_speaking
         self.robot_speaking = bool(msg.data)
         if self.robot_speaking != was_speaking:
+            self.playback_input_filter.reset()
+            self._playback_gate_logged_open = False
+            if self.robot_speaking:
+                self._last_robot_speaking_end_at = 0.0
+            else:
+                self._last_robot_speaking_end_at = time.monotonic()
             self._refresh_session()
 
     def pause_callback(self, msg: Bool):
@@ -500,14 +554,40 @@ class OpenAIRealtimeNode(Node):
         if not msg.data:
             return
 
-        self._current_input_sample_rate = int(msg.sample_rate or self.input_sample_rate)
+        current_sample_rate = int(msg.sample_rate or self.input_sample_rate)
+        if (
+            self.capture_during_playback
+            and self.robot_speaking
+            and self.playback_input_filter_enabled
+        ):
+            was_gate_open = self.playback_input_filter.gate_open
+            allow_chunk = self.playback_input_filter.should_forward(
+                np.array(msg.data, dtype=np.int16),
+                sample_rate=current_sample_rate,
+            )
+            if self.playback_input_filter.gate_open and not was_gate_open:
+                self._playback_gate_logged_open = True
+                self.get_logger().info(
+                    'Realtime playback mic gate opened for strong live speech'
+                )
+            elif (
+                not self.playback_input_filter.gate_open
+                and was_gate_open
+                and self._playback_gate_logged_open
+            ):
+                self._playback_gate_logged_open = False
+                self.get_logger().debug('Realtime playback mic gate closed')
+            if not allow_chunk:
+                return
+
+        self._current_input_sample_rate = current_sample_rate
         self._current_input_channels = int(msg.channels or 1)
         self._remember_input_audio(msg.data)
         if self._capture_user_audio:
             self._current_user_audio.extend(msg.data)
 
         pcm = np.array(msg.data, dtype=np.int16)
-        pcm = self._resample_pcm16(pcm, int(msg.sample_rate), self.api_sample_rate)
+        pcm = self._resample_pcm16(pcm, current_sample_rate, self.api_sample_rate)
         encoded = base64.b64encode(pcm.tobytes()).decode('ascii')
         self._send_event({
             'type': 'input_audio_buffer.append',
@@ -605,6 +685,14 @@ class OpenAIRealtimeNode(Node):
                     )
                     self._cancel_current_pending_response(ignore_reason)
                     self._delete_conversation_item(item_id, ignore_reason)
+                    return
+                assistant_echo_reason = self._ignored_assistant_echo_reason(transcript)
+                if assistant_echo_reason:
+                    self.get_logger().info(
+                        f'Ignoring assistant-echo transcript ({assistant_echo_reason}): {transcript}'
+                    )
+                    self._cancel_current_pending_response(assistant_echo_reason)
+                    self._delete_conversation_item(item_id, assistant_echo_reason)
                     return
                 self.get_logger().info(f'OpenAI transcript: {transcript}')
                 focus_candidate = self._consume_focus_candidate()
@@ -1076,6 +1164,10 @@ class OpenAIRealtimeNode(Node):
         self._capture_user_audio = False
         self._current_user_audio = []
         self._recent_input_audio = []
+        self._recent_assistant_replies.clear()
+        self.playback_input_filter.reset()
+        self._playback_gate_logged_open = False
+        self._last_robot_speaking_end_at = 0.0
         self._user_speaking = False
         self._clear_deferred_response()
         self._mark_response_inactive()
@@ -1242,6 +1334,7 @@ class OpenAIRealtimeNode(Node):
         self.stream_pub.publish(final_chunk)
 
         self._published_final_items.add(item_id)
+        self._recent_assistant_replies.append(text)
 
     def _mark_response_active(self, response_id: str = ''):
         self._response_create_pending = False
@@ -1437,6 +1530,57 @@ class OpenAIRealtimeNode(Node):
             return 'very_short_turn'
 
         return ''
+
+    def _ignored_assistant_echo_reason(self, text: str) -> str:
+        if not self.echo_enabled or not self._within_assistant_echo_window():
+            return ''
+
+        best_score = 0.0
+        for candidate in self._assistant_echo_candidates():
+            if not is_probable_assistant_echo(
+                text,
+                candidate,
+                threshold=self.echo_threshold,
+                min_length=self.echo_min_length,
+            ):
+                continue
+            best_score = max(best_score, assistant_echo_similarity(text, candidate))
+
+        if best_score < self.echo_threshold:
+            return ''
+        return f'assistant_echo:{best_score:.0f}'
+
+    def _assistant_echo_candidates(self) -> list[str]:
+        candidates = []
+        seen = set()
+
+        for text in self._assistant_text.values():
+            cleaned = str(text or '').strip()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                candidates.append(cleaned)
+
+        for text in reversed(self._recent_assistant_replies):
+            cleaned = str(text or '').strip()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                candidates.append(cleaned)
+
+        if self._pending_resume_text:
+            cleaned = self._pending_resume_text.strip()
+            if cleaned and cleaned not in seen:
+                candidates.append(cleaned)
+
+        return candidates
+
+    def _within_assistant_echo_window(self) -> bool:
+        if self.robot_speaking:
+            return True
+        if self._last_robot_speaking_end_at <= 0.0:
+            return False
+        return (
+            time.monotonic() - self._last_robot_speaking_end_at
+        ) <= self.echo_after_playback_window_s
 
     @staticmethod
     def _normalize_text(text: str) -> str:
