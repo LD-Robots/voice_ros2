@@ -69,7 +69,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_vad_threshold',
-            default_value='0.75',
+            default_value='0.82',
             description='Sensitivity threshold for OpenAI VAD (higher means less sensitive to noise)'
         ),
         DeclareLaunchArgument(

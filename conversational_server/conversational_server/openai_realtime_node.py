@@ -584,7 +584,6 @@ class OpenAIRealtimeNode(Node):
                     self.get_logger().info(
                         f'Ignoring short/accidental transcript ({ignore_reason}): {transcript}'
                     )
-                    self._cancel_current_pending_response(ignore_reason)
                     self._delete_conversation_item(item_id, ignore_reason)
                     return
                 self.get_logger().info(f'OpenAI transcript: {transcript}')
@@ -1332,9 +1331,13 @@ class OpenAIRealtimeNode(Node):
         return should_preserve_paused_transcript(text)
 
     def _ignored_transcript_reason(self, text: str) -> str:
+        raw_text = ' '.join(str(text or '').split()).strip()
+        if not raw_text:
+            return 'empty'
+
         normalized = self._normalize_text(text)
         if not normalized:
-            return 'empty'
+            return 'unsupported_script_turn'
 
         control_patterns = (
             'stop',
@@ -1362,6 +1365,8 @@ class OpenAIRealtimeNode(Node):
             return ''
 
         words = normalized.split()
+        if not words:
+            return 'unsupported_script_turn'
         yes_no_words = {'yes', 'no', 'da', 'nu'}
         if len(words) == 1 and words[0] in yes_no_words:
             if self.waiting_for_robot_confirmation:
@@ -1377,11 +1382,28 @@ class OpenAIRealtimeNode(Node):
         ):
             return 'duplicate_short_turn'
 
+        question_words = {
+            'who', 'what', 'when', 'where', 'why', 'how',
+            'cine', 'ce', 'cand', 'unde', 'cum',
+        }
+        filler_words = {
+            'ok', 'okay', 'and', 'so', 'well', 'sure', 'right',
+            'hello', 'hi', 'hey', 'uh', 'um', 'hmm', 'huh',
+        }
+        if len(words) == 1 and '?' in raw_text and words[0] in question_words:
+            return ''
+
+        if len(words) == 1 and words[0] in filler_words:
+            return 'single_filler_word'
+
         if len(words) == 1 and len(words[0]) <= 4:
             return 'single_short_word'
 
-        if len(words) <= 2 and len(normalized) <= 6:
-            return 'very_short_turn'
+        if (
+            len(words) == 2
+            and all(word in filler_words or len(word) <= 2 for word in words)
+        ):
+            return 'very_short_fragment'
 
         return ''
 
