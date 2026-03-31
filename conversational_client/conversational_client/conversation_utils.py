@@ -308,6 +308,7 @@ def decide_attention(
     focused_speaker: str,
     last_focus_time: float,
     focus_timeout_s: float,
+    allow_known_speaker_switch_without_address: bool = False,
     direct_address: bool,
     reengagement: bool,
     robot_directive: bool,
@@ -370,6 +371,9 @@ def decide_attention(
 
     if direct_address or robot_directive:
         return True, 'speaker_switch_with_direct_address', focus, focus_time
+
+    if allow_known_speaker_switch_without_address:
+        return True, 'speaker_switch_without_address', current_speaker, now_value
 
     return False, 'different_speaker_without_address', focus, focus_time
 

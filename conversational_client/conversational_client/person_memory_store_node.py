@@ -22,6 +22,7 @@ from .conversation_utils import normalize_text
 from .conversation_utils import StickySpeakerTracker
 from .person_profile_utils import (
     default_preferred_name_for_voice_label,
+    extract_auto_enrollment_name,
     extract_fact,
     extract_language_preference,
     extract_preferred_name,
@@ -147,14 +148,15 @@ class PersonMemoryStoreNode(Node):
             return
 
         preferred_name = self._extract_preferred_name(normalized)
+        auto_enrollment_name = self._extract_auto_enrollment_name(normalized)
         preferred_language = self._extract_language_preference(normalized)
         fact = self._extract_fact(normalized)
 
-        should_attempt_enrollment = bool(preferred_name) and self.last_raw_speaker == 'Unknown'
+        should_attempt_enrollment = bool(auto_enrollment_name) and self.last_raw_speaker == 'Unknown'
 
         if should_attempt_enrollment:
-            if preferred_name and self.auto_enroll_unknown_speakers:
-                self._request_speaker_enrollment(preferred_name, preferred_language, fact)
+            if auto_enrollment_name and self.auto_enroll_unknown_speakers:
+                self._request_speaker_enrollment(auto_enrollment_name, preferred_language, fact)
             return
 
         if self.current_speaker == 'Unknown':
@@ -378,6 +380,10 @@ class PersonMemoryStoreNode(Node):
     @staticmethod
     def _extract_preferred_name(normalized: str) -> str:
         return extract_preferred_name(normalized)
+
+    @staticmethod
+    def _extract_auto_enrollment_name(normalized: str) -> str:
+        return extract_auto_enrollment_name(normalized)
 
     @staticmethod
     def _extract_language_preference(normalized: str) -> str:

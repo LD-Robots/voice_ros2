@@ -104,6 +104,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('language_switch_hits_required', 2)
         self.declare_parameter('focus_timeout_s', 45.0)
         self.declare_parameter('focus_recognition_window_s', 3.0)
+        self.declare_parameter('allow_known_speaker_switch_without_address', True)
         self.declare_parameter('utterance_capture_prefix_ms', 400)
         self.declare_parameter('utterance_capture_min_ms', 800)
         self.declare_parameter('name_context_wait_ms', 950)
@@ -186,6 +187,9 @@ class OpenAIRealtimeNode(Node):
         self.focus_timeout_s = float(self.get_parameter('focus_timeout_s').value)
         self.focus_recognition_window_s = float(
             self.get_parameter('focus_recognition_window_s').value
+        )
+        self.allow_known_speaker_switch_without_address = bool(
+            self.get_parameter('allow_known_speaker_switch_without_address').value
         )
         self.language_tracker = ConversationLanguageTracker(
             int(self.get_parameter('language_switch_hits_required').value)
@@ -614,6 +618,9 @@ class OpenAIRealtimeNode(Node):
                     focused_speaker=self.focused_speaker,
                     last_focus_time=self.last_focus_time,
                     focus_timeout_s=self.focus_timeout_s,
+                    allow_known_speaker_switch_without_address=(
+                        self.allow_known_speaker_switch_without_address
+                    ),
                     direct_address=direct_address,
                     reengagement=reengagement,
                     robot_directive=False,

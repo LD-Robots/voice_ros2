@@ -8,8 +8,12 @@ from .conversation_config import load_conversation_rules
 
 _RULES = load_conversation_rules()
 NAME_STOPWORDS = set(_RULES['name_stopwords'])
+NAME_PREFIX_STOPWORDS = set(_RULES.get('name_prefix_stopwords') or ())
+NAME_DISALLOWED_WORDS = set(_RULES.get('name_disallowed_words') or ())
 NAME_SUFFIX_STOPWORDS = set(_RULES['name_suffix_stopwords'])
-EXPLICIT_NAME_PATTERNS = tuple(_RULES['explicit_name_patterns'])
+SELF_INTRO_NAME_PATTERNS = tuple(_RULES.get('self_intro_name_patterns') or _RULES['explicit_name_patterns'])
+NAME_CORRECTION_PATTERNS = tuple(_RULES.get('name_correction_patterns') or ())
+EXPLICIT_NAME_PATTERNS = SELF_INTRO_NAME_PATTERNS + NAME_CORRECTION_PATTERNS
 PROFILE_SIDECAR_SUFFIX = '.profile.json'
 LANGUAGE_PREFERENCES = {
     str(language): tuple(phrases)
@@ -24,28 +28,49 @@ def normalize_person_name(raw_name: str) -> str:
         words.pop()
     if not words or len(words) > 2:
         return ''
+    if words[0] in NAME_PREFIX_STOPWORDS:
+        return ''
+    if any(word in NAME_DISALLOWED_WORDS for word in words):
+        return ''
     if any(len(word) < 2 or word in NAME_STOPWORDS for word in words):
         return ''
     return ' '.join(word.capitalize() for word in words)
 
 
 def extract_preferred_name(normalized: str) -> str:
-    # Only explicit introduction phrases are accepted for automatic enrollment.
-    # This avoids turning normal conversation into bogus speaker profiles.
-    for pattern in EXPLICIT_NAME_PATTERNS:
+    return _extract_name_from_patterns(normalized, EXPLICIT_NAME_PATTERNS, allow_correction_cues=True)
+
+
+def extract_auto_enrollment_name(normalized: str) -> str:
+    return _extract_name_from_patterns(
+        normalized,
+        SELF_INTRO_NAME_PATTERNS,
+        allow_correction_cues=False,
+    )
+
+
+def _extract_name_from_patterns(
+    normalized: str,
+    patterns,
+    *,
+    allow_correction_cues: bool,
+) -> str:
+    # Keep name extraction scoped to explicit introduction/correction cues so
+    # ordinary conversation does not create bogus speaker profiles.
+    for pattern in patterns:
         match = re.search(pattern, normalized)
         if not match:
             continue
         candidate = normalize_person_name(match.group(1))
         if candidate:
             return candidate
-    spelled = _extract_spelled_name(normalized)
+    spelled = _extract_spelled_name(normalized, allow_correction_cues=allow_correction_cues)
     if spelled:
         return spelled
     return ''
 
 
-def _extract_spelled_name(normalized: str) -> str:
+def _extract_spelled_name(normalized: str, *, allow_correction_cues: bool) -> str:
     text = (normalized or '').strip()
     if not text:
         return ''
@@ -56,10 +81,11 @@ def _extract_spelled_name(normalized: str) -> str:
         if candidate:
             return candidate
 
-    cue_patterns = (
-        r'\b(?:it s|it is|este|e)\s+([a-z](?:\s+[a-z]){2,7})\b',
+    cue_patterns = [
         r'\b(?:name is|ma numesc|ma cheama)\s+([a-z](?:\s+[a-z]){2,7})\b',
-    )
+    ]
+    if allow_correction_cues:
+        cue_patterns.insert(0, r'\b(?:it s|it is|este|e)\s+([a-z](?:\s+[a-z]){2,7})\b')
     for pattern in cue_patterns:
         match = re.search(pattern, text)
         if not match:

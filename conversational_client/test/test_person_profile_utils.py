@@ -1,6 +1,7 @@
 import json
 
 from conversational_client.person_profile_utils import (
+    extract_auto_enrollment_name,
     build_unique_speaker_label,
     build_unique_voice_label,
     default_preferred_name_for_voice_label,
@@ -24,10 +25,23 @@ def test_extract_preferred_name_requires_explicit_introduction():
     assert extract_preferred_name('o a n a') == 'Oana'
     assert extract_preferred_name('it is o a n a') == 'Oana'
     assert extract_preferred_name('no it is fine') == ''
+    assert extract_preferred_name('no it is the same') == ''
+    assert extract_preferred_name('my name is the same') == ''
+    assert extract_preferred_name('call me the robot') == ''
     assert extract_preferred_name('hello i am alex') == ''
     assert extract_preferred_name('i am back') == ''
     assert extract_preferred_name('i am working today') == ''
     assert extract_preferred_name('this is important for today') == ''
+
+
+def test_extract_auto_enrollment_name_requires_self_introduction():
+    assert extract_auto_enrollment_name('my name is alex') == 'Alex'
+    assert extract_auto_enrollment_name('ma numesc andrei') == 'Andrei'
+    assert extract_auto_enrollment_name('o a n a') == 'Oana'
+    assert extract_auto_enrollment_name('no it s oana') == ''
+    assert extract_auto_enrollment_name('actually it is oana') == ''
+    assert extract_auto_enrollment_name('it is o a n a') == ''
+    assert extract_auto_enrollment_name('my name is the same') == ''
 
 
 def test_resolve_preferred_name_update_protects_existing_profiles():

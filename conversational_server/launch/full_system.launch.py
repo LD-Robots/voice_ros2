@@ -119,6 +119,11 @@ def generate_launch_description():
             description='Consecutive positive speaker-ID hits required before switching from one known speaker to another'
         ),
         DeclareLaunchArgument(
+            'allow_known_speaker_switch_without_address',
+            default_value='true',
+            description='Allow a recognized known speaker to take over the conversation without explicitly saying robot'
+        ),
+        DeclareLaunchArgument(
             'auto_enroll_unknown_speakers',
             default_value='true',
             description='Allow automatic enrollment when a new person explicitly introduces their name'
@@ -251,6 +256,9 @@ def generate_launch_description():
                 'web_search_context_size': LaunchConfiguration('realtime_web_search_context_size'),
                 'local_response_gating': LaunchConfiguration('realtime_local_response_gating'),
                 'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
+                'allow_known_speaker_switch_without_address': LaunchConfiguration(
+                    'allow_known_speaker_switch_without_address'
+                ),
                 'language_switch_hits_required': LaunchConfiguration('language_switch_hits_required'),
                 'vad_threshold': 0.82,
                 'vad_prefix_padding_ms': 400,
@@ -348,6 +356,9 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
+                'allow_known_speaker_switch_without_address': LaunchConfiguration(
+                    'allow_known_speaker_switch_without_address'
+                ),
             }]
         ),
 

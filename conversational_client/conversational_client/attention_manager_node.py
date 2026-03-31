@@ -34,12 +34,16 @@ class AttentionManagerNode(Node):
         self.declare_parameter('unknown_speaker_grace_s', 20.0)
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
+        self.declare_parameter('allow_known_speaker_switch_without_address', True)
 
         self.focus_timeout_s = float(self.get_parameter('focus_timeout_s').value)
         self.focus_recognition_window_s = float(
             self.get_parameter('focus_recognition_window_s').value
         )
         self.unknown_speaker_grace_s = float(self.get_parameter('unknown_speaker_grace_s').value)
+        self.allow_known_speaker_switch_without_address = bool(
+            self.get_parameter('allow_known_speaker_switch_without_address').value
+        )
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter('sticky_speaker_timeout_s').value),
             int(self.get_parameter('speaker_switch_hits_required').value),
@@ -150,6 +154,9 @@ class AttentionManagerNode(Node):
             focused_speaker=self.focused_speaker,
             last_focus_time=self.last_focus_time,
             focus_timeout_s=self.focus_timeout_s,
+            allow_known_speaker_switch_without_address=(
+                self.allow_known_speaker_switch_without_address
+            ),
             direct_address=direct_address,
             reengagement=reengagement,
             robot_directive=robot_directive,

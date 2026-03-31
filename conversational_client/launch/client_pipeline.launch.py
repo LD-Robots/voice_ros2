@@ -70,6 +70,11 @@ def generate_launch_description():
             description='Consecutive positive speaker-ID hits required before switching from one known speaker to another'
         ),
         DeclareLaunchArgument(
+            'allow_known_speaker_switch_without_address',
+            default_value='true',
+            description='Allow a recognized known speaker to take over the conversation without explicitly saying robot'
+        ),
+        DeclareLaunchArgument(
             'auto_enroll_unknown_speakers',
             default_value='true',
             description='Allow automatic enrollment when a new person explicitly introduces their name'
@@ -217,6 +222,9 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
+                'allow_known_speaker_switch_without_address': LaunchConfiguration(
+                    'allow_known_speaker_switch_without_address'
+                ),
             }]
         ),
 

@@ -159,6 +159,7 @@ def test_attention_decision_rejects_unknown_side_conversation_when_focus_exists(
         focused_speaker='Vasile',
         last_focus_time=10.0,
         focus_timeout_s=45.0,
+        allow_known_speaker_switch_without_address=True,
         direct_address=False,
         reengagement=False,
         robot_directive=False,
@@ -168,4 +169,47 @@ def test_attention_decision_rejects_unknown_side_conversation_when_focus_exists(
     )
     assert allow is False
     assert reason == 'unknown_side_conversation'
+    assert focused_speaker == 'Vasile'
+
+
+def test_attention_decision_allows_known_speaker_switch_without_direct_address_when_enabled():
+    allow, reason, focused_speaker, focus_time = decide_attention(
+        session_active=True,
+        conversation_paused=False,
+        current_speaker='Delia',
+        focused_speaker='Vasile',
+        last_focus_time=10.0,
+        focus_timeout_s=45.0,
+        allow_known_speaker_switch_without_address=True,
+        direct_address=False,
+        reengagement=False,
+        robot_directive=False,
+        control_action=None,
+        normalized_text=normalize_text('Tell me about Hamilton.'),
+        now=12.0,
+    )
+    assert allow is True
+    assert reason == 'speaker_switch_without_address'
+    assert focused_speaker == 'Delia'
+    assert focus_time == 12.0
+
+
+def test_attention_decision_can_keep_strict_speaker_switch_policy_when_disabled():
+    allow, reason, focused_speaker, _ = decide_attention(
+        session_active=True,
+        conversation_paused=False,
+        current_speaker='Delia',
+        focused_speaker='Vasile',
+        last_focus_time=10.0,
+        focus_timeout_s=45.0,
+        allow_known_speaker_switch_without_address=False,
+        direct_address=False,
+        reengagement=False,
+        robot_directive=False,
+        control_action=None,
+        normalized_text=normalize_text('Tell me about Hamilton.'),
+        now=12.0,
+    )
+    assert allow is False
+    assert reason == 'different_speaker_without_address'
     assert focused_speaker == 'Vasile'
