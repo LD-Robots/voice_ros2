@@ -150,9 +150,12 @@ class AudioSegmentNode(Node):
         
         if msg.data and not was_speaking:
             self.get_logger().info('🔇 Robot speaking - muting input')
+            had_pending_user_audio = bool(self.audio_buffer or self.pre_buffer or self.is_speaking)
             # Clear buffer immediately when robot starts speaking to remove any leak
             self.audio_buffer = []
-            self.ignore_segment = True  # Ignore any pending segment as it might be echo
+            self.pre_buffer = []
+            # Ignore only if we were already holding user audio that may now be contaminated.
+            self.ignore_segment = had_pending_user_audio
         elif not msg.data and was_speaking:
             self.get_logger().info('🔊 Robot stopped - listening again')
 

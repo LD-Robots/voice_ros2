@@ -12,6 +12,7 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import rclpy
@@ -28,16 +29,16 @@ from conversational_client.conversation_utils import (
 )
 from std_msgs.msg import Bool, String
 from .language_utils import ConversationLanguageTracker
-from .openai_web_search import (
+from .brave_web_search import (
+    DEFAULT_WEB_SEARCH_COUNTRY,
     DEFAULT_WEB_SEARCH_CONTEXT_SIZE,
-    DEFAULT_WEB_SEARCH_MAX_OUTPUT_TOKENS,
-    DEFAULT_WEB_SEARCH_MODEL,
     DEFAULT_WEB_SEARCH_SOURCES_LIMIT,
+    DEFAULT_WEB_SEARCH_LANGUAGE,
     DEFAULT_WEB_SEARCH_TIMEOUT_S,
     WEB_SEARCH_FUNCTION_NAME,
     build_realtime_web_search_tool,
     build_web_search_tool_output,
-    call_openai_web_search,
+    call_brave_web_search,
 )
 from .prompt_config import load_prompt_defaults
 from .realtime_text_utils import (
@@ -98,6 +99,9 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('continued_turn_response_delay_ms', 450)
         self.declare_parameter('local_response_gating', True)
         self.declare_parameter('short_transcript_dedupe_window_s', 4.0)
+        self.declare_parameter('post_playback_transcript_guard_s', 1.5)
+        self.declare_parameter('verified_barge_in_window_s', 6.0)
+        self.declare_parameter('interrupt_playback_on_realtime_speech_started', False)
         self.declare_parameter('reconnect_delay_s', 3.0)
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
@@ -109,17 +113,16 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('utterance_capture_min_ms', 800)
         self.declare_parameter('name_context_wait_ms', 950)
         self.declare_parameter('web_search_enabled', True)
-        self.declare_parameter('web_search_model', DEFAULT_WEB_SEARCH_MODEL)
+        self.declare_parameter('web_search_model', 'gpt-4.1-mini')
         self.declare_parameter('web_search_context_size', DEFAULT_WEB_SEARCH_CONTEXT_SIZE)
         self.declare_parameter('web_search_timeout_s', DEFAULT_WEB_SEARCH_TIMEOUT_S)
-        self.declare_parameter(
-            'web_search_max_output_tokens',
-            DEFAULT_WEB_SEARCH_MAX_OUTPUT_TOKENS,
-        )
         self.declare_parameter(
             'web_search_sources_limit',
             DEFAULT_WEB_SEARCH_SOURCES_LIMIT,
         )
+        self.declare_parameter('web_search_country', DEFAULT_WEB_SEARCH_COUNTRY)
+        self.declare_parameter('web_search_language', 'auto')
+        self.declare_parameter('web_search_cache_ttl_s', 120.0)
         self.declare_parameter(
             'instructions',
             str(load_prompt_defaults().get('realtime_instructions', '')),
@@ -154,6 +157,17 @@ class OpenAIRealtimeNode(Node):
         self.short_transcript_dedupe_window_s = float(
             self.get_parameter('short_transcript_dedupe_window_s').value
         )
+        self.post_playback_transcript_guard_s = max(
+            0.0,
+            float(self.get_parameter('post_playback_transcript_guard_s').value),
+        )
+        self.verified_barge_in_window_s = max(
+            0.0,
+            float(self.get_parameter('verified_barge_in_window_s').value),
+        )
+        self.interrupt_playback_on_realtime_speech_started = bool(
+            self.get_parameter('interrupt_playback_on_realtime_speech_started').value
+        )
         self.reconnect_delay_s = float(self.get_parameter('reconnect_delay_s').value)
         self.utterance_capture_prefix_ms = int(
             self.get_parameter('utterance_capture_prefix_ms').value
@@ -171,13 +185,15 @@ class OpenAIRealtimeNode(Node):
             self.get_parameter('web_search_context_size').value
         )
         self.web_search_timeout_s = float(self.get_parameter('web_search_timeout_s').value)
-        self.web_search_max_output_tokens = max(
-            32,
-            int(self.get_parameter('web_search_max_output_tokens').value),
-        )
         self.web_search_sources_limit = max(
             1,
             int(self.get_parameter('web_search_sources_limit').value),
+        )
+        self.web_search_country = str(self.get_parameter('web_search_country').value).strip()
+        self.web_search_language = str(self.get_parameter('web_search_language').value).strip()
+        self.web_search_cache_ttl_s = max(
+            0.0,
+            float(self.get_parameter('web_search_cache_ttl_s').value),
         )
         self.base_instructions = str(self.get_parameter('instructions').value)
         self.speaker_tracker = StickySpeakerTracker(
@@ -199,6 +215,10 @@ class OpenAIRealtimeNode(Node):
         if not self.api_key:
             self.get_logger().error('OPENAI_API_KEY environment variable not set!')
             raise RuntimeError('OPENAI_API_KEY not set')
+        self.brave_search_api_key = os.environ.get('BRAVE_SEARCH_API_KEY', '').strip()
+        if self.web_search_enabled and not self.brave_search_api_key:
+            self.get_logger().error('BRAVE_SEARCH_API_KEY environment variable not set!')
+            raise RuntimeError('BRAVE_SEARCH_API_KEY not set')
         if not WEBSOCKET_AVAILABLE:
             self.get_logger().error('websocket-client package not installed!')
             raise RuntimeError('websocket-client not available')
@@ -206,6 +226,9 @@ class OpenAIRealtimeNode(Node):
         self.session_active = False
         self.conversation_paused = False
         self.robot_speaking = False
+        self._last_robot_speaking_at = 0.0
+        self._last_robot_stopped_at = 0.0
+        self._last_verified_barge_in_at = 0.0
         self.waiting_for_robot_confirmation = False
         self.current_speaker = 'Unknown'
         self.last_raw_speaker = 'Unknown'
@@ -251,6 +274,9 @@ class OpenAIRealtimeNode(Node):
         self._pending_resume_remaining = ''
         self._pending_resume_played_ms = 0
         self._resume_requested = False
+        self._last_assistant_response_text = ''
+        self._last_assistant_response_norm = ''
+        self._last_assistant_response_at = 0.0
         self._last_response_request_item_id = ''
         self._pending_response_timer = None
         self._pending_response_item_id = ''
@@ -269,6 +295,14 @@ class OpenAIRealtimeNode(Node):
         self._current_input_channels = 1
         self._handled_tool_call_ids = set()
         self._tool_call_lock = threading.Lock()
+        self._web_search_cache: dict[str, dict[str, Any]] = {}
+        self._web_search_cache_lock = threading.Lock()
+
+        if self.web_search_enabled and self.web_search_model:
+            self.get_logger().debug(
+                'web_search_model is kept only for launch compatibility; Brave Search '
+                'grounding is used for realtime web lookups.'
+            )
 
         self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
         self.user_audio_segment_pub = self.create_publisher(Audio, '/realtime_user_audio_segment', 10)
@@ -290,6 +324,12 @@ class OpenAIRealtimeNode(Node):
             Bool,
             '/is_speaking',
             self.speaking_callback,
+            10,
+        )
+        self.barge_in_sub = self.create_subscription(
+            Bool,
+            '/barge_in',
+            self.barge_in_callback,
             10,
         )
         self.stop_sub = self.create_subscription(Bool, '/tts_stop', self.stop_callback, 10)
@@ -371,7 +411,18 @@ class OpenAIRealtimeNode(Node):
             self._cancel_and_clear()
 
     def speaking_callback(self, msg: Bool):
-        self.robot_speaking = bool(msg.data)
+        speaking = bool(msg.data)
+        now = time.monotonic()
+        if speaking:
+            self._last_robot_speaking_at = now
+        elif self.robot_speaking:
+            self._last_robot_stopped_at = now
+        self.robot_speaking = speaking
+
+    def barge_in_callback(self, msg: Bool):
+        if not bool(msg.data):
+            return
+        self._last_verified_barge_in_at = time.monotonic()
 
     def pause_callback(self, msg: Bool):
         self._apply_pause_state(bool(msg.data), publish=False)
@@ -557,10 +608,21 @@ class OpenAIRealtimeNode(Node):
             self.get_logger().info('OpenAI Realtime detected user speech start')
             self._user_speaking = True
             self._cancel_pending_response_create()
-            stop_msg = Bool()
-            stop_msg.data = True
-            self.tts_stop_pub.publish(stop_msg)
-            self._truncate_current_audio('speech_started')
+            should_interrupt_immediately = not (
+                self.capture_during_playback
+                and self.robot_speaking
+                and not self.interrupt_playback_on_realtime_speech_started
+            )
+            if should_interrupt_immediately:
+                stop_msg = Bool()
+                stop_msg.data = True
+                self.tts_stop_pub.publish(stop_msg)
+                self._truncate_current_audio('speech_started')
+            else:
+                self.get_logger().debug(
+                    'Realtime speech_started detected during playback; waiting for local '
+                    'barge-in / stronger evidence before interrupting assistant audio'
+                )
             self._start_user_audio_capture()
             return
 
@@ -964,9 +1026,9 @@ class OpenAIRealtimeNode(Node):
             )
         if self.web_search_enabled:
             extras.append(
-                'When the user asks for current, live, recent, online, or otherwise time-sensitive information, '
-                'or explicitly asks you to search the internet, call the web_search tool before answering. '
-                'Do not pretend to have browsed if you did not use the tool.'
+                'Call the web_search tool only when the user asks for current, live, recent, online, '
+                'or otherwise time-sensitive information, or explicitly asks you to search the web. '
+                'Do not call it for stable general knowledge. Do not pretend to have browsed if you did not use the tool.'
             )
         return ' '.join([self.base_instructions, *extras]).strip()
 
@@ -1195,6 +1257,9 @@ class OpenAIRealtimeNode(Node):
         self.stream_pub.publish(final_chunk)
 
         self._published_final_items.add(item_id)
+        self._last_assistant_response_text = text
+        self._last_assistant_response_norm = self._normalize_text(text)
+        self._last_assistant_response_at = time.monotonic()
 
     def _mark_response_active(self, response_id: str = ''):
         self._response_create_pending = False
@@ -1397,11 +1462,51 @@ class OpenAIRealtimeNode(Node):
             'ok', 'okay', 'and', 'so', 'well', 'sure', 'right',
             'hello', 'hi', 'hey', 'uh', 'um', 'hmm', 'huh',
         }
+        acknowledgement_phrases = {
+            'ok understood',
+            'okay understood',
+            'understood',
+            'got it',
+            'i got it',
+            'okay got it',
+            'ok got it',
+            'thank you',
+            'thanks',
+            'okay thanks',
+            'ok thanks',
+            'all good',
+            'am inteles',
+            'bine am inteles',
+            'mersi',
+            'multumesc',
+        }
         if len(words) == 1 and '?' in raw_text and words[0] in question_words:
             return ''
 
         if len(words) == 1 and words[0] in filler_words:
             return 'single_filler_word'
+
+        if len(words) <= 4 and normalized in acknowledgement_phrases:
+            return 'acknowledgement_phrase'
+
+        now = time.monotonic()
+        recent_playback = (
+            self.robot_speaking
+            or (
+                self.post_playback_transcript_guard_s > 0.0
+                and self._last_robot_stopped_at > 0.0
+                and (now - self._last_robot_stopped_at) <= self.post_playback_transcript_guard_s
+            )
+        )
+        if len(words) == 1 and recent_playback:
+            return 'single_word_after_playback'
+
+        if (
+            recent_playback
+            and not self._has_recent_verified_barge_in()
+            and self._looks_like_assistant_echo(normalized)
+        ):
+            return 'assistant_echo_after_playback'
 
         if len(words) == 1 and len(words[0]) <= 4:
             return 'single_short_word'
@@ -1417,6 +1522,42 @@ class OpenAIRealtimeNode(Node):
     @staticmethod
     def _normalize_text(text: str) -> str:
         return normalize_realtime_text(text)
+
+    def _has_recent_verified_barge_in(self) -> bool:
+        if self.verified_barge_in_window_s <= 0.0:
+            return False
+        if self._last_verified_barge_in_at <= 0.0:
+            return False
+        return (
+            time.monotonic() - self._last_verified_barge_in_at
+        ) <= self.verified_barge_in_window_s
+
+    def _looks_like_assistant_echo(self, normalized_text: str) -> bool:
+        if not normalized_text or not self._last_assistant_response_norm:
+            return False
+        if self._last_assistant_response_at <= 0.0:
+            return False
+        if (
+            time.monotonic() - self._last_assistant_response_at
+        ) > self.post_playback_transcript_guard_s:
+            return False
+        if len(normalized_text) < 12:
+            return False
+
+        assistant_norm = self._last_assistant_response_norm
+        if normalized_text in assistant_norm:
+            return True
+        if assistant_norm.startswith(normalized_text):
+            return True
+
+        text_words = normalized_text.split()
+        assistant_words = assistant_norm.split()
+        shared_prefix_words = 0
+        for text_word, assistant_word in zip(text_words, assistant_words):
+            if text_word != assistant_word:
+                break
+            shared_prefix_words += 1
+        return shared_prefix_words >= min(4, len(text_words))
 
     def _remember_deferred_response(self, item_id: str, reason: str):
         self._deferred_response_item_id = item_id
@@ -1447,6 +1588,67 @@ class OpenAIRealtimeNode(Node):
             reason=self._deferred_response_reason or 'deferred_after_response_done',
             delay_ms=self.response_create_delay_ms,
         )
+
+    @staticmethod
+    def _normalize_web_search_query(query: str) -> str:
+        return ' '.join(str(query or '').lower().split())
+
+    def _get_cached_web_search_payload(
+        self,
+        query: str,
+        *,
+        allow_stale: bool = False,
+    ) -> dict[str, Any] | None:
+        cache_key = self._normalize_web_search_query(query)
+        if not cache_key:
+            return None
+
+        now = time.monotonic()
+        with self._web_search_cache_lock:
+            entry = self._web_search_cache.get(cache_key)
+            if not entry:
+                return None
+            if allow_stale or float(entry.get('expires_at', 0.0)) >= now:
+                payload = entry.get('payload')
+                if isinstance(payload, dict):
+                    return payload
+                return None
+            self._web_search_cache.pop(cache_key, None)
+        return None
+
+    def _store_cached_web_search_payload(self, query: str, payload: dict[str, Any]):
+        cache_key = self._normalize_web_search_query(query)
+        if not cache_key or self.web_search_cache_ttl_s <= 0.0:
+            return
+
+        expires_at = time.monotonic() + self.web_search_cache_ttl_s
+        with self._web_search_cache_lock:
+            self._web_search_cache[cache_key] = {
+                'payload': payload,
+                'expires_at': expires_at,
+            }
+            if len(self._web_search_cache) > 64:
+                oldest_key = min(
+                    self._web_search_cache,
+                    key=lambda key: float(self._web_search_cache[key].get('expires_at', 0.0)),
+                )
+                self._web_search_cache.pop(oldest_key, None)
+
+    def _get_web_search_language(self) -> str:
+        configured = str(self.web_search_language or '').strip().lower()
+        if configured and configured != 'auto':
+            return configured
+
+        preferred_language = str(
+            self.person_context.get('preferred_language', '') or ''
+        ).strip().lower()
+        if preferred_language.startswith('ro'):
+            return 'ro'
+        if preferred_language.startswith('en'):
+            return 'en'
+        if self.language_tracker.current_language == 'ro':
+            return 'ro'
+        return DEFAULT_WEB_SEARCH_LANGUAGE
 
     def _handle_function_call_event(self, event: dict):
         item = event.get('item', {}) or {}
@@ -1489,24 +1691,41 @@ class OpenAIRealtimeNode(Node):
             if not query:
                 raise ValueError('Missing required "query" argument.')
 
-            payload = call_openai_web_search(
-                self.api_key,
-                query,
-                model=self.web_search_model,
-                search_context_size=self.web_search_context_size,
-                timeout_s=self.web_search_timeout_s,
-                max_output_tokens=self.web_search_max_output_tokens,
-            )
+            payload = self._get_cached_web_search_payload(query)
+            if payload is None:
+                payload = call_brave_web_search(
+                    self.brave_search_api_key,
+                    query,
+                    context_size=self.web_search_context_size,
+                    timeout_s=self.web_search_timeout_s,
+                    country=self.web_search_country,
+                    search_language=self._get_web_search_language(),
+                )
+                self._store_cached_web_search_payload(query, payload)
+                self.get_logger().info(f'Brave Search completed for: {query}')
+            else:
+                self.get_logger().debug(f'Used cached Brave Search grounding for: {query}')
+
             output = build_web_search_tool_output(
                 query,
                 payload=payload,
                 max_sources=self.web_search_sources_limit,
             )
-            self.get_logger().info(f'OpenAI Responses web search completed for: {query}')
         except Exception as exc:
             message = str(exc).strip() or 'Unknown web search failure.'
-            self.get_logger().error(f'OpenAI web search tool failed: {message}')
-            output = build_web_search_tool_output(query, error=message)
+            cached_payload = self._get_cached_web_search_payload(query, allow_stale=True)
+            if cached_payload:
+                self.get_logger().warn(
+                    f'Brave Search live request failed, using stale cached grounding: {message}'
+                )
+                output = build_web_search_tool_output(
+                    query,
+                    payload=cached_payload,
+                    max_sources=self.web_search_sources_limit,
+                )
+            else:
+                self.get_logger().error(f'Brave Search tool failed: {message}')
+                output = build_web_search_tool_output(query, error=message)
 
         if not self._send_event({
             'type': 'conversation.item.create',

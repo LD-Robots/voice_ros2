@@ -1,6 +1,6 @@
 # Voice ROS2 - Conversational Robot System
 
-A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with optional OpenAI-backed web search.
+A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with optional Brave Search-backed web grounding.
 
 ## 🏗️ Architecture
 
@@ -74,6 +74,7 @@ Add your API keys:
 ```
 GROQ_API_KEY=your_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
+BRAVE_SEARCH_API_KEY=your_brave_search_api_key_here
 ```
 
 > **Note:** The `.env` file is already in `.gitignore` to protect your API key.
@@ -108,21 +109,27 @@ source install/setup.bash
 
 ## 🚀 Running the System
 
-### Full System (Server + Client)
+### Quick Start
+
+If you already built the workspace, start by sourcing it in every new terminal:
+
 ```bash
-source /path/to/ros2_ws/install/setup.bash
-ros2 launch conversational_server full_system.launch.py
+source ~/voice_ros2/install/setup.bash
 ```
 
-### Full System with OpenAI Realtime
+If your workspace is somewhere else, replace `~/voice_ros2` with your actual path.
+
+### Recommended Run Command
+
+This is the main command for OpenAI Realtime with Brave Search enabled:
+
 ```bash
-source /path/to/ros2_ws/install/setup.bash
+source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
     realtime_web_search_context_size:=medium \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
@@ -130,15 +137,30 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_capture_during_playback:=true
 ```
 
-### Server Only
+Required `.env` keys for this mode:
+- `OPENAI_API_KEY`
+- `BRAVE_SEARCH_API_KEY`
+
+### Full System (Server + Client)
+
+Use this if you want the default full pipeline without OpenAI Realtime:
+
 ```bash
-ros2 launch conversational_server server_pipeline.launch.py
+source ~/voice_ros2/install/setup.bash
+ros2 launch conversational_server full_system.launch.py
 ```
-corect:
+
+### Server Only
+
+Use this when you want only the server-side nodes:
+
+```bash
 source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_server server_pipeline.launch.py
+```
 
-Pentru OpenAI Realtime:
+### Server Only with OpenAI Realtime + Brave Search
+
 ```bash
 source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_server server_pipeline.launch.py \
@@ -146,7 +168,6 @@ ros2 launch conversational_server server_pipeline.launch.py \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
     realtime_web_search_context_size:=medium \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
@@ -154,13 +175,24 @@ ros2 launch conversational_server server_pipeline.launch.py \
     realtime_capture_during_playback:=true
 ```
 
-### Client Only (on robot hardware)
+### Client Only (Robot Hardware)
+
+Use this on the robot when you want only the client-side nodes:
+
 ```bash
-ros2 launch conversational_client client_pipeline.launch.py
-```
-corect:
 source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_client client_pipeline.launch.py
+```
+
+### Rebuild After Code Changes
+
+If you changed the code, rebuild before launching:
+
+```bash
+cd ~/voice_ros2
+colcon build --symlink-install
+source install/setup.bash
+```
 
 ### 🎤 Speaker Enrollment (Voice Fingerprint)
 
@@ -216,7 +248,6 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
     realtime_web_search_context_size:=medium \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
@@ -229,14 +260,19 @@ Recommended first test:
 - `realtime_model:=gpt-realtime-mini`
 - `realtime_voice:=cedar`
 - `realtime_web_search_enabled:=true`
-- `realtime_web_search_model:=gpt-4.1-mini`
 - `realtime_web_search_context_size:=medium`
 - `realtime_vad_silence_duration_ms:=550`
 - `realtime_response_create_delay_ms:=100`
 - `realtime_continued_turn_response_delay_ms:=450`
 - `realtime_capture_during_playback:=true`
 
-When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
+When `conversation_backend:=openai_realtime`, the Realtime model can call a local `web_search` function tool. That tool now uses Brave Search LLM Context to fetch fresh grounding snippets and source URLs, then returns them back into the same voice turn for the Realtime model to answer naturally.
+
+Brave Search tuning:
+- `realtime_web_search_context_size:=low` is the fastest, most conservative option.
+- `realtime_web_search_context_size:=medium` is the default and gives broader coverage with a bit more latency.
+- `realtime_web_search_context_size:=high` pulls broader grounding and is the slowest of the three.
+- `realtime_web_search_model` is still accepted for launch compatibility, but it is ignored by the Brave Search path.
 
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
@@ -249,7 +285,7 @@ Edit `full_system.launch.py` and adjust:
 ### ✅ Implemented
 - ✅ **Bilingual** - Romanian and English automatic detection
 - ✅ **Streaming LLM** - Real-time response generation
-- ✅ **Web Search** - OpenAI Realtime can trigger OpenAI web search for current events and live facts
+- ✅ **Web Search** - OpenAI Realtime can trigger Brave Search grounding for current events and live facts
 - ✅ **Wake Word** - "Hello robot" / "Hey robot" detection
 - ✅ **Barge-in** - Interrupt TTS when user speaks
 - ✅ **Voice Activity Detection** - Automatic speech end detection
@@ -277,6 +313,12 @@ cat /path/to/ros2_ws/src/voice_ros2/.env
 Make sure `.env` contains:
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
+```
+
+### "BRAVE_SEARCH_API_KEY not set" Error
+Make sure `.env` contains:
+```bash
+BRAVE_SEARCH_API_KEY=your_brave_search_api_key_here
 ```
 
 ### Microphone Not Working

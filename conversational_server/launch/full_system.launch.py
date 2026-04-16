@@ -81,17 +81,17 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'realtime_web_search_enabled',
             default_value='true',
-            description='Allow OpenAI Realtime to call a web-search tool via the Responses API'
+            description='Allow OpenAI Realtime to call a Brave Search-backed web-search tool'
         ),
         DeclareLaunchArgument(
             'realtime_web_search_model',
             default_value='gpt-4.1-mini',
-            description='Responses API model used to execute web search tool calls'
+            description='Legacy compatibility argument; ignored when Brave Search grounding is enabled'
         ),
         DeclareLaunchArgument(
             'realtime_web_search_context_size',
             default_value='medium',
-            description='OpenAI web-search context size (low/medium/high)'
+            description='Brave Search grounding profile (low/medium/high)'
         ),
         DeclareLaunchArgument(
             'speaker_similarity_threshold',
@@ -323,6 +323,9 @@ def generate_launch_description():
             name='barge_in_node',
             output='screen',
             parameters=[{
+                'voice_enabled': True,
+                'min_voice_ms': 250,
+                'leak_margin_db': 12.0,
                 # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
                 'stop_model_path': stop_model_path,
                 'stop_enabled': True,  # ACTIVAT
