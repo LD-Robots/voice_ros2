@@ -53,6 +53,31 @@ def generate_launch_description():
             description='Stream microphone audio to OpenAI while robot playback is active'
         ),
         DeclareLaunchArgument(
+            'realtime_playback_input_filter_enabled',
+            default_value='true',
+            description='Filter playback-time microphone audio so only strong human speech reaches OpenAI Realtime'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_min_rms_dbfs',
+            default_value='-30.0',
+            description='Minimum playback-time input loudness for forwarding to OpenAI Realtime (lower is more sensitive)'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_leak_margin_db',
+            default_value='7.0',
+            description='How far above detected speaker leak playback-time input must be before forwarding (lower is more permissive)'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_hits_required',
+            default_value='2',
+            description='Consecutive playback-time speech-like chunks required before forwarding to OpenAI Realtime'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_hold_ms',
+            default_value='320',
+            description='How long to keep the playback-time input gate open after detected human speech'
+        ),
+        DeclareLaunchArgument(
             'realtime_web_search_enabled',
             default_value='true',
             description='Allow OpenAI Realtime to call a Brave Search-backed web-search tool'
@@ -69,7 +94,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_vad_threshold',
-            default_value='0.82',
+            default_value='0.74',
             description='Sensitivity threshold for OpenAI VAD (higher means less sensitive to noise)'
         ),
         DeclareLaunchArgument(
@@ -157,6 +182,21 @@ def generate_launch_description():
                 'model': LaunchConfiguration('realtime_model'),
                 'voice': LaunchConfiguration('realtime_voice'),
                 'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
+                'playback_input_filter_enabled': LaunchConfiguration(
+                    'realtime_playback_input_filter_enabled'
+                ),
+                'playback_input_filter_min_rms_dbfs': LaunchConfiguration(
+                    'realtime_playback_input_filter_min_rms_dbfs'
+                ),
+                'playback_input_filter_leak_margin_db': LaunchConfiguration(
+                    'realtime_playback_input_filter_leak_margin_db'
+                ),
+                'playback_input_filter_hits_required': LaunchConfiguration(
+                    'realtime_playback_input_filter_hits_required'
+                ),
+                'playback_input_filter_hold_ms': LaunchConfiguration(
+                    'realtime_playback_input_filter_hold_ms'
+                ),
                 'web_search_enabled': LaunchConfiguration('realtime_web_search_enabled'),
                 'web_search_model': LaunchConfiguration('realtime_web_search_model'),
                 'web_search_context_size': LaunchConfiguration('realtime_web_search_context_size'),

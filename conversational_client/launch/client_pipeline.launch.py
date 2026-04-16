@@ -178,7 +178,7 @@ def generate_launch_description():
             parameters=[{
                 # Voice-based barge-in params (Intelligent local detection)
                 'voice_enabled': True,
-                'min_voice_ms': 250,          # 250ms de voce continuă peste bot declanșează stop
+                'min_voice_ms': 180,          # 180ms de voce continuă peste bot declanșează stop
                 'leak_margin_db': 12.0,       # Margină peste ecou (mai sigură)
                 # PyTorch stop keyword detector
                 'stop_enabled': True,
@@ -198,6 +198,9 @@ def generate_launch_description():
             executable='audio_playback_node',
             name='audio_playback_node',
             output='screen',
+            parameters=[{
+                'speaking_grace_period_s': 0.45,
+            }]
         ),
 
         # Speaker Identification (cine vorbește)

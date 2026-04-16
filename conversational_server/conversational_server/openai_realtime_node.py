@@ -43,9 +43,14 @@ from .brave_web_search import (
 from .prompt_config import load_prompt_defaults
 from .realtime_text_utils import (
     StickySpeakerTracker,
+    is_probable_assistant_echo,
     is_resume_request,
     normalize_realtime_text,
     should_preserve_paused_transcript,
+)
+from .realtime_audio_filter import (
+    PlaybackInputFilter,
+    PlaybackInputFilterConfig,
 )
 from .realtime_turn_utils import (
     can_request_realtime_response,
@@ -102,6 +107,16 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('post_playback_transcript_guard_s', 1.5)
         self.declare_parameter('verified_barge_in_window_s', 6.0)
         self.declare_parameter('interrupt_playback_on_realtime_speech_started', False)
+        self.declare_parameter('assistant_echo_similarity_threshold', 80.0)
+        self.declare_parameter('playback_input_filter_enabled', True)
+        self.declare_parameter('playback_input_filter_min_rms_dbfs', -30.0)
+        self.declare_parameter('playback_input_filter_highpass_hz', 300.0)
+        self.declare_parameter('playback_input_filter_zcr_min', 0.05)
+        self.declare_parameter('playback_input_filter_zcr_max', 0.35)
+        self.declare_parameter('playback_input_filter_leak_margin_db', 7.0)
+        self.declare_parameter('playback_input_filter_leak_decay_ms', 1200)
+        self.declare_parameter('playback_input_filter_hits_required', 2)
+        self.declare_parameter('playback_input_filter_hold_ms', 320)
         self.declare_parameter('reconnect_delay_s', 3.0)
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
@@ -123,6 +138,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('web_search_country', DEFAULT_WEB_SEARCH_COUNTRY)
         self.declare_parameter('web_search_language', 'auto')
         self.declare_parameter('web_search_cache_ttl_s', 120.0)
+        self.declare_parameter('web_search_max_calls_per_turn', 1)
         self.declare_parameter(
             'instructions',
             str(load_prompt_defaults().get('realtime_instructions', '')),
@@ -168,6 +184,13 @@ class OpenAIRealtimeNode(Node):
         self.interrupt_playback_on_realtime_speech_started = bool(
             self.get_parameter('interrupt_playback_on_realtime_speech_started').value
         )
+        self.assistant_echo_similarity_threshold = max(
+            0.0,
+            float(self.get_parameter('assistant_echo_similarity_threshold').value),
+        )
+        self.playback_input_filter_enabled = bool(
+            self.get_parameter('playback_input_filter_enabled').value
+        )
         self.reconnect_delay_s = float(self.get_parameter('reconnect_delay_s').value)
         self.utterance_capture_prefix_ms = int(
             self.get_parameter('utterance_capture_prefix_ms').value
@@ -194,6 +217,10 @@ class OpenAIRealtimeNode(Node):
         self.web_search_cache_ttl_s = max(
             0.0,
             float(self.get_parameter('web_search_cache_ttl_s').value),
+        )
+        self.web_search_max_calls_per_turn = max(
+            0,
+            int(self.get_parameter('web_search_max_calls_per_turn').value),
         )
         self.base_instructions = str(self.get_parameter('instructions').value)
         self.speaker_tracker = StickySpeakerTracker(
@@ -297,6 +324,46 @@ class OpenAIRealtimeNode(Node):
         self._tool_call_lock = threading.Lock()
         self._web_search_cache: dict[str, dict[str, Any]] = {}
         self._web_search_cache_lock = threading.Lock()
+        self._current_user_turn_id = 0
+        self._web_search_calls_in_current_turn = 0
+        self._last_web_search_output_for_turn = ''
+
+        self._playback_input_filter: PlaybackInputFilter | None = None
+        if self.playback_input_filter_enabled:
+            self._playback_input_filter = PlaybackInputFilter(
+                PlaybackInputFilterConfig(
+                    min_rms_dbfs=float(
+                        self.get_parameter('playback_input_filter_min_rms_dbfs').value
+                    ),
+                    highpass_hz=float(
+                        self.get_parameter('playback_input_filter_highpass_hz').value
+                    ),
+                    zcr_min=float(
+                        self.get_parameter('playback_input_filter_zcr_min').value
+                    ),
+                    zcr_max=float(
+                        self.get_parameter('playback_input_filter_zcr_max').value
+                    ),
+                    leak_margin_db=float(
+                        self.get_parameter('playback_input_filter_leak_margin_db').value
+                    ),
+                    leak_decay_ms=int(
+                        self.get_parameter('playback_input_filter_leak_decay_ms').value
+                    ),
+                    hits_required=max(
+                        1,
+                        int(
+                            self.get_parameter(
+                                'playback_input_filter_hits_required'
+                            ).value
+                        ),
+                    ),
+                    hold_ms=max(
+                        0,
+                        int(self.get_parameter('playback_input_filter_hold_ms').value),
+                    ),
+                )
+            )
 
         if self.web_search_enabled and self.web_search_model:
             self.get_logger().debug(
@@ -415,8 +482,12 @@ class OpenAIRealtimeNode(Node):
         now = time.monotonic()
         if speaking:
             self._last_robot_speaking_at = now
+            if not self.robot_speaking and self._playback_input_filter is not None:
+                self._playback_input_filter.reset()
         elif self.robot_speaking:
             self._last_robot_stopped_at = now
+            if self._playback_input_filter is not None:
+                self._playback_input_filter.reset()
         self.robot_speaking = speaking
 
     def barge_in_callback(self, msg: Bool):
@@ -536,14 +607,26 @@ class OpenAIRealtimeNode(Node):
         if not msg.data:
             return
 
-        self._current_input_sample_rate = int(msg.sample_rate or self.input_sample_rate)
+        input_sample_rate = int(msg.sample_rate or self.input_sample_rate)
+        pcm = np.array(msg.data, dtype=np.int16)
+        if (
+            self.capture_during_playback
+            and self.robot_speaking
+            and self._playback_input_filter is not None
+            and not self._playback_input_filter.should_forward(
+                pcm,
+                sample_rate=input_sample_rate,
+            )
+        ):
+            return
+
+        self._current_input_sample_rate = input_sample_rate
         self._current_input_channels = int(msg.channels or 1)
         self._remember_input_audio(msg.data)
         if self._capture_user_audio:
             self._current_user_audio.extend(msg.data)
 
-        pcm = np.array(msg.data, dtype=np.int16)
-        pcm = self._resample_pcm16(pcm, int(msg.sample_rate), self.api_sample_rate)
+        pcm = self._resample_pcm16(pcm, input_sample_rate, self.api_sample_rate)
         encoded = base64.b64encode(pcm.tobytes()).decode('ascii')
         self._send_event({
             'type': 'input_audio_buffer.append',
@@ -608,10 +691,16 @@ class OpenAIRealtimeNode(Node):
             self.get_logger().info('OpenAI Realtime detected user speech start')
             self._user_speaking = True
             self._cancel_pending_response_create()
+            playback_gate_open = bool(
+                self._playback_input_filter is not None
+                and self._playback_input_filter.gate_open
+            )
             should_interrupt_immediately = not (
                 self.capture_during_playback
                 and self.robot_speaking
                 and not self.interrupt_playback_on_realtime_speech_started
+                and not playback_gate_open
+                and not self._has_recent_verified_barge_in()
             )
             if should_interrupt_immediately:
                 stop_msg = Bool()
@@ -661,17 +750,38 @@ class OpenAIRealtimeNode(Node):
                 if normalized:
                     self._last_accepted_user_transcript_norm = normalized
                     self._last_accepted_user_transcript_at = time.monotonic()
-                if control_action == 'hold_on' and can_accept_control_action(
-                    control_action,
-                    current_speaker=self.current_speaker,
-                    focused_speaker=self.focused_speaker,
-                    session_active=self.session_active,
-                    conversation_paused=self.conversation_paused,
-                    direct_address=direct_address,
-                    normalized_text=normalized,
-                ):
-                    self._delete_conversation_item(item_id, 'pause_command')
-                    self._apply_pause_state(True, publish=True)
+                control_allowed = (
+                    can_accept_control_action(
+                        control_action,
+                        current_speaker=self.current_speaker,
+                        focused_speaker=self.focused_speaker,
+                        session_active=self.session_active,
+                        conversation_paused=self.conversation_paused,
+                        direct_address=direct_address,
+                        normalized_text=normalized,
+                    )
+                    if control_action
+                    else False
+                )
+                if control_action in ('hold_on', 'stop') and control_allowed:
+                    active_language = self.language_tracker.observe(
+                        transcript,
+                        preferred_language=self.person_context.get('preferred_language', ''),
+                    )
+                    out = Transcription()
+                    out.text = transcript
+                    out.language = active_language
+                    out.confidence = 1.0
+                    self.transcription_pub.publish(out)
+                    self._delete_conversation_item(item_id, f'{control_action}_command')
+                    stop_msg = Bool()
+                    stop_msg.data = True
+                    self.tts_stop_pub.publish(stop_msg)
+                    self._truncate_current_audio(control_action)
+                    self._cancel_pending_response_create()
+                    self._clear_deferred_response()
+                    if control_action == 'hold_on':
+                        self._apply_pause_state(True, publish=True)
                     return
                 allow, reason, effective_focus, effective_focus_time = decide_attention(
                     session_active=self.session_active,
@@ -727,6 +837,7 @@ class OpenAIRealtimeNode(Node):
                 out.language = active_language
                 out.confidence = 1.0
                 self.transcription_pub.publish(out)
+                self._begin_new_user_turn()
                 if (
                     self._is_name_identity_question(normalized)
                     and not self._voice_correlated_preferred_name()
@@ -1095,6 +1206,11 @@ class OpenAIRealtimeNode(Node):
         self._user_speaking = False
         self._clear_deferred_response()
         self._mark_response_inactive()
+        self._current_user_turn_id = 0
+        self._web_search_calls_in_current_turn = 0
+        self._last_web_search_output_for_turn = ''
+        if self._playback_input_filter is not None:
+            self._playback_input_filter.reset()
 
     def _truncate_current_audio(self, reason: str):
         if not self._connected.is_set():
@@ -1489,6 +1605,9 @@ class OpenAIRealtimeNode(Node):
         if len(words) <= 4 and normalized in acknowledgement_phrases:
             return 'acknowledgement_phrase'
 
+        if raw_text.endswith('...') or raw_text.endswith('…'):
+            return 'trailing_ellipsis_fragment'
+
         now = time.monotonic()
         recent_playback = (
             self.robot_speaking
@@ -1533,31 +1652,67 @@ class OpenAIRealtimeNode(Node):
         ) <= self.verified_barge_in_window_s
 
     def _looks_like_assistant_echo(self, normalized_text: str) -> bool:
-        if not normalized_text or not self._last_assistant_response_norm:
-            return False
-        if self._last_assistant_response_at <= 0.0:
-            return False
-        if (
-            time.monotonic() - self._last_assistant_response_at
-        ) > self.post_playback_transcript_guard_s:
+        if not normalized_text:
             return False
         if len(normalized_text) < 12:
             return False
 
-        assistant_norm = self._last_assistant_response_norm
-        if normalized_text in assistant_norm:
-            return True
-        if assistant_norm.startswith(normalized_text):
-            return True
+        for assistant_norm in self._iter_assistant_echo_candidate_norms():
+            if normalized_text in assistant_norm:
+                return True
+            if assistant_norm.startswith(normalized_text):
+                return True
+            if is_probable_assistant_echo(
+                normalized_text,
+                assistant_norm,
+                threshold=self.assistant_echo_similarity_threshold,
+                min_length=12,
+            ):
+                return True
 
-        text_words = normalized_text.split()
-        assistant_words = assistant_norm.split()
-        shared_prefix_words = 0
-        for text_word, assistant_word in zip(text_words, assistant_words):
-            if text_word != assistant_word:
-                break
-            shared_prefix_words += 1
-        return shared_prefix_words >= min(4, len(text_words))
+            text_words = normalized_text.split()
+            assistant_words = assistant_norm.split()
+            shared_prefix_words = 0
+            for text_word, assistant_word in zip(text_words, assistant_words):
+                if text_word != assistant_word:
+                    break
+                shared_prefix_words += 1
+            if shared_prefix_words >= min(4, len(text_words)):
+                return True
+
+        return False
+
+    def _iter_assistant_echo_candidate_norms(self):
+        seen_norms: set[str] = set()
+        current_item_id = str(self._last_playback_progress.get('item_id', '') or '').strip()
+        candidate_item_ids = []
+        if current_item_id:
+            candidate_item_ids.append(current_item_id)
+
+        for item_id, text in self._assistant_text.items():
+            if item_id == current_item_id:
+                continue
+            if not text or item_id in self._published_final_items:
+                continue
+            candidate_item_ids.append(item_id)
+
+        for item_id in candidate_item_ids:
+            assistant_text = str(self._assistant_text.get(item_id, '') or '').strip()
+            if not assistant_text:
+                continue
+            assistant_norm = self._normalize_text(assistant_text)
+            if assistant_norm and assistant_norm not in seen_norms:
+                seen_norms.add(assistant_norm)
+                yield assistant_norm
+
+        assistant_norm = str(self._last_assistant_response_norm or '').strip()
+        if assistant_norm and assistant_norm not in seen_norms:
+            yield assistant_norm
+
+    def _begin_new_user_turn(self):
+        self._current_user_turn_id += 1
+        self._web_search_calls_in_current_turn = 0
+        self._last_web_search_output_for_turn = ''
 
     def _remember_deferred_response(self, item_id: str, reason: str):
         self._deferred_response_item_id = item_id
@@ -1669,17 +1824,18 @@ class OpenAIRealtimeNode(Node):
             if len(self._handled_tool_call_ids) > 256:
                 self._handled_tool_call_ids.clear()
                 self._handled_tool_call_ids.add(call_id)
+            turn_id = self._current_user_turn_id
 
         self.get_logger().info(f'OpenAI Realtime requested web search via tool call {call_id}')
         thread = threading.Thread(
             target=self._execute_web_search_tool_call,
-            args=(call_id, arguments),
+            args=(call_id, arguments, turn_id),
             daemon=True,
             name=f'web-search-{call_id[:8]}',
         )
         thread.start()
 
-    def _execute_web_search_tool_call(self, call_id: str, arguments: str):
+    def _execute_web_search_tool_call(self, call_id: str, arguments: str, turn_id: int):
         query = ''
         output = ''
 
@@ -1691,26 +1847,62 @@ class OpenAIRealtimeNode(Node):
             if not query:
                 raise ValueError('Missing required "query" argument.')
 
-            payload = self._get_cached_web_search_payload(query)
-            if payload is None:
-                payload = call_brave_web_search(
-                    self.brave_search_api_key,
-                    query,
-                    context_size=self.web_search_context_size,
-                    timeout_s=self.web_search_timeout_s,
-                    country=self.web_search_country,
-                    search_language=self._get_web_search_language(),
+            with self._tool_call_lock:
+                reuse_existing_output = (
+                    turn_id == self._current_user_turn_id
+                    and self.web_search_max_calls_per_turn > 0
+                    and self._web_search_calls_in_current_turn
+                    >= self.web_search_max_calls_per_turn
                 )
-                self._store_cached_web_search_payload(query, payload)
-                self.get_logger().info(f'Brave Search completed for: {query}')
-            else:
-                self.get_logger().debug(f'Used cached Brave Search grounding for: {query}')
+                cached_turn_output = (
+                    self._last_web_search_output_for_turn if reuse_existing_output else ''
+                )
+                if not reuse_existing_output and turn_id == self._current_user_turn_id:
+                    self._web_search_calls_in_current_turn += 1
 
-            output = build_web_search_tool_output(
-                query,
-                payload=payload,
-                max_sources=self.web_search_sources_limit,
-            )
+            if reuse_existing_output:
+                self.get_logger().info(
+                    'Skipping extra Brave Search for the same user turn; reusing '
+                    'previous grounding'
+                )
+                if cached_turn_output:
+                    output = (
+                        f'{cached_turn_output}\n\n'
+                        'Reuse the existing web grounding for this same user turn. '
+                        'Do not call web_search again; answer the user now.'
+                    )
+                else:
+                    output = (
+                        'A web search has already been completed for this user turn. '
+                        'Reuse the existing search results and answer the user now '
+                        'without another web search.'
+                    )
+            else:
+                payload = self._get_cached_web_search_payload(query)
+                if payload is None:
+                    payload = call_brave_web_search(
+                        self.brave_search_api_key,
+                        query,
+                        context_size=self.web_search_context_size,
+                        timeout_s=self.web_search_timeout_s,
+                        country=self.web_search_country,
+                        search_language=self._get_web_search_language(),
+                    )
+                    self._store_cached_web_search_payload(query, payload)
+                    self.get_logger().info(f'Brave Search completed for: {query}')
+                else:
+                    self.get_logger().debug(
+                        f'Used cached Brave Search grounding for: {query}'
+                    )
+
+                output = build_web_search_tool_output(
+                    query,
+                    payload=payload,
+                    max_sources=self.web_search_sources_limit,
+                )
+                with self._tool_call_lock:
+                    if turn_id == self._current_user_turn_id:
+                        self._last_web_search_output_for_turn = output
         except Exception as exc:
             message = str(exc).strip() or 'Unknown web search failure.'
             cached_payload = self._get_cached_web_search_payload(query, allow_stale=True)

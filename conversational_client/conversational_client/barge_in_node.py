@@ -106,7 +106,7 @@ class BargeInNode(Node):
         # PARAMETERS
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('min_voice_ms', 600)      # How long to speak for barge-in
+        self.declare_parameter('min_voice_ms', 180)      # How long to speak for barge-in
         self.declare_parameter('debounce_ms', 150)       # Debounce between checks
         self.declare_parameter('cooldown_ms', 800)       # Cooldown after barge-in
         self.declare_parameter('arm_after_ms', 400)      # Initial delay (anti-leak)

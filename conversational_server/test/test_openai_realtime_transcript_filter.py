@@ -1,4 +1,7 @@
-from conversational_server.realtime_text_utils import ignored_short_transcript_reason
+from conversational_server.realtime_text_utils import (
+    ignored_short_transcript_reason,
+    is_probable_assistant_echo,
+)
 
 
 def test_non_latin_transcript_is_not_labeled_empty():
@@ -15,3 +18,16 @@ def test_question_word_single_turn_is_allowed():
 
 def test_filler_acknowledgement_is_still_ignored():
     assert ignored_short_transcript_reason('OK.') == 'single_filler_word'
+
+
+def test_assistant_echo_detects_mid_sentence_fragment():
+    assistant = (
+        'Prime Batteries Technology has manufacturing capacity in Romania. '
+        'The CEO is Vicente Chobani. The facility is in Ilfov County.'
+    )
+    assert is_probable_assistant_echo(
+        'The CEO is Vicente Chobani.',
+        assistant,
+        threshold=80.0,
+        min_length=12,
+    ) is True

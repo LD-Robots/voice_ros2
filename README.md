@@ -131,10 +131,31 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
     realtime_web_search_context_size:=medium \
+    realtime_vad_threshold:=0.74 \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
     realtime_continued_turn_response_delay_ms:=450 \
     realtime_capture_during_playback:=true
+```
+
+If playback-time interruption feels too strict, start with:
+
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    conversation_backend:=openai_realtime \
+    realtime_model:=gpt-realtime-mini \
+    realtime_voice:=cedar \
+    realtime_web_search_enabled:=true \
+    realtime_web_search_context_size:=medium \
+    realtime_vad_threshold:=0.74 \
+    realtime_vad_silence_duration_ms:=550 \
+    realtime_response_create_delay_ms:=100 \
+    realtime_continued_turn_response_delay_ms:=450 \
+    realtime_capture_during_playback:=true \
+    realtime_playback_input_filter_min_rms_dbfs:=-30.0 \
+    realtime_playback_input_filter_leak_margin_db:=7.0 \
+    realtime_playback_input_filter_hits_required:=2 \
+    realtime_playback_input_filter_hold_ms:=320
 ```
 
 Required `.env` keys for this mode:
@@ -169,6 +190,7 @@ ros2 launch conversational_server server_pipeline.launch.py \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
     realtime_web_search_context_size:=medium \
+    realtime_vad_threshold:=0.74 \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
     realtime_continued_turn_response_delay_ms:=450 \
@@ -249,6 +271,7 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
     realtime_web_search_context_size:=medium \
+    realtime_vad_threshold:=0.74 \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
     realtime_continued_turn_response_delay_ms:=450 \
@@ -261,10 +284,15 @@ Recommended first test:
 - `realtime_voice:=cedar`
 - `realtime_web_search_enabled:=true`
 - `realtime_web_search_context_size:=medium`
+- `realtime_vad_threshold:=0.74`
 - `realtime_vad_silence_duration_ms:=550`
 - `realtime_response_create_delay_ms:=100`
 - `realtime_continued_turn_response_delay_ms:=450`
 - `realtime_capture_during_playback:=true`
+- `realtime_playback_input_filter_min_rms_dbfs:=-30.0`
+- `realtime_playback_input_filter_leak_margin_db:=7.0`
+- `realtime_playback_input_filter_hits_required:=2`
+- `realtime_playback_input_filter_hold_ms:=320`
 
 When `conversation_backend:=openai_realtime`, the Realtime model can call a local `web_search` function tool. That tool now uses Brave Search LLM Context to fetch fresh grounding snippets and source URLs, then returns them back into the same voice turn for the Realtime model to answer naturally.
 
@@ -273,6 +301,15 @@ Brave Search tuning:
 - `realtime_web_search_context_size:=medium` is the default and gives broader coverage with a bit more latency.
 - `realtime_web_search_context_size:=high` pulls broader grounding and is the slowest of the three.
 - `realtime_web_search_model` is still accepted for launch compatibility, but it is ignored by the Brave Search path.
+
+Playback-time capture tuning:
+- `realtime_capture_during_playback:=true` keeps the raw microphone path open for OpenAI Realtime while the robot is speaking.
+- `realtime_vad_threshold` controls how easily OpenAI Realtime decides that speech has started. Lower values usually make it react faster to new user speech, but they can also make it more sensitive to noise.
+- `realtime_playback_input_filter_enabled:=true` keeps the playback-time anti-echo gate active. This should normally stay enabled.
+- `realtime_playback_input_filter_min_rms_dbfs` controls how loud playback-time speech must be before it is forwarded. Lower values are more sensitive.
+- `realtime_playback_input_filter_leak_margin_db` controls how much stronger the user's voice must be than the detected speaker leak. Lower values are more permissive.
+- `realtime_playback_input_filter_hits_required` controls how many consecutive playback-time speech-like chunks are required before forwarding. Lower values open the gate faster.
+- `realtime_playback_input_filter_hold_ms` keeps the playback-time gate open briefly after detected human speech so a question is not cut into fragments.
 
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
