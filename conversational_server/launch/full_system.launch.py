@@ -281,6 +281,9 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
+                'respeaker_mode': True,
+                'respeaker_channel': 5, # AEC procesat
+                'gain': 3.0,            # Gain digital
             }]
         ),
         

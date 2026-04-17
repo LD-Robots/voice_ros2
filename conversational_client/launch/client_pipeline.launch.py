@@ -109,6 +109,16 @@ def generate_launch_description():
             default_value='false',
             description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
         ),
+        DeclareLaunchArgument(
+            'barge_in_voice_enabled',
+            default_value='true',
+            description='Enable voice-based barge-in'
+        ),
+        DeclareLaunchArgument(
+            'barge_in_stop_enabled',
+            default_value='true',
+            description='Enable stop-keyword based barge-in'
+        ),
         
         # Audio Capture (microfon)
         Node(
@@ -177,18 +187,18 @@ def generate_launch_description():
             arguments=['--ros-args', '--log-level', 'barge_in_node:=DEBUG'],
             parameters=[{
                 # Voice-based barge-in params (Intelligent local detection)
-                'voice_enabled': True,
+                'voice_enabled': LaunchConfiguration('barge_in_voice_enabled'),
                 'min_voice_ms': 400,          # 400ms de voce continuă peste bot declanșează stop
                 'leak_margin_db': 12.0,       # Margină peste ecou (mai sigură)
                 # PyTorch stop keyword detector
-                'stop_enabled': True,
+                'stop_enabled': LaunchConfiguration('barge_in_stop_enabled'),
                 'stop_model_path': stop_keyword_path,
                 'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
                 'stop_logit_margin': LaunchConfiguration('stop_keyword_logit_margin'),
                 'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
                 'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
-                'stop_requires_voice_signature': False,
+                'stop_requires_voice_signature': LaunchConfiguration('stop_keyword_requires_voice_signature'),
             }]
         ),
         
