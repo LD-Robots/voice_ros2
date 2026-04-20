@@ -280,7 +280,7 @@ def generate_launch_description():
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
+                'device_index': 3,  # Explicit PulseAudio ca să prindem cele 6 canale ale ReSpeaker și să evităm PipeWire default bug
                 'respeaker_mode': True,
                 'respeaker_channel': 5, # AEC procesat
                 'gain': 3.0,            # Gain digital
