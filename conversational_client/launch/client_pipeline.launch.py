@@ -127,7 +127,7 @@ def generate_launch_description():
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
+                'device_index': 3,  # Explicit PulseAudio ca să prindem cele 6 canale ale ReSpeaker
                 'respeaker_mode': True,
                 'respeaker_channel': 5, # AEC procesat (Testele au arătat că 5 e mai bun)
                 'gain': 3.0,            # Gain digital pentru a nu avea clipping
