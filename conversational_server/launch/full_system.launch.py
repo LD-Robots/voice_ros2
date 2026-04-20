@@ -193,7 +193,7 @@ def generate_launch_description():
             parameters=[{
                 'preferred_backend': LaunchConfiguration('conversation_backend'),
                 'fallback_backend': 'legacy',
-                'offline_timeout_s': 6.0,
+                'offline_timeout_s': 1000.0,
                 'auto_return_to_preferred': True,
             }]
         ),
