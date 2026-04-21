@@ -21,7 +21,7 @@ websocket-client>=1.8.0
 
 # Text to speech
 edge-tts>=6.1.0
-piper-tts==1.3.0
+# piper-tts==1.3.0 (Removed)
 num2words>=0.5.13
 
 # Wake word and stop keyword detection

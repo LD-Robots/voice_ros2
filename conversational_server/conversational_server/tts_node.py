@@ -51,14 +51,6 @@ except ImportError:
     EDGE_TTS_AVAILABLE = False
     print("⚠️ edge-tts not installed. Run: pip install edge-tts")
 
-# Piper TTS for voice synthesis (offline fallback)
-try:
-    from piper import PiperVoice
-    PIPER_AVAILABLE = True
-except ImportError:
-    PIPER_AVAILABLE = False
-    print("⚠️ piper-tts not installed. Run: pip install piper-tts")
-
 # Soundfile for audio reading
 try:
     import soundfile as sf
@@ -80,49 +72,22 @@ class TTSNode(Node):
         self.declare_parameter('pitch', '+0Hz')
         self.declare_parameter('buffer_size', 2)  # Double buffer (2 chunks ahead)
         
-        # Piper model paths
-        self.declare_parameter('piper_model_en', '')
-        self.declare_parameter('piper_model_ro', '')
-        
-        self.backend = self.get_parameter('backend').value
         self.voice_en = self.get_parameter('voice_en').value
         self.voice_ro = self.get_parameter('voice_ro').value
         self.rate = self.get_parameter('rate').value
         self.pitch = self.get_parameter('pitch').value
         self.buffer_size = self.get_parameter('buffer_size').value
-        self.piper_model_en_path = self.get_parameter('piper_model_en').value
-        self.piper_model_ro_path = self.get_parameter('piper_model_ro').value
         
-        # Piper voices (pre-loaded)
-        self.piper_voice_en = None
-        self.piper_voice_ro = None
+        # Edge TTS necesită soundfile pt MP3
+        if not SOUNDFILE_AVAILABLE:
+            self.get_logger().error('soundfile not installed - required for edge-tts!')
+            raise RuntimeError('soundfile not available')
         
-        # Selectează backend-ul
-        if self.backend == 'edge':
-            if not EDGE_TTS_AVAILABLE:
-                self.get_logger().warn('edge-tts not available, falling back to piper')
-                self.backend = 'piper'
-            elif not SOUNDFILE_AVAILABLE:
-                self.get_logger().warn('soundfile not available for edge-tts, falling back to piper')
-                self.backend = 'piper'
-        
-        if self.backend == 'piper':
-            if not PIPER_AVAILABLE:
-                self.get_logger().error('No TTS backend available! Install piper-tts.')
-                raise RuntimeError('No TTS backend available')
-            self._load_piper_models()
-            self.get_logger().info('✅ TTS initialized with Piper (offline)')
-        else:
-            # Edge TTS necesită soundfile pt MP3
-            if not SOUNDFILE_AVAILABLE:
-                self.get_logger().error('soundfile not installed - required for edge-tts!')
-                raise RuntimeError('soundfile not available')
-            # Pre-load Piper models for fallback if available
-            if PIPER_AVAILABLE:
-                self._load_piper_models()
-                self.get_logger().info(f'✅ TTS initialized with edge-tts (Piper fallback ready): EN={self.voice_en}, RO={self.voice_ro}')
-            else:
-                self.get_logger().info(f'✅ TTS initialized with edge-tts (no offline fallback): EN={self.voice_en}, RO={self.voice_ro}')
+        if not EDGE_TTS_AVAILABLE:
+            self.get_logger().error('edge-tts not installed!')
+            raise RuntimeError('edge-tts not available')
+
+        self.get_logger().info(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
         
         # Target sample rate (fix "horror voice" issues by standardizing on 16kHz)
         self.target_sample_rate = 16000
@@ -134,27 +99,17 @@ class TTSNode(Node):
         # Common phrases for cache
         self.cache_phrases = {
             'ack_en': ('Hello. I am here and listening.', 'en'),
-            'ack_ro': ('Salut. Sunt aici si te ascult.', 'ro'),
             'filler_en': ('One moment please...', 'en'),
-            'filler_ro': ('Un moment...', 'ro'),
             'goodbye_en': ('Goodbye. I will be here when you need me again.', 'en'),
-            'goodbye_ro': ('La revedere. Raman aici daca mai ai nevoie de mine.', 'ro'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
-            'error_ro': ('Sorry, I encountered an error.', 'ro'),
             'confirm_en': ('Are you sure? Please say yes or no.', 'en'),
-            'confirm_ro': ('Ești sigur? Te rog confirmă cu da sau nu.', 'ro'),
         }
         self.system_commands = {
             'ack_en',
-            'ack_ro',
             'goodbye_en',
-            'goodbye_ro',
             'error_en',
-            'error_ro',
             'confirm_en',
-            'confirm_ro',
             'filler_en',
-            'filler_ro',
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
@@ -547,39 +502,9 @@ class TTSNode(Node):
         
         return audio_data
     
-    def _load_piper_models(self):
-        """Pre-load Piper ONNX models for EN and RO."""
-        if self.piper_model_en_path and os.path.exists(self.piper_model_en_path):
-            try:
-                self.piper_voice_en = PiperVoice.load(self.piper_model_en_path)
-                self.get_logger().info(f'🔊 Piper EN loaded: {os.path.basename(self.piper_model_en_path)}')
-            except Exception as e:
-                self.get_logger().error(f'❌ Failed to load Piper EN: {e}')
-        else:
-            self.get_logger().warn(f'⚠️ Piper EN model not found: {self.piper_model_en_path}')
-        
-        if self.piper_model_ro_path and os.path.exists(self.piper_model_ro_path):
-            try:
-                self.piper_voice_ro = PiperVoice.load(self.piper_model_ro_path)
-                self.get_logger().info(f'🔊 Piper RO loaded: {os.path.basename(self.piper_model_ro_path)}')
-            except Exception as e:
-                self.get_logger().error(f'❌ Failed to load Piper RO: {e}')
-        else:
-            self.get_logger().warn(f'⚠️ Piper RO model not found: {self.piper_model_ro_path}')
-    
     def _synthesize(self, text: str, voice: str):
-        """Synthesize text to audio using the selected backend."""
-        if self.backend == 'piper':
-            return self._synthesize_piper(text, voice)
-        else:
-            try:
-                return self._synthesize_edge(text, voice)
-            except Exception as e:
-                # Fallback to Piper if edge-tts fails (e.g., no internet)
-                if self.piper_voice_en or self.piper_voice_ro:
-                    self.get_logger().warn(f'⚠️ Edge TTS failed ({e}), falling back to Piper')
-                    return self._synthesize_piper(text, voice)
-                raise
+        """Synthesize text to audio using Edge TTS."""
+        return self._synthesize_edge(text, voice)
     
     def _synthesize_edge(self, text: str, voice: str):
         """Synthesize with Edge TTS (online, entirely in RAM)."""
@@ -597,31 +522,22 @@ class TTSNode(Node):
         # Citește MP3 direct din buffer-ul din memorie
         audio_data, sample_rate = sf.read(mp3_io, dtype='int16')
         return audio_data, sample_rate
-    
-    def _synthesize_piper(self, text: str, voice: str):
-        """Synthesize with Piper TTS (offline, entirely in RAM)."""
-        # Alege modelul Piper bazat pe limba vocii
-        lang = voice.lower() if voice else 'en'
-        if lang.startswith('ro') or 'ro-' in lang.lower():
-            piper_voice = self.piper_voice_ro or self.piper_voice_en
-        else:
-            piper_voice = self.piper_voice_en or self.piper_voice_ro
+
+    async def _synthesize_async(self, text: str, voice: str) -> bytes:
+        """Synthesize text to audio using Edge TTS."""
+        communicate = edge_tts.Communicate(
+            text,
+            voice,
+            rate=self.rate,
+            pitch=self.pitch
+        )
         
-        if piper_voice is None:
-            raise RuntimeError('No Piper voice loaded!')
+        audio_data = b''
+        async for chunk in communicate.stream():
+            if chunk['type'] == 'audio':
+                audio_data += chunk['data']
         
-        # Sintetizează — returnează chunks de audio int16
-        audio_chunks = list(piper_voice.synthesize(text))
-        
-        if not audio_chunks:
-            raise RuntimeError('Piper returned no audio')
-        
-        # Concatenate all chunks into a single array
-        all_audio = b''.join(chunk.audio_int16_bytes for chunk in audio_chunks)
-        audio_data = np.frombuffer(all_audio, dtype=np.int16)
-        sample_rate = audio_chunks[0].sample_rate
-        
-        return audio_data, sample_rate
+        return audio_data
 
     def _resample(self, audio_data, original_rate, target_rate):
         """Resample audio data to target rate."""

@@ -9,7 +9,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 ### Server Nodes (Heavy Processing)
 - **ASR Node** - Automatic Speech Recognition (Faster-Whisper)
 - **LLM Node** - Language Model processing (Groq API with streaming)
-- **TTS Node** - Text-to-Speech (Piper TTS)
+- **TTS Node** - Text-to-Speech (Edge TTS + Audio Cache)
 - **OpenAI Realtime Node** - Speech-to-speech via `gpt-realtime-mini`
 
 ### Client Nodes (Robot Hardware)
@@ -49,7 +49,7 @@ The runtime code currently depends on these Python modules:
 - Audio and DSP: `numpy`, `scipy`, `sounddevice`, `pyaudio`, `soundfile`, `webrtcvad`
 - ASR and text filtering: `faster-whisper`, `rapidfuzz`
 - LLM and realtime: `groq`, `python-dotenv`, `requests`, `websocket-client`
-- TTS: `edge-tts`, `piper-tts`, `num2words`
+- TTS: `edge-tts`, `num2words`
 - Wake word and stop keyword detection: `openwakeword`, `onnxruntime`
 - Speaker identification: `speechbrain`, `torch`, `torchaudio`, `huggingface_hub`, `torchcodec`
 
@@ -80,18 +80,6 @@ OPENAI_API_KEY=your_openai_api_key_here
 
 ### 3. Download Models
 
-#### Piper TTS Models (Romanian + English)
-```bash
-cd /path/to/ros2_ws/src/voice_ros2/conversational_server/models/piper
-
-# Romanian voice
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/ro/ro_RO/mihai/medium/ro_RO-mihai-medium.onnx
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/ro/ro_RO/mihai/medium/ro_RO-mihai-medium.onnx.json
-
-# English voice
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx
-wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/medium/en_US-amy-medium.onnx.json
-```
 
 #### OpenWakeWord Models
 The wake word models are already included in the repository:
@@ -310,7 +298,6 @@ voice_ros2/
 │   │   ├── llm_node.py            # Language model (+ speaker awareness)
 │   │   ├── tts_node.py            # Text-to-speech
 │   │   └── stream_shaper.py       # LLM streaming optimizer
-│   ├── models/piper/              # TTS models
 │   └── launch/                    # Launch files
 ├── conversational_client/          # Client-side nodes
 │   ├── conversational_client/
@@ -348,5 +335,5 @@ TODO: Add license
 
 - Faster-Whisper for ASR
 - Groq for LLM inference
-- Piper TTS for voice synthesis
+- Edge-TTS for voice synthesis
 - OpenWakeWord for wake word detection
