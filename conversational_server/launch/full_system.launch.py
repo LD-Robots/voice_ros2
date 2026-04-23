@@ -149,6 +149,16 @@ def generate_launch_description():
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
+            'realtime_vad_threshold',
+            default_value='0.82',
+            description='OpenAI Realtime server VAD threshold (higher = stricter voice start)'
+        ),
+        DeclareLaunchArgument(
+            'realtime_sticky_speaker_timeout_s',
+            default_value='60.0',
+            description='How long to keep the last known speaker label when speaker_id is temporarily unknown'
+        ),
+        DeclareLaunchArgument(
             'realtime_response_create_delay_ms',
             default_value='100',
             description='Extra local wait before creating a Realtime response after transcript acceptance'
@@ -162,6 +172,41 @@ def generate_launch_description():
             'vad_min_silence_frames',
             default_value='14',
             description='Consecutive non-speech audio frames required before local VAD ends the user turn'
+        ),
+        DeclareLaunchArgument(
+            'vad_aggressiveness',
+            default_value='2',
+            description='WebRTC local VAD aggressiveness (0-3, where 3 is strictest)'
+        ),
+        DeclareLaunchArgument(
+            'vad_min_speech_frames',
+            default_value='5',
+            description='Consecutive speech frames required before local VAD opens speech state'
+        ),
+        DeclareLaunchArgument(
+            'vad_energy_threshold',
+            default_value='500',
+            description='Energy fallback threshold for local VAD when WebRTC cannot classify a frame'
+        ),
+        DeclareLaunchArgument(
+            'vad_session_timeout',
+            default_value='30.0',
+            description='Seconds of inactivity before local VAD closes the listening gate'
+        ),
+        DeclareLaunchArgument(
+            'wake_word_threshold',
+            default_value='0.5',
+            description='Default wake-word detection threshold for OpenWakeWord models'
+        ),
+        DeclareLaunchArgument(
+            'wake_word_cooldown_ms',
+            default_value='1500',
+            description='Cooldown in milliseconds between wake-word detections'
+        ),
+        DeclareLaunchArgument(
+            'wake_model_thresholds',
+            default_value='hello_robot:0.30,stop_robot:0.70,goodbye_robot:0.40',
+            description='Per-model OpenWakeWord thresholds (label:threshold pairs)'
         ),
         DeclareLaunchArgument(
             'stop_keyword_prob_threshold',
@@ -182,6 +227,11 @@ def generate_launch_description():
             'stop_keyword_requires_voice_signature',
             default_value='true',
             description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
+        ),
+        DeclareLaunchArgument(
+            'mic_gain',
+            default_value='1.0',
+            description='Digital microphone gain multiplier in audio_capture_node'
         ),
         
         # ========== SERVER NODES ==========
@@ -260,7 +310,7 @@ def generate_launch_description():
                     'allow_known_speaker_switch_without_address'
                 ),
                 'language_switch_hits_required': LaunchConfiguration('language_switch_hits_required'),
-                'vad_threshold': 0.82,
+                'vad_threshold': LaunchConfiguration('realtime_vad_threshold'),
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),
@@ -268,6 +318,7 @@ def generate_launch_description():
                     'realtime_continued_turn_response_delay_ms'
                 ),
                 'short_transcript_dedupe_window_s': 4.0,
+                'sticky_speaker_timeout_s': LaunchConfiguration('realtime_sticky_speaker_timeout_s'),
             }]
         ),
         
@@ -281,6 +332,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
+                'gain': LaunchConfiguration('mic_gain'),
             }]
         ),
         
@@ -292,8 +344,11 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'wake_word_enabled': True,   # Gate audio until wake word
-                'session_timeout': 30.0,     # Reset to standby after 30s silence (was 8s)
+                'session_timeout': LaunchConfiguration('vad_session_timeout'),
                 'min_silence_frames': LaunchConfiguration('vad_min_silence_frames'),
+                'min_speech_frames': LaunchConfiguration('vad_min_speech_frames'),
+                'aggressiveness': LaunchConfiguration('vad_aggressiveness'),
+                'energy_threshold': LaunchConfiguration('vad_energy_threshold'),
             }]
         ),
 
@@ -392,8 +447,8 @@ def generate_launch_description():
             name='wake_word_node',
             output='screen',
             parameters=[{
-                'threshold': 0.5,  # Default threshold
-                'cooldown_ms': 1500,
+                'threshold': LaunchConfiguration('wake_word_threshold'),
+                'cooldown_ms': LaunchConfiguration('wake_word_cooldown_ms'),
                 # Format: "path:kind" - \'wake\' for activation, \'barge_in\' for stopping TTS, \'stop\' for ending session
                 'custom_models': ','.join([
                     f'{hello_model_path}:wake',
@@ -401,7 +456,7 @@ def generate_launch_description():
                     f'{goodbye_model_path}:stop',
                 ]),
                 # Threshold-uri individuale per model
-                'model_thresholds': 'hello_robot:0.30,stop_robot:0.70,goodbye_robot:0.40',
+                'model_thresholds': LaunchConfiguration('wake_model_thresholds'),
             }]
         ),
 
