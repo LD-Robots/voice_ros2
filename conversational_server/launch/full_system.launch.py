@@ -175,12 +175,12 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'stop_keyword_hits_required',
-            default_value='2',
+            default_value='1',
             description='Consecutive stop-keyword detections required before interrupting TTS'
         ),
         DeclareLaunchArgument(
             'stop_keyword_requires_voice_signature',
-            default_value='true',
+            default_value='false',
             description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
         ),
         
