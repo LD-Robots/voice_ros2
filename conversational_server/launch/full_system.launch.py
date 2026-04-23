@@ -165,17 +165,17 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'stop_keyword_prob_threshold',
-            default_value='0.98',
+            default_value='0.60',
             description='Minimum stop-keyword probability required to interrupt TTS'
         ),
         DeclareLaunchArgument(
             'stop_keyword_logit_margin',
-            default_value='0.6',
+            default_value='0.3',
             description='Minimum stop-vs-other logit margin required to interrupt TTS'
         ),
         DeclareLaunchArgument(
             'stop_keyword_hits_required',
-            default_value='3',
+            default_value='2',
             description='Consecutive stop-keyword detections required before interrupting TTS'
         ),
         DeclareLaunchArgument(
@@ -280,10 +280,10 @@ def generate_launch_description():
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': 3,  # Explicit PulseAudio ca să prindem cele 6 canale ale ReSpeaker și să evităm PipeWire default bug
-                'respeaker_mode': True,
-                'respeaker_channel': 5, # AEC procesat
-                'gain': 3.0,            # Gain digital
+                'device_index': 3,      # PulseAudio pe laptop
+                'respeaker_mode': False, # Mod standard (1 canal) pentru test laptop
+                'gain': 10.0,           # Mărit pentru semnal slab pe laptop
+                'chunk_ms': 60,
             }]
         ),
         
@@ -335,6 +335,8 @@ def generate_launch_description():
                 'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
                 'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
                 'stop_requires_voice_signature': LaunchConfiguration('stop_keyword_requires_voice_signature'),
+                'voice_enabled': False,
+                'min_rms_dbfs': -50.0,  # Mult mai sensibil pentru testul pe laptop
             }]
         ),
 
