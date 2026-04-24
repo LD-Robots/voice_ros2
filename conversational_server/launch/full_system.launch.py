@@ -225,7 +225,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'audio_respeaker_channel',
-            default_value='5',
+            default_value='0',
             description='ReSpeaker channel to publish (5 = AEC channel on this hardware)'
         ),
         DeclareLaunchArgument(
@@ -262,6 +262,11 @@ def generate_launch_description():
             'stop_keyword_requires_voice_signature',
             default_value='true',
             description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
+        ),
+        DeclareLaunchArgument(
+            'stop_enabled',
+            default_value='true',
+            description='Enable the PyTorch-based stop keyword detector for barge-in'
         ),
         
         # ========== SERVER NODES ==========
@@ -436,7 +441,7 @@ def generate_launch_description():
             parameters=[{
                 # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
                 'stop_model_path': stop_model_path,
-                'stop_enabled': True,  # ACTIVAT
+                'stop_enabled': LaunchConfiguration('stop_enabled'),
                 'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
                 'stop_logit_margin': LaunchConfiguration('stop_keyword_logit_margin'),
                 'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),
@@ -510,7 +515,7 @@ def generate_launch_description():
                 # Format: "path:kind" - \'wake\' for activation, \'barge_in\' for stopping TTS, \'stop\' for ending session
                 'custom_models': ','.join([
                     f'{hello_model_path}:wake',
-                    f'{stop_model_path_oww}:barge_in',
+                    # f'{stop_model_path_oww}:barge_in',
                     f'{goodbye_model_path}:stop',
                 ]),
                 # Threshold-uri individuale per model
