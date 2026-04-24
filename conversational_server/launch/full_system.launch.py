@@ -159,6 +159,86 @@ def generate_launch_description():
             description='Delay before answering a transcript that arrived after the user resumed speaking'
         ),
         DeclareLaunchArgument(
+            'realtime_vad_threshold',
+            default_value='0.90',
+            description='Server-side VAD threshold for OpenAI Realtime (higher = less sensitive)'
+        ),
+        DeclareLaunchArgument(
+            'realtime_vad_prefix_padding_ms',
+            default_value='400',
+            description='Server-side VAD prefix padding in milliseconds'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_enabled',
+            default_value='true',
+            description='Enable playback-aware microphone filtering during full-duplex capture'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_post_playback_ms',
+            default_value='1400',
+            description='Keep playback input guard active briefly after TTS stops'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_min_rms_dbfs',
+            default_value='-24.0',
+            description='Minimum RMS (dBFS) for forwarding mic audio during playback guard'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_zcr_min',
+            default_value='0.07',
+            description='Minimum zero-crossing rate for playback guard voice signature'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_zcr_max',
+            default_value='0.30',
+            description='Maximum zero-crossing rate for playback guard voice signature'
+        ),
+        DeclareLaunchArgument(
+            'realtime_playback_input_filter_hits_required',
+            default_value='5',
+            description='Consecutive voice-like frames required before opening playback guard gate'
+        ),
+        DeclareLaunchArgument(
+            'realtime_assistant_echo_filter_enabled',
+            default_value='true',
+            description='Drop user transcripts that strongly match very recent assistant output'
+        ),
+        DeclareLaunchArgument(
+            'realtime_assistant_echo_window_s',
+            default_value='10.0',
+            description='Recent assistant speech window used for echo transcript suppression'
+        ),
+        DeclareLaunchArgument(
+            'realtime_assistant_echo_similarity_threshold',
+            default_value='84.0',
+            description='Similarity threshold used to detect assistant self-echo transcripts'
+        ),
+        DeclareLaunchArgument(
+            'audio_device_index',
+            default_value='-1',
+            description='Audio capture device index (-1 = auto detect / default input)'
+        ),
+        DeclareLaunchArgument(
+            'audio_respeaker_mode',
+            default_value='true',
+            description='Enable ReSpeaker 6-channel capture mode'
+        ),
+        DeclareLaunchArgument(
+            'audio_respeaker_channel',
+            default_value='5',
+            description='ReSpeaker channel to publish (5 = AEC channel on this hardware)'
+        ),
+        DeclareLaunchArgument(
+            'audio_gain',
+            default_value='1.0',
+            description='Digital microphone gain multiplier'
+        ),
+        DeclareLaunchArgument(
+            'audio_chunk_ms',
+            default_value='60',
+            description='Audio capture chunk size in milliseconds'
+        ),
+        DeclareLaunchArgument(
             'vad_min_silence_frames',
             default_value='14',
             description='Consecutive non-speech audio frames required before local VAD ends the user turn'
@@ -180,7 +260,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'stop_keyword_requires_voice_signature',
-            default_value='false',
+            default_value='true',
             description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
         ),
         
@@ -260,14 +340,41 @@ def generate_launch_description():
                     'allow_known_speaker_switch_without_address'
                 ),
                 'language_switch_hits_required': LaunchConfiguration('language_switch_hits_required'),
-                'vad_threshold': 0.82,
-                'vad_prefix_padding_ms': 400,
+                'vad_threshold': LaunchConfiguration('realtime_vad_threshold'),
+                'vad_prefix_padding_ms': LaunchConfiguration('realtime_vad_prefix_padding_ms'),
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
                 'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),
                 'continued_turn_response_delay_ms': LaunchConfiguration(
                     'realtime_continued_turn_response_delay_ms'
                 ),
                 'short_transcript_dedupe_window_s': 4.0,
+                'playback_input_filter_enabled': LaunchConfiguration(
+                    'realtime_playback_input_filter_enabled'
+                ),
+                'playback_input_filter_post_playback_ms': LaunchConfiguration(
+                    'realtime_playback_input_filter_post_playback_ms'
+                ),
+                'playback_input_filter_min_rms_dbfs': LaunchConfiguration(
+                    'realtime_playback_input_filter_min_rms_dbfs'
+                ),
+                'playback_input_filter_zcr_min': LaunchConfiguration(
+                    'realtime_playback_input_filter_zcr_min'
+                ),
+                'playback_input_filter_zcr_max': LaunchConfiguration(
+                    'realtime_playback_input_filter_zcr_max'
+                ),
+                'playback_input_filter_hits_required': LaunchConfiguration(
+                    'realtime_playback_input_filter_hits_required'
+                ),
+                'assistant_echo_filter_enabled': LaunchConfiguration(
+                    'realtime_assistant_echo_filter_enabled'
+                ),
+                'assistant_echo_window_s': LaunchConfiguration(
+                    'realtime_assistant_echo_window_s'
+                ),
+                'assistant_echo_similarity_threshold': LaunchConfiguration(
+                    'realtime_assistant_echo_similarity_threshold'
+                ),
             }]
         ),
         
@@ -280,10 +387,11 @@ def generate_launch_description():
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': 3,      # PulseAudio pe laptop
-                'respeaker_mode': False, # Mod standard (1 canal) pentru test laptop
-                'gain': 10.0,           # Mărit pentru semnal slab pe laptop
-                'chunk_ms': 60,
+                'device_index': LaunchConfiguration('audio_device_index'),
+                'respeaker_mode': LaunchConfiguration('audio_respeaker_mode'),
+                'respeaker_channel': LaunchConfiguration('audio_respeaker_channel'),
+                'gain': LaunchConfiguration('audio_gain'),
+                'chunk_ms': LaunchConfiguration('audio_chunk_ms'),
             }]
         ),
         
