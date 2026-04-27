@@ -45,7 +45,7 @@ def generate_launch_description():
         # ========== LAUNCH ARGUMENTS ==========
         DeclareLaunchArgument(
             'conversation_backend',
-            default_value='legacy',
+            default_value='openai_realtime',
             description='Conversation backend (legacy/openai_realtime)'
         ),
         DeclareLaunchArgument(
@@ -85,7 +85,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_web_search_model',
-            default_value='gpt-4.1-mini',
+            default_value='gpt-4.1',
             description='Responses API model used to execute web search tool calls'
         ),
         DeclareLaunchArgument(
@@ -160,7 +160,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_vad_threshold',
-            default_value='0.90',
+            default_value='0.70',
             description='Server-side VAD threshold for OpenAI Realtime (higher = less sensitive)'
         ),
         DeclareLaunchArgument(
@@ -195,7 +195,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_playback_input_filter_hits_required',
-            default_value='5',
+            default_value='2',
             description='Consecutive voice-like frames required before opening playback guard gate'
         ),
         DeclareLaunchArgument(
@@ -215,7 +215,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'audio_device_index',
-            default_value='-1',
+            default_value='3',
             description='Audio capture device index (-1 = auto detect / default input)'
         ),
         DeclareLaunchArgument(
@@ -225,7 +225,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'audio_respeaker_channel',
-            default_value='5',
+            default_value='0',
             description='ReSpeaker channel to publish (5 = AEC channel on this hardware)'
         ),
         DeclareLaunchArgument(
@@ -262,6 +262,11 @@ def generate_launch_description():
             'stop_keyword_requires_voice_signature',
             default_value='true',
             description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
+        ),
+        DeclareLaunchArgument(
+            'stop_enabled',
+            default_value='false',
+            description='Enable PyTorch-based stop keyword detection for barge-in'
         ),
         
         # ========== SERVER NODES ==========
@@ -436,7 +441,7 @@ def generate_launch_description():
             parameters=[{
                 # PyTorch Stop Keyword Detector (runs ONLY while TTS is speaking)
                 'stop_model_path': stop_model_path,
-                'stop_enabled': True,  # ACTIVAT
+                'stop_enabled': LaunchConfiguration('stop_enabled'),
                 'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
                 'stop_logit_margin': LaunchConfiguration('stop_keyword_logit_margin'),
                 'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),

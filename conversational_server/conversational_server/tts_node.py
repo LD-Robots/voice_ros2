@@ -4,7 +4,6 @@ TTS Node - Text to Speech with MULTIPLE BACKENDS, STREAMING and DOUBLE BUFFER.
 
 BACKENDS:
   - edge-tts (default) - Microsoft Edge TTS, requires internet
-  - piper - Offline TTS fallback (high quality, ONNX models)
 
 DOUBLE BUFFER: Synthesize next chunk in parallel with current playback.
 
@@ -65,7 +64,6 @@ class TTSNode(Node):
         super().__init__('tts_node')
         
         # Configurable parameters
-        self.declare_parameter('backend', 'edge')  # 'edge' or 'piper'
         self.declare_parameter('voice_en', 'en-IE-EmilyNeural')
         self.declare_parameter('voice_ro', 'ro-RO-AlinaNeural')
         self.declare_parameter('rate', '+0%')
