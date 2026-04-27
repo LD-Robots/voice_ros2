@@ -110,7 +110,7 @@ class AudioSegmentNode(Node):
             10
         )
         
-        # Barge-in event - șterge buffer-ul curent pentru a nu transcrie "Stop"
+        # Barge-in event - clear current buffer to avoid transcribing "Stop"
         self.barge_in_sub = self.create_subscription(
             Bool,
             '/barge_in',

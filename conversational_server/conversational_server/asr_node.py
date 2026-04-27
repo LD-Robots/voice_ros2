@@ -2,9 +2,9 @@
 """
 ASR Node - Speech to Text using Faster Whisper (Standalone).
 
-FEATURES (sincronizat cu Conversational_Robot Python):
+FEATURES (synced with Conversational_Robot Python):
   - Warmup at start for full model loading
-  - Detecție RO/EN cu alegere best score
+  - RO/EN detection with best-score selection
   - Fallback without VAD for errors
 
 Subscribes to: 
@@ -49,7 +49,7 @@ class ASRNode(Node):
     def __init__(self):
         super().__init__('asr_node')
         
-        # Parametri configurabili
+        # Configurable parameters
         self.declare_parameter('model_size', 'small')
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('compute_type', 'int8')
@@ -82,7 +82,7 @@ class ASRNode(Node):
             self.get_logger().error('faster-whisper not installed!')
             raise RuntimeError('faster-whisper not available')
         
-        # Inițializează Whisper model
+        # Initialize Whisper model
         self.get_logger().debug(f'Loading Whisper model: {model_size} on {device}...')
         self.model = WhisperModel(
             model_size,
@@ -91,7 +91,7 @@ class ASRNode(Node):
         )
         self.get_logger().debug('✅ Whisper model loaded!')
         
-        # Warmup la start
+        # Warmup on startup
         self._warmed_up = False
         self._ensure_warm()
         
@@ -168,7 +168,7 @@ class ASRNode(Node):
                 self.audio_buffer = self.audio_buffer[-max_pre_buffer:]
 
     def vad_callback(self, msg: Bool):
-        """Primește statusul VAD (vorbește/nu vorbește)."""
+        """Receive VAD status (speaking/not speaking)."""
         if self.current_backend != 'legacy':
             self.was_speaking = False
             self.is_speaking = False
@@ -177,7 +177,7 @@ class ASRNode(Node):
         self.was_speaking = self.is_speaking
         self.is_speaking = msg.data
         
-        # Când userul termină de vorbit, transcrie
+        # When the user finishes speaking, transcribe
         if self.was_speaking and not self.is_speaking:
             self.get_logger().debug(f'🔚 Speech ended, processing {len(self.audio_buffer)} frames...')
             self._process_buffer()
@@ -205,12 +205,12 @@ class ASRNode(Node):
             return ""
         # Lowercase
         text = text.lower()
-        # Elimină diacritice (ă->a, î->i, etc.)
+        # Remove diacritics (ă->a, î->i, etc.)
         text = unicodedata.normalize('NFD', text)
         text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
         # Remove punctuation and special characters
         text = re.sub(r'[^a-z0-9\s]', '', text)
-        # Normalizează spații
+        # Normalize spaces
         text = ' '.join(text.split())
         return text.strip()
     
@@ -229,7 +229,7 @@ class ASRNode(Node):
         if len(user_norm) < self.echo_min_length or len(bot_norm) < self.echo_min_length:
             return False
         
-        # Calculează similaritatea
+        # Calculate similarity
         similarity = fuzz.partial_ratio(user_norm, bot_norm)
         
         if similarity >= self.echo_threshold:
@@ -245,7 +245,7 @@ class ASRNode(Node):
             self.audio_buffer = []
             return
         
-        # Verifică lungimea minimă
+        # Check minimum length
         audio_length = len(self.audio_buffer) / self.sample_rate
         if audio_length < self.min_audio_length:
             self.get_logger().warn(f'Audio too short ({audio_length:.2f}s < {self.min_audio_length}s), skipping')
@@ -271,13 +271,13 @@ class ASRNode(Node):
             
             # Use RO/EN detection if set
             if self.language == 'ro_en':
-                # Pentru ro_en avem nevoie să citim de două ori, deci BytesIO e perfect (seek(0))
+                # For ro_en we need to read twice, so BytesIO is perfect (seek(0))
                 result = self._transcribe_ro_en(wav_io)
                 text = result["text"]
                 lang = result["lang"]
                 confidence = result["language_probability"]
             else:
-                # Transcrie cu Faster Whisper - cu fallback fără VAD
+                # Transcribe with Faster Whisper - with fallback without VAD
                 try:
                     text, lang, confidence, _ = self._run_once(wav_io, self.language, use_vad=True)
                 except ValueError as e:
@@ -297,7 +297,7 @@ class ASRNode(Node):
                     self.audio_buffer = []
                     return
                 
-                # Publică rezultat
+                # Publish result
                 out = Transcription()
                 out.text = text
                 out.language = lang
@@ -312,7 +312,7 @@ class ASRNode(Node):
             self.audio_buffer = []
 
     def _ensure_warm(self):
-        """Încarcă complet modelul prin transcriere dummy."""
+        """Fully load the model via a dummy transcription."""
         if not self.warmup_enabled or self._warmed_up:
             return
         try:
@@ -329,19 +329,19 @@ class ASRNode(Node):
                 wav.writeframes(silence.tobytes())
             wav_io.seek(0)
 
-            # Transcriere dummy
+            # Dummy transcription to force full model load
             self.model.transcribe(wav_io, language="en", beam_size=1)
             
             elapsed = time.perf_counter() - start
             self._warmed_up = True
-            self.get_logger().debug(f"✅ ASR warm-up gata ({elapsed:.2f}s)")
+            self.get_logger().debug(f"✅ ASR warm-up complete ({elapsed:.2f}s)")
         except Exception as e:
-            self.get_logger().warning(f"ASR warm-up eșuat: {e}")
+            self.get_logger().warning(f"ASR warm-up failed: {e}")
 
     def _run_once(self, audio_source, language, use_vad: bool):
         """
-        Audio source poate fi path (str) sau file-like object (BytesIO).
-        Returnează: (text, lang_out, lang_prob, score)
+        Audio source can be a path (str) or file-like object (BytesIO).
+        Returns: (text, lang_out, lang_prob, score)
         """
         # If it is a stream, make sure it is at the beginning
         if hasattr(audio_source, 'seek'):
@@ -373,14 +373,14 @@ class ASRNode(Node):
 
     def _transcribe_ro_en(self, audio_source):
         """
-        Transcriere strict EN/RO -> alegem cea mai bună.
-        Audio source trebuie să fie seekable (BytesIO).
+        Strict EN/RO transcription -> select the best result.
+        Audio source must be seekable (BytesIO).
         """
         def safe(lang):
             try:
                 return self._run_once(audio_source, lang, use_vad=True)
             except ValueError as e:
-                # Retry fără VAD
+                # Retry without VAD
                 if "max() iterable argument is empty" in str(e):
                     return self._run_once(audio_source, lang, use_vad=False)
                 raise

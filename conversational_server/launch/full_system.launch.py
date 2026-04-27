@@ -42,7 +42,7 @@ def generate_launch_description():
     goodbye_model_path = os.path.join(models_dir, 'goodbye_robot.onnx')
 
     return LaunchDescription([
-        # ========== ARGUMENTE ==========
+        # ========== LAUNCH ARGUMENTS ==========
         DeclareLaunchArgument(
             'conversation_backend',
             default_value='legacy',
@@ -380,7 +380,7 @@ def generate_launch_description():
         
         # ========== CLIENT NODES ==========
         
-        # Audio Capture (microfon)
+        # Audio Capture (microphone)
         Node(
             package='conversational_client',
             executable='audio_capture_node',
@@ -419,7 +419,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Audio Playback (difuzor)
+        # Audio Playback (speaker)
         Node(
             package='conversational_client',
             executable='audio_playback_node',
@@ -434,7 +434,7 @@ def generate_launch_description():
             name='barge_in_node',
             output='screen',
             parameters=[{
-                # PyTorch Stop Keyword Detector (rulează DOAR când TTS vorbește)
+                # PyTorch Stop Keyword Detector (runs ONLY while TTS is speaking)
                 'stop_model_path': stop_model_path,
                 'stop_enabled': True,  # ACTIVAT
                 'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
@@ -513,7 +513,7 @@ def generate_launch_description():
                     f'{stop_model_path_oww}:barge_in',
                     f'{goodbye_model_path}:stop',
                 ]),
-                # Threshold-uri individuale per model
+                # Individual thresholds per model
                 'model_thresholds': 'hello_robot:0.30,stop_robot:0.70,goodbye_robot:0.40',
             }]
         ),

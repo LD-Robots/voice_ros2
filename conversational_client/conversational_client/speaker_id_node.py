@@ -151,22 +151,22 @@ class SpeakerIdNode(Node):
         # Check if module is available
         if not SPEAKER_MANAGER_AVAILABLE:
             self.get_logger().warn(
-                '⚠️ speaker_manager nu a fost importat. '
-                f'Nodul funcționează în modul "Unknown". Cauză: {_SPEAKER_MANAGER_IMPORT_ERROR}'
+                '⚠️ speaker_manager could not be imported. '
+                f'Node running in "Unknown" mode. Cause: {_SPEAKER_MANAGER_IMPORT_ERROR}'
             )
             return
 
         # Check if enrollment folder exists and has files
         if not os.path.isdir(self.enrollment_dir):
             self.get_logger().warn(
-                f'⚠️ Folderul de enrollment nu există: {self.enrollment_dir}'
+                f'⚠️ Enrollment folder does not exist: {self.enrollment_dir}'
             )
             return
 
         wav_files = [f for f in os.listdir(self.enrollment_dir) if f.endswith('.wav')]
         if not wav_files:
             self.get_logger().warn(
-                f'⚠️ Folderul de enrollment e gol: {self.enrollment_dir}'
+                f'⚠️ Enrollment folder is empty: {self.enrollment_dir}'
             )
             return
 
@@ -181,7 +181,7 @@ class SpeakerIdNode(Node):
             self.db_loaded = bool(loaded_speakers)
             if self.db_loaded:
                 self.get_logger().info(
-                    f'✅ Speaker database loaded: {len(loaded_speakers)} voci '
+                    f'✅ Speaker database loaded: {len(loaded_speakers)} voices '
                     f'({", ".join(loaded_speakers)})'
                 )
             else:
@@ -190,7 +190,7 @@ class SpeakerIdNode(Node):
                     'Check the enrollment audio files and dependencies.'
                 )
         except Exception as e:
-            self.get_logger().error(f'❌ Eroare la inițializarea SpeakerManager: {e}')
+            self.get_logger().error(f'❌ Error initializing SpeakerManager: {e}')
 
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACK — AUDIO SEGMENT PROCESSING
@@ -212,13 +212,13 @@ class SpeakerIdNode(Node):
         
         duration = len(audio_float) / msg.sample_rate
         
-        # Ignoră segmentele foarte scurte (zgomote, click-uri) pentru identificare
+        # Ignore very short segments (noise, clicks) for identification
         if duration < 0.8:
-            self.get_logger().debug(f'🔇 Segment prea scurt pentru ID ({duration:.2f}s) - Ignorat')
+            self.get_logger().debug(f'🔇 Segment too short for ID ({duration:.2f}s) - skipped')
             return
 
         self.get_logger().debug(
-            f'🔊 Segment primit: {duration:.2f}s ({len(audio_float)} samples)'
+            f'🔊 Segment received: {duration:.2f}s ({len(audio_float)} samples)'
         )
 
         # ─────────────────────────────────────────────────────────
@@ -228,13 +228,13 @@ class SpeakerIdNode(Node):
 
         if self.db_loaded and self.speaker_manager is not None:
             try:
-                # Identifică vorbitorul
+                # Identify the speaker
                 match = self.speaker_manager.identify_with_details(audio_float)
                 speaker_name = match.speaker_name
                 
-                # LOGGING INTELIGENT:
-                # - Afișează INFO doar dacă e cineva cunoscut
-                # - Dacă e Unknown, afișează doar DEBUG (ca să nu spammeze consola)
+                # SMART LOGGING:
+                # - Show INFO only if someone is known
+                # - If Unknown, show only DEBUG (to avoid console spam)
                 if speaker_name != "Unknown":
                     self.get_logger().info(
                         f'🗣️ Speaker identified: {speaker_name} '
@@ -248,21 +248,21 @@ class SpeakerIdNode(Node):
                     )
                     if match.best_name != 'Unknown':
                         self.get_logger().debug(
-                            f'👤 Speaker neidentificat (reason={match.reason}, '
+                            f'👤 Unidentified speaker (reason={match.reason}, '
                             f'top={match.best_name}:{match.best_score:.3f}, '
                             f'margin={margin:.3f})'
                         )
                     else:
                         self.get_logger().debug(
-                            f'👤 Speaker neidentificat (reason={match.reason})'
+                            f'👤 Unidentified speaker (reason={match.reason})'
                         )
 
             except Exception as e:
-                self.get_logger().error(f'❌ Eroare la identificare: {e}')
+                self.get_logger().error(f'❌ Identification error: {e}')
                 speaker_name = "Unknown"
         else:
             self.get_logger().debug(
-                '⏭️ Fără bază de date — publicăm "Unknown"',
+                '⏭️ No database — publishing "Unknown"',
                 throttle_duration_sec=10.0
             )
 
