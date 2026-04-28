@@ -64,7 +64,7 @@ class LLMNode(Node):
     def __init__(self):
         super().__init__('llm_node')
         
-        # Parametri configurabili
+        # Configurable parameters
         self.declare_parameter('provider', 'groq')
         self.declare_parameter('model', 'llama-3.1-8b-instant')
         self.declare_parameter('max_tokens', 150)
@@ -383,47 +383,47 @@ class LLMNode(Node):
     
     def _speaker_id_callback(self, msg: String):
         """
-        Actualizează vorbitorul curent pe baza amprentei vocale.
-        Folosește logică "Sticky Speaker" pentru a nu uita imediat cine vorbește
-        dacă apar segmente scurte "Unknown".
+        Update the current speaker based on voice fingerprint.
+        Uses "Sticky Speaker" logic to avoid immediately forgetting who is speaking
+        when short "Unknown" segments appear.
         """
         new_speaker = msg.data
         if not new_speaker:
             return
 
-        # Timpul curent
+        # Current time
         now = time.time()
         
-        # Inițializează timestamp-ul ultimului speaker cunoscut dacă nu există
+        # Initialize timestamp for the last known speaker if not present
         if not hasattr(self, 'last_known_speaker_time'):
             self.last_known_speaker_time = 0
             
-        # LOGICĂ STICKY:
-        # 1. Dacă e un speaker CUNOSCUT (nu Unknown), îl actualizăm imediat
+        # STICKY SPEAKER LOGIC:
+        # 1. If it's a KNOWN speaker (not Unknown), update immediately
         if new_speaker != "Unknown":
             if new_speaker != self.current_speaker:
-                self.get_logger().info(f'🗣️ Speaker schimbat: {self.current_speaker} -> {new_speaker}')
+                self.get_logger().info(f'🗣️ Speaker changed: {self.current_speaker} -> {new_speaker}')
                 self.current_speaker = new_speaker
             
-            # Actualizăm timpul ultimei identificări pozitive
+            # Update timestamp of last positive identification
             self.last_known_speaker_time = now
             
-        # 2. Dacă e UNKNOWN:
+        # 2. If UNKNOWN:
         else:
-            # Dacă nu știm pe nimeni de dinainte, rămâne Unknown
+            # If we don't know anyone yet, keep Unknown
             if self.current_speaker == "Unknown":
                 pass
                 
-            # Dacă știm pe cineva, verificăm cât timp a trecut
+            # If we know someone, check how much time has passed
             else:
-                # Dacă au trecut mai puțin de 60 secunde de la ultima identificare,
-                # IGNORĂM "Unknown" și presupunem că e tot persoana anterioară.
+                # If less than 60 seconds have passed since the last identification,
+                # IGNORE "Unknown" and assume it's still the previous person.
                 time_since_last = now - self.last_known_speaker_time
                 if time_since_last < 60.0:
-                    self.get_logger().debug(f'ignor "Unknown" - păstrez {self.current_speaker} ({time_since_last:.1f}s)')
+                    self.get_logger().debug(f'Ignoring "Unknown" - keeping {self.current_speaker} ({time_since_last:.1f}s)')
                 else:
-                    # A trecut prea mult timp, am uitat cine e
-                    self.get_logger().info(f'term timeout - reset la Unknown (au trecut {time_since_last:.1f}s)')
+                    # Too much time has passed, reset to Unknown
+                    self.get_logger().info(f'Speaker timeout - resetting to Unknown ({time_since_last:.1f}s elapsed)')
                     self.current_speaker = "Unknown"
     
     def _get_person_context_prompt(self) -> str:

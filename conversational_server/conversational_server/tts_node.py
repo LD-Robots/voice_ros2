@@ -4,7 +4,6 @@ TTS Node - Text to Speech with MULTIPLE BACKENDS, STREAMING and DOUBLE BUFFER.
 
 BACKENDS:
   - edge-tts (default) - Microsoft Edge TTS, requires internet
-  - piper - Offline TTS fallback (high quality, ONNX models)
 
 DOUBLE BUFFER: Synthesize next chunk in parallel with current playback.
 
@@ -64,8 +63,7 @@ class TTSNode(Node):
     def __init__(self):
         super().__init__('tts_node')
         
-        # Parametri configurabili
-        self.declare_parameter('backend', 'edge')  # 'edge' sau 'piper'
+        # Configurable parameters
         self.declare_parameter('voice_en', 'en-IE-EmilyNeural')
         self.declare_parameter('voice_ro', 'ro-RO-AlinaNeural')
         self.declare_parameter('rate', '+0%')
@@ -78,7 +76,7 @@ class TTSNode(Node):
         self.pitch = self.get_parameter('pitch').value
         self.buffer_size = self.get_parameter('buffer_size').value
         
-        # Edge TTS necesită soundfile pt MP3
+        # Edge TTS requires soundfile for MP3 decoding
         if not SOUNDFILE_AVAILABLE:
             self.get_logger().error('soundfile not installed - required for edge-tts!')
             raise RuntimeError('soundfile not available')
@@ -92,7 +90,7 @@ class TTSNode(Node):
         # Target sample rate (fix "horror voice" issues by standardizing on 16kHz)
         self.target_sample_rate = 16000
         
-        # === WAV CACHE - fraze comune pre-generate ===
+        # === WAV CACHE - pre-generated common phrases ===
         self.cache_dir = '/tmp/tts_cache'
         os.makedirs(self.cache_dir, exist_ok=True)
         
@@ -193,21 +191,21 @@ class TTSNode(Node):
         self.producer_thread = threading.Thread(target=self._producer_loop, daemon=True, name="TTS-Producer")
         self.producer_thread.start()
         
-        # Thread CONSUMER: citeste din audio_queue, publică pe /audio_out
+        # CONSUMER thread: reads from audio_queue, publishes to /audio_out
         self.consumer_thread = threading.Thread(target=self._consumer_loop, daemon=True, name="TTS-Consumer")
         self.consumer_thread.start()
         
         self.get_logger().debug('TTS Node started with DOUBLE BUFFER + CACHE! Listening on /llm_stream')
     
     def _publish_speaking_status(self):
-        """Publică periodic starea is_speaking pe /tts_speaking."""
+        """Periodically publish the is_speaking state to /tts_speaking."""
         from std_msgs.msg import Bool
         msg = Bool()
         msg.data = self.is_speaking
         self.speaking_pub.publish(msg)
     
     def stop_callback(self, msg: Bool):
-        """Oprește TTS când primim True pe /tts_stop."""
+        """Stop TTS when True is received on /tts_stop."""
         if msg.data:
             self.stop()
     
@@ -260,7 +258,7 @@ class TTSNode(Node):
         
         audio_data, sample_rate = self.audio_cache[key]
         
-        # Publică audio
+        # Publish audio
         out = Audio()
         out.data = audio_data.tolist()
         out.sample_rate = sample_rate
@@ -276,7 +274,7 @@ class TTSNode(Node):
         if self.current_backend != 'legacy' and command not in self.system_commands:
             return
         
-        # Dacă e un key din cache, îl redă
+        # If it's a cache key, play it
         if command in self.audio_cache or command in self.cache_phrases:
             self.say_cached(command)
         else:
@@ -287,7 +285,7 @@ class TTSNode(Node):
         lang = lang.lower() if lang else 'en'
         if lang.startswith('ro'):
             return self.voice_ro
-        # Orice altă limbă -> engleză
+        # Any other language -> English
         return self.voice_en
     
     def _preprocess_numbers(self, text: str, lang: str) -> str:
@@ -299,7 +297,7 @@ class TTSNode(Node):
         if base_lang not in ['en', 'ro']:
             base_lang = 'en'
 
-        # 1. Traducem semnele matematice uzuale (cu spații în jur)
+        # 1. Replace common math symbols (with surrounding spaces)
         math_symbols = {
             'en': {' + ': ' plus ', ' - ': ' minus ', ' = ': ' equals ', ' * ': ' times ', ' / ': ' divided by '},
             'ro': {' + ': ' plus ', ' - ': ' minus ', ' = ': ' egal ', ' * ': ' înmulțit cu ', ' / ': ' împărțit la '}
@@ -308,10 +306,10 @@ class TTSNode(Node):
         for symbol, word in math_symbols[base_lang].items():
             text = text.replace(symbol, word)
             
-        # Tratăm și cazul în care minusul e lipit direct de număr (ex: -50 -> minus 50)
+        # Also handle minus sign directly attached to a number (e.g. -50 -> minus 50)
         text = re.sub(r'(?<!\w)-(?=\d)', 'minus ', text)
 
-        # 2. Transformăm numerele în cuvinte
+        # 2. Convert numbers to words
         def replace_match(match):
             s = match.group(0)
             try:
@@ -334,23 +332,17 @@ class TTSNode(Node):
                 return match.group(0)
 
         return re.sub(r'\b\d+(?:[.,]\d+)*\b', replace_match, text)
-
-        # Regex care prinde numere complexe: 3.14, 3,14, 100,000, 1.000.000 etc.
-        return re.sub(r'\b\d+(?:[.,]\d+)*\b', replace_match, text) 
-
-        # Regex nou care prinde și numere cu virgulă/punct (ex: 100,000.50, 3.14, 4520)
-        return re.sub(r'\b(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\b', replace_match, text)
     
     def stream_callback(self, msg: TextChunk):
-        """Procesează chunk-uri de text streaming."""
+        """Process streaming text chunks."""
         if self.current_backend != 'legacy':
             return
-        # Sesiune nouă - resetează
+        # New session - reset
         if self.current_session and msg.session_id != self.current_session:
             if not msg.is_final:
                 self.current_session = msg.session_id
                 self.stop_requested = True  # Stop what is currently playing
-                # Golim queue-urile
+                # Clear the queues
                 self._clear_queues()
                 self.stop_requested = False
         
@@ -377,7 +369,7 @@ class TTSNode(Node):
             self.stop()
     
     def _clear_queues(self):
-        """Golește toate queue-urile."""
+        """Clear all queues."""
         while not self.text_queue.empty():
             try:
                 self.text_queue.get_nowait()
@@ -404,7 +396,7 @@ class TTSNode(Node):
                 if text:
                     voice = self._pick_voice(lang)
                     
-                    # ---> NOU: Transformăm numerele în cuvinte aici <---
+                    # Convert numbers to words before synthesis
                     original_text = text
                     text = self._preprocess_numbers(text, lang)
                     if text != original_text:
@@ -421,7 +413,7 @@ class TTSNode(Node):
                             audio_data = self._resample(audio_data, sample_rate, self.target_sample_rate)
                             sample_rate = self.target_sample_rate
                         
-                        # Asigură-te că e mono
+                        # Ensure mono audio
                         if len(audio_data.shape) > 1:
                             audio_data = audio_data[:, 0]
                         
@@ -467,7 +459,7 @@ class TTSNode(Node):
                     continue
                 
                 if audio_data is not None:
-                    # Publică audio - audio_playback_node va gestiona is_speaking
+                    # Publish audio - audio_playback_node manages is_speaking state
                     out = Audio()
                     out.data = audio_data.tolist()
                     out.sample_rate = sample_rate
@@ -475,7 +467,7 @@ class TTSNode(Node):
                     self.audio_pub.publish(out)
                     
                     self.get_logger().debug(f'📤 Published {len(audio_data)} samples at {sample_rate}Hz')
-                    # NU facem sleep - audio_playback_node gestionează starea is_speaking
+                    # No sleep needed - audio_playback_node manages the is_speaking state
                 
                 if is_final:
                     self.current_session = None
@@ -519,7 +511,7 @@ class TTSNode(Node):
         import io
         mp3_io = io.BytesIO(audio_bytes)
         
-        # Citește MP3 direct din buffer-ul din memorie
+        # Read MP3 directly from in-memory buffer
         audio_data, sample_rate = sf.read(mp3_io, dtype='int16')
         return audio_data, sample_rate
 

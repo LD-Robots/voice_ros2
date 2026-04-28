@@ -132,7 +132,7 @@ class AudioCaptureNode(Node):
             # Handle multi-channel extraction for ReSpeaker
             if self.respeaker_mode:
                 # indata shape is (frames, 6)
-                # Extragem doar canalul dorit (5 = AEC procesat)
+                # Extract only the desired channel (5 = processed AEC)
                 audio_f32 = audio_f32[:, self.respeaker_channel]
             
             # Scale and cast
