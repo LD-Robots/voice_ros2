@@ -5,7 +5,7 @@
       "preferred_name": "Delia",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-04-15T11:45:50.004572+00:00"
+      "last_seen": "2026-04-24T11:36:52.416699+00:00"
     },
     "speaker_001": {
       "voice_label": "speaker_001",
@@ -14,7 +14,7 @@
       "facts": [
         "this one can you tell me another one"
       ],
-      "last_seen": "2026-03-31T14:47:16.542841+00:00"
+      "last_seen": "2026-04-24T11:32:08.924691+00:00"
     },
     "speaker_002": {
       "voice_label": "speaker_002",
@@ -32,17 +32,17 @@
     },
     "speaker_004": {
       "voice_label": "speaker_004",
-      "preferred_name": "",
+      "preferred_name": "Valer",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-03-31T14:30:41.114962+00:00"
+      "last_seen": "2026-04-24T11:10:23.423778+00:00"
     },
     "speaker_005": {
       "voice_label": "speaker_005",
-      "preferred_name": "Vasile",
+      "preferred_name": "Delia",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-03-06T12:56:41.462655+00:00"
+      "last_seen": "2026-04-24T11:35:32.544766+00:00"
     },
     "speaker_007": {
       "voice_label": "speaker_007",
@@ -56,7 +56,14 @@
       "preferred_name": "Valee",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-03-06T13:08:18.352153+00:00"
+      "last_seen": "2026-04-24T11:38:18.737630+00:00"
+    },
+    "speaker_006": {
+      "voice_label": "speaker_006",
+      "preferred_name": "Zilia",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-04-24T11:39:21.826563+00:00"
     }
   }
 }
