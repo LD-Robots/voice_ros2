@@ -118,7 +118,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
-                'respeaker_mode': True,
+                'respeaker_mode': False,
                 'respeaker_channel': 5, # AEC procesat (Testele au arătat că 5 e mai bun)
                 'gain': 3.0,            # Gain digital pentru a nu avea clipping
             }]

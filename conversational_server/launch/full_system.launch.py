@@ -175,7 +175,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_vad_silence_duration_ms',
-            default_value='550',
+            default_value='650',
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
@@ -212,6 +212,26 @@ def generate_launch_description():
             'stop_keyword_requires_voice_signature',
             default_value='true',
             description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
+        ),
+        DeclareLaunchArgument(
+            'audio_device_index',
+            default_value='-1',
+            description='Microphone input device index (-1 uses OS default input)'
+        ),
+        DeclareLaunchArgument(
+            'audio_respeaker_mode',
+            default_value='false',
+            description='Enable ReSpeaker 6-channel capture mode'
+        ),
+        DeclareLaunchArgument(
+            'audio_respeaker_channel',
+            default_value='5',
+            description='ReSpeaker channel to publish when 6-channel mode is enabled'
+        ),
+        DeclareLaunchArgument(
+            'audio_gain',
+            default_value='3.0',
+            description='Digital gain multiplier applied in audio_capture_node'
         ),
         
         # ========== SERVER NODES ==========
@@ -325,7 +345,10 @@ def generate_launch_description():
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': -1,  # Auto-detect (use OS default/PulseAudio)
+                'device_index': LaunchConfiguration('audio_device_index'),
+                'respeaker_mode': LaunchConfiguration('audio_respeaker_mode'),
+                'respeaker_channel': LaunchConfiguration('audio_respeaker_channel'),
+                'gain': LaunchConfiguration('audio_gain'),
             }]
         ),
         
@@ -452,7 +475,7 @@ def generate_launch_description():
                     f'{goodbye_model_path}:stop',
                 ]),
                 # Threshold-uri individuale per model
-                'model_thresholds': 'hello_robot:0.30,stop_robot:0.70,goodbye_robot:0.40',
+                'model_thresholds': 'hello_robot:0.40,stop_robot:0.70,goodbye_robot:0.92',
             }]
         ),
 

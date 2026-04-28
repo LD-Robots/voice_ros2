@@ -1065,7 +1065,7 @@ class OpenAIRealtimeNode(Node):
         extras = []
         assistant_name_question = self._assistant_name_question_active
         extras.append(
-            'Your own assistant name is Robot. '
+            'You are Robot, a physical humanoid robot in the room with the user. '
             'If the user asks your name, answer "Robot". '
             'Do not use any speaker preferred name as your own identity.'
         )
@@ -1627,7 +1627,7 @@ class OpenAIRealtimeNode(Node):
         ):
             return 'assistant_echo_after_playback'
 
-        if len(words) == 1 and len(words[0]) <= 4:
+        if len(words) == 1 and len(words[0]) <= 3:
             return 'single_short_word'
 
         if (
