@@ -55,17 +55,37 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'realtime_web_search_enabled',
             default_value='true',
-            description='Allow OpenAI Realtime to call a web-search tool via the Responses API'
+            description='Allow OpenAI Realtime to call the web-search tool'
+        ),
+        DeclareLaunchArgument(
+            'realtime_web_search_provider',
+            default_value='brave_then_openai',
+            description='Web-search provider mode (brave_then_openai/brave/openai)'
+        ),
+        DeclareLaunchArgument(
+            'realtime_web_search_use_openai_fallback',
+            default_value='true',
+            description='When Brave is primary, fall back to OpenAI if Brave fails'
         ),
         DeclareLaunchArgument(
             'realtime_web_search_model',
             default_value='gpt-4.1-mini',
-            description='Responses API model used to execute web search tool calls'
+            description='OpenAI Responses model used for fallback web search'
         ),
         DeclareLaunchArgument(
             'realtime_web_search_context_size',
             default_value='medium',
-            description='OpenAI web-search context size (low/medium/high)'
+            description='Search context size profile (low/medium/high)'
+        ),
+        DeclareLaunchArgument(
+            'realtime_web_search_country',
+            default_value='US',
+            description='Brave country code (ISO-3166 alpha-2)'
+        ),
+        DeclareLaunchArgument(
+            'realtime_web_search_language',
+            default_value='auto',
+            description='Brave search language code (auto/en/ro/...)'
         ),
         DeclareLaunchArgument(
             'realtime_vad_threshold',
@@ -152,8 +172,14 @@ def generate_launch_description():
                 'voice': LaunchConfiguration('realtime_voice'),
                 'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
                 'web_search_enabled': LaunchConfiguration('realtime_web_search_enabled'),
+                'web_search_provider': LaunchConfiguration('realtime_web_search_provider'),
+                'web_search_use_openai_fallback': LaunchConfiguration(
+                    'realtime_web_search_use_openai_fallback'
+                ),
                 'web_search_model': LaunchConfiguration('realtime_web_search_model'),
                 'web_search_context_size': LaunchConfiguration('realtime_web_search_context_size'),
+                'web_search_country': LaunchConfiguration('realtime_web_search_country'),
+                'web_search_language': LaunchConfiguration('realtime_web_search_language'),
                 'vad_threshold': LaunchConfiguration('realtime_vad_threshold'),
                 'vad_prefix_padding_ms': 400,
                 'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),

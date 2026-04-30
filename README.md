@@ -1,6 +1,6 @@
 # Voice ROS2 - Conversational Robot System
 
-A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with optional OpenAI-backed web search.
+A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with Brave-first web search and automatic OpenAI fallback.
 
 ## 🏗️ Architecture
 
@@ -74,6 +74,7 @@ Add your API keys:
 ```
 GROQ_API_KEY=your_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
+BRAVE_SEARCH_API_KEY=your_brave_search_api_key_here
 ```
 
 > **Note:** The `.env` file is already in `.gitignore` to protect your API key.
@@ -110,8 +111,12 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
+    realtime_web_search_provider:=brave_then_openai \
+    realtime_web_search_use_openai_fallback:=true \
     realtime_web_search_model:=gpt-4.1-mini \
     realtime_web_search_context_size:=medium \
+    realtime_web_search_country:=US \
+    realtime_web_search_language:=auto \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
     realtime_continued_turn_response_delay_ms:=450 \
@@ -134,8 +139,12 @@ ros2 launch conversational_server server_pipeline.launch.py \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
+    realtime_web_search_provider:=brave_then_openai \
+    realtime_web_search_use_openai_fallback:=true \
     realtime_web_search_model:=gpt-4.1-mini \
     realtime_web_search_context_size:=medium \
+    realtime_web_search_country:=US \
+    realtime_web_search_language:=auto \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
     realtime_continued_turn_response_delay_ms:=450 \
@@ -204,8 +213,12 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_model:=gpt-realtime-mini \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
+    realtime_web_search_provider:=brave_then_openai \
+    realtime_web_search_use_openai_fallback:=true \
     realtime_web_search_model:=gpt-4.1-mini \
     realtime_web_search_context_size:=medium \
+    realtime_web_search_country:=US \
+    realtime_web_search_language:=auto \
     realtime_vad_silence_duration_ms:=550 \
     realtime_response_create_delay_ms:=100 \
     realtime_continued_turn_response_delay_ms:=450 \
@@ -217,14 +230,18 @@ Recommended first test:
 - `realtime_model:=gpt-realtime-mini`
 - `realtime_voice:=cedar`
 - `realtime_web_search_enabled:=true`
+- `realtime_web_search_provider:=brave_then_openai`
+- `realtime_web_search_use_openai_fallback:=true`
 - `realtime_web_search_model:=gpt-4.1-mini`
 - `realtime_web_search_context_size:=medium`
+- `realtime_web_search_country:=US`
+- `realtime_web_search_language:=auto`
 - `realtime_vad_silence_duration_ms:=550`
 - `realtime_response_create_delay_ms:=100`
 - `realtime_continued_turn_response_delay_ms:=450`
 - `realtime_capture_during_playback:=true`
 
-When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
+When `conversation_backend:=openai_realtime`, the Realtime model can call a local `web_search` tool. By default this tries Brave Search first and, if Brave fails, automatically falls back to OpenAI Responses web search in the same turn.
 
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
@@ -237,7 +254,7 @@ Edit `full_system.launch.py` and adjust:
 ### ✅ Implemented
 - ✅ **Bilingual** - Romanian and English automatic detection
 - ✅ **Streaming LLM** - Real-time response generation
-- ✅ **Web Search** - OpenAI Realtime can trigger OpenAI web search for current events and live facts
+- ✅ **Web Search** - OpenAI Realtime can trigger Brave Search first, with OpenAI fallback for current events and live facts
 - ✅ **Wake Word** - "Hello robot" / "Hey robot" detection
 - ✅ **Barge-in** - Interrupt TTS when user speaks
 - ✅ **Voice Activity Detection** - Automatic speech end detection

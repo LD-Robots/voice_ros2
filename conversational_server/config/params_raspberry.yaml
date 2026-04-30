@@ -56,8 +56,12 @@ openai_realtime_node:
     assistant_echo_window_s: 10.0
     assistant_echo_similarity_threshold: 84.0
     web_search_enabled: true
+    web_search_provider: "brave_then_openai"
+    web_search_use_openai_fallback: true
     web_search_model: "gpt-4.1"
     web_search_context_size: "medium"
+    web_search_country: "US"
+    web_search_language: "auto"
     capture_during_playback: true
     speaker_switch_hits_required: 2
     language_switch_hits_required: 2

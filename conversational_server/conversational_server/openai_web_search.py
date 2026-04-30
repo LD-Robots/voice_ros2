@@ -129,6 +129,7 @@ def build_web_search_tool_output(
     payload: dict[str, Any] | None = None,
     error: str = '',
     max_sources: int = DEFAULT_WEB_SEARCH_SOURCES_LIMIT,
+    provider: str = '',
 ) -> str:
     """Serialize search results into a tool output string for Realtime."""
     summary = ''
@@ -147,6 +148,9 @@ def build_web_search_tool_output(
         'summary': summary,
         'sources': sources,
     }
+    provider_name = str(provider or '').strip().lower()
+    if provider_name:
+        tool_output['provider'] = provider_name
     if error:
         tool_output['error'] = error
 

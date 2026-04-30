@@ -27,6 +27,12 @@ from conversational_client.conversation_utils import (
     is_reengagement_phrase,
 )
 from std_msgs.msg import Bool, String
+from .brave_web_search import (
+    DEFAULT_WEB_SEARCH_COUNTRY,
+    DEFAULT_WEB_SEARCH_LANGUAGE,
+    build_web_search_tool_output as build_brave_web_search_tool_output,
+    call_brave_web_search,
+)
 from .language_utils import ConversationLanguageTracker
 from .openai_web_search import (
     DEFAULT_WEB_SEARCH_CONTEXT_SIZE,
@@ -36,7 +42,7 @@ from .openai_web_search import (
     DEFAULT_WEB_SEARCH_TIMEOUT_S,
     WEB_SEARCH_FUNCTION_NAME,
     build_realtime_web_search_tool,
-    build_web_search_tool_output,
+    build_web_search_tool_output as build_openai_web_search_tool_output,
     call_openai_web_search,
 )
 from .prompt_config import load_prompt_defaults
@@ -126,6 +132,8 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('utterance_capture_min_ms', 800)
         self.declare_parameter('name_context_wait_ms', 950)
         self.declare_parameter('web_search_enabled', True)
+        self.declare_parameter('web_search_provider', 'brave_then_openai')
+        self.declare_parameter('web_search_use_openai_fallback', True)
         self.declare_parameter('web_search_model', DEFAULT_WEB_SEARCH_MODEL)
         self.declare_parameter('web_search_context_size', DEFAULT_WEB_SEARCH_CONTEXT_SIZE)
         self.declare_parameter('web_search_timeout_s', DEFAULT_WEB_SEARCH_TIMEOUT_S)
@@ -137,6 +145,8 @@ class OpenAIRealtimeNode(Node):
             'web_search_sources_limit',
             DEFAULT_WEB_SEARCH_SOURCES_LIMIT,
         )
+        self.declare_parameter('web_search_country', DEFAULT_WEB_SEARCH_COUNTRY)
+        self.declare_parameter('web_search_language', 'auto')
         self.declare_parameter(
             'instructions',
             str(load_prompt_defaults().get('realtime_instructions', '')),
@@ -241,6 +251,10 @@ class OpenAIRealtimeNode(Node):
             int(self.get_parameter('name_context_wait_ms').value),
         )
         self.web_search_enabled = bool(self.get_parameter('web_search_enabled').value)
+        self.web_search_provider = str(self.get_parameter('web_search_provider').value).strip().lower()
+        self.web_search_use_openai_fallback = bool(
+            self.get_parameter('web_search_use_openai_fallback').value
+        )
         self.web_search_model = str(self.get_parameter('web_search_model').value)
         self.web_search_context_size = str(
             self.get_parameter('web_search_context_size').value
@@ -254,6 +268,8 @@ class OpenAIRealtimeNode(Node):
             1,
             int(self.get_parameter('web_search_sources_limit').value),
         )
+        self.web_search_country = str(self.get_parameter('web_search_country').value).strip()
+        self.web_search_language = str(self.get_parameter('web_search_language').value).strip()
         self.base_instructions = str(self.get_parameter('instructions').value)
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter('sticky_speaker_timeout_s').value),
@@ -274,6 +290,21 @@ class OpenAIRealtimeNode(Node):
         if not self.api_key:
             self.get_logger().error('OPENAI_API_KEY environment variable not set!')
             raise RuntimeError('OPENAI_API_KEY not set')
+        self.brave_search_api_key = os.environ.get('BRAVE_SEARCH_API_KEY', '').strip()
+        if self.web_search_provider not in {'brave_then_openai', 'brave', 'openai'}:
+            self.get_logger().warn(
+                f'Unknown web_search_provider="{self.web_search_provider}", using "brave_then_openai".'
+            )
+            self.web_search_provider = 'brave_then_openai'
+        if (
+            self.web_search_enabled
+            and self.web_search_provider in {'brave_then_openai', 'brave'}
+            and not self.brave_search_api_key
+        ):
+            self.get_logger().warn(
+                'BRAVE_SEARCH_API_KEY is not set. Brave web search will be skipped; '
+                'falling back to OpenAI web search when enabled.'
+            )
         if not WEBSOCKET_AVAILABLE:
             self.get_logger().error('websocket-client package not installed!')
             raise RuntimeError('websocket-client not available')
@@ -1538,6 +1569,28 @@ class OpenAIRealtimeNode(Node):
     def _normalize_text(text: str) -> str:
         return normalize_realtime_text(text)
 
+    def _should_try_brave_web_search(self) -> bool:
+        return self.web_search_provider in {'brave_then_openai', 'brave'}
+
+    def _should_try_openai_web_search(self) -> bool:
+        if self.web_search_provider == 'openai':
+            return True
+        if self.web_search_provider == 'brave':
+            return self.web_search_use_openai_fallback
+        return self.web_search_use_openai_fallback
+
+    def _get_web_search_language(self) -> str:
+        configured = str(self.web_search_language or '').strip().lower()
+        if configured and configured != 'auto':
+            return configured
+
+        preferred_language = str(
+            self.person_context.get('preferred_language', '') or ''
+        ).strip().lower()
+        if preferred_language.startswith('ro'):
+            return 'ro'
+        return DEFAULT_WEB_SEARCH_LANGUAGE
+
     def _remember_deferred_response(self, item_id: str, reason: str):
         self._deferred_response_item_id = item_id
         self._deferred_response_reason = reason
@@ -1609,24 +1662,72 @@ class OpenAIRealtimeNode(Node):
             if not query:
                 raise ValueError('Missing required "query" argument.')
 
-            payload = call_openai_web_search(
-                self.api_key,
-                query,
-                model=self.web_search_model,
-                search_context_size=self.web_search_context_size,
-                timeout_s=self.web_search_timeout_s,
-                max_output_tokens=self.web_search_max_output_tokens,
-            )
-            output = build_web_search_tool_output(
-                query,
-                payload=payload,
-                max_sources=self.web_search_sources_limit,
-            )
-            self.get_logger().info(f'OpenAI Responses web search completed for: {query}')
+            brave_error = ''
+            openai_error = ''
+
+            if self._should_try_brave_web_search():
+                if not self.brave_search_api_key:
+                    brave_error = 'BRAVE_SEARCH_API_KEY is not configured.'
+                else:
+                    try:
+                        payload = call_brave_web_search(
+                            self.brave_search_api_key,
+                            query,
+                            context_size=self.web_search_context_size,
+                            timeout_s=self.web_search_timeout_s,
+                            country=self.web_search_country,
+                            search_language=self._get_web_search_language(),
+                        )
+                        output = build_brave_web_search_tool_output(
+                            query,
+                            payload=payload,
+                            max_sources=self.web_search_sources_limit,
+                        )
+                        self.get_logger().info(f'Brave Search completed for: {query}')
+                    except Exception as exc:
+                        brave_error = str(exc).strip() or 'Unknown Brave Search failure.'
+                        self.get_logger().warn(
+                            f'Brave Search failed, trying OpenAI fallback: {brave_error}'
+                        )
+
+            if not output and self._should_try_openai_web_search():
+                try:
+                    payload = call_openai_web_search(
+                        self.api_key,
+                        query,
+                        model=self.web_search_model,
+                        search_context_size=self.web_search_context_size,
+                        timeout_s=self.web_search_timeout_s,
+                        max_output_tokens=self.web_search_max_output_tokens,
+                    )
+                    output = build_openai_web_search_tool_output(
+                        query,
+                        payload=payload,
+                        max_sources=self.web_search_sources_limit,
+                        provider='openai',
+                    )
+                    self.get_logger().info(f'OpenAI Responses web search completed for: {query}')
+                except Exception as exc:
+                    openai_error = str(exc).strip() or 'Unknown OpenAI web search failure.'
+
+            if not output:
+                if brave_error and openai_error:
+                    message = f'Brave failed: {brave_error} | OpenAI fallback failed: {openai_error}'
+                elif brave_error:
+                    message = brave_error
+                elif openai_error:
+                    message = openai_error
+                else:
+                    message = 'No web-search provider available.'
+                raise RuntimeError(message)
         except Exception as exc:
             message = str(exc).strip() or 'Unknown web search failure.'
-            self.get_logger().error(f'OpenAI web search tool failed: {message}')
-            output = build_web_search_tool_output(query, error=message)
+            self.get_logger().error(f'Web search tool failed: {message}')
+            output = build_openai_web_search_tool_output(
+                query,
+                error=message,
+                provider='openai',
+            )
 
         if not self._send_event({
             'type': 'conversation.item.create',

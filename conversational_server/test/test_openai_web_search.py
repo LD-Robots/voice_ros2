@@ -70,3 +70,20 @@ def test_build_web_search_tool_output_serializes_summary_and_sources():
         'summary': 'Latest result summary.',
         'sources': [{'title': 'Source A', 'url': 'https://a.example'}],
     }
+
+
+def test_build_web_search_tool_output_includes_provider_when_set():
+    payload = {
+        'output_text': 'Latest result summary.',
+        'output': [],
+    }
+
+    output = json.loads(
+        build_web_search_tool_output(
+            'latest weather',
+            payload=payload,
+            provider='openai',
+        )
+    )
+
+    assert output['provider'] == 'openai'
