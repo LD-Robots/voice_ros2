@@ -44,6 +44,15 @@
       "facts": [],
       "last_seen": "2026-04-24T11:35:32.544766+00:00"
     },
+    "speaker_006": {
+      "voice_label": "speaker_006",
+      "preferred_name": "Zilia",
+      "preferred_language": "",
+      "facts": [
+        "i am allergic to cats can you tell me a breed of cat that doesn t have hair"
+      ],
+      "last_seen": "2026-05-04T11:56:52.562815+00:00"
+    },
     "speaker_007": {
       "voice_label": "speaker_007",
       "preferred_name": "Alex",
@@ -56,14 +65,7 @@
       "preferred_name": "Valee",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-04-24T11:38:18.737630+00:00"
-    },
-    "speaker_006": {
-      "voice_label": "speaker_006",
-      "preferred_name": "Zilia",
-      "preferred_language": "",
-      "facts": [],
-      "last_seen": "2026-04-24T11:39:21.826563+00:00"
+      "last_seen": "2026-05-04T12:43:54.043616+00:00"
     }
   }
 }

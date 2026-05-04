@@ -78,10 +78,24 @@ class AudioPlaybackNode(Node):
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('sample_rate', 16000)   # Audio sample rate
         self.declare_parameter('channels', 1)          # 1 = mono, 2 = stereo
-        
+        self.declare_parameter('gain', 1.0)
+        self.declare_parameter('force_os_volume_percent', -1)
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
-        
+        self.gain = self.get_parameter('gain').value        
+        force_vol = self.get_parameter('force_os_volume_percent').value
+        force_vol = self.get_parameter('force_os_volume_percent').value
+        if force_vol >= 0:
+            import subprocess
+            cmd = ["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{force_vol}%"]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    self.get_logger().info(f"🎛️ Forced laptop OS volume to {force_vol}%")
+                else:
+                    self.get_logger().warn(f"Failed to set OS volume. Error: {result.stderr.strip()}")
+            except Exception as e:
+                self.get_logger().warn(f"Failed to execute volume command: {e}")
         # ─────────────────────────────────────────────────────────
         # BUFFER - audio queue (accumulate before playback)
         # ─────────────────────────────────────────────────────────

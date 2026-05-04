@@ -87,6 +87,7 @@ audio_segment_node:
 audio_playback_node:
   ros__parameters:
     sample_rate: 16000
+    gain: 1.0
 
 barge_in_node:
   ros__parameters:

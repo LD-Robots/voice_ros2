@@ -2,6 +2,8 @@
   "voice_label": "speaker_006",
   "preferred_name": "Zilia",
   "preferred_language": "",
-  "facts": [],
-  "last_seen": "2026-04-24T11:39:21.826563+00:00"
+  "facts": [
+    "i am allergic to cats can you tell me a breed of cat that doesn t have hair"
+  ],
+  "last_seen": "2026-05-04T11:56:52.562815+00:00"
 }

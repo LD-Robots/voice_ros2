@@ -582,6 +582,13 @@ class OpenAIRealtimeNode(Node):
             return
 
         if self._should_filter_playback_input(now_ms):
+            xf = pcm.astype(np.float32) / 32768.0
+            rms = float(np.sqrt(np.mean(xf * xf) + 1e-12))
+            dbfs = 20.0 * np.log10(rms + 1e-12)
+            if getattr(self, '_debug_dbfs_counter', 0) % 5 == 0:  # Printeaza o data la ~300ms
+                self.get_logger().info(f'[Ecou Boxe] Nivel microfon = {dbfs:.2f} dbFS')
+            self._debug_dbfs_counter = getattr(self, '_debug_dbfs_counter', 0) + 1
+            
             if not self.playback_input_filter.should_forward(
                 pcm,
                 sample_rate=input_sample_rate,
