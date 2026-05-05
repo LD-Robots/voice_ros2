@@ -52,7 +52,7 @@ def generate_launch_description():
         DeclareLaunchArgument('config', default_value='raspberry', description='Profile (raspberry/laptop)'),
         DeclareLaunchArgument(
             'conversation_backend',
-            default_value='openai_realtime',
+            default_value='legacy',
             description='Backend (legacy/openai_realtime/hume_evi3)',
         ),
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),

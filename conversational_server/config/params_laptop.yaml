@@ -5,7 +5,7 @@
 
 backend_manager_node:
   ros__parameters:
-    preferred_backend: "openai_realtime"
+    preferred_backend: "legacy"
     fallback_backend: "legacy"
     offline_timeout_s: 1000.0
     auto_return_to_preferred: true
@@ -31,9 +31,18 @@ tts_node:
   ros__parameters:
     voice_en: "en-IE-EmilyNeural"
     voice_ro: "ro-RO-AlinaNeural"
+    provider: "voxtral"
     buffer_size: 2
     rate: "+0%"
     volume: "+0%"
+    output_gain: 0.85
+    voxtral_api_key_env: "VOXTRAL_API_KEY"
+    voxtral_api_url: "https://api.mistral.ai/v1/audio/speech"
+    voxtral_model: "voxtral-mini-tts-2603"
+    voxtral_response_format: "wav"
+    voxtral_voice_id: ""
+    voxtral_ref_audio_path: ""
+    voxtral_timeout_s: 30.0
 
 openai_realtime_node:
   ros__parameters:

@@ -163,6 +163,12 @@ def generate_launch_description():
             parameters=[{
                 'voice_en': 'en-GB-RyanNeural',
                 'voice_ro': 'ro-RO-EmilNeural',
+                'provider': 'voxtral',
+                'output_gain': 0.85,
+                'voxtral_api_key_env': 'VOXTRAL_API_KEY',
+                'voxtral_api_url': 'https://api.mistral.ai/v1/audio/speech',
+                'voxtral_model': 'voxtral-mini-tts-2603',
+                'voxtral_response_format': 'wav',
             }]
         ),
 

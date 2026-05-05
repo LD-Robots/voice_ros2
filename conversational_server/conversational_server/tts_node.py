@@ -18,6 +18,8 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk, Audio
 from std_msgs.msg import Bool, String
 import asyncio
+import base64
+import io
 import os
 import numpy as np
 import threading
@@ -25,7 +27,6 @@ import queue
 import time
 import scipy.signal  # For resampling
 import re
-import wave
 from pathlib import Path
 
 def _find_workspace_root():
@@ -50,6 +51,13 @@ except ImportError:
     EDGE_TTS_AVAILABLE = False
     print("⚠️ edge-tts not installed. Run: pip install edge-tts")
 
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    print("⚠️ requests not installed. Run: pip install requests")
+
 # Soundfile for audio reading
 try:
     import soundfile as sf
@@ -58,34 +66,107 @@ except ImportError:
     SOUNDFILE_AVAILABLE = False
     print("⚠️ soundfile not installed. Run: pip install soundfile")
 
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+
 
 class TTSNode(Node):
     def __init__(self):
         super().__init__('tts_node')
+
+        if DOTENV_AVAILABLE:
+            workspace_root = _find_workspace_root()
+            env_path = workspace_root / '.env' if workspace_root else None
+            if env_path and env_path.exists():
+                load_dotenv(dotenv_path=env_path)
         
         # Configurable parameters
         self.declare_parameter('voice_en', 'en-IE-EmilyNeural')
         self.declare_parameter('voice_ro', 'ro-RO-AlinaNeural')
+        self.declare_parameter('provider', 'edge')
         self.declare_parameter('rate', '+0%')
         self.declare_parameter('pitch', '+0Hz')
+        self.declare_parameter('volume', '+0%')
+        self.declare_parameter('output_gain', 1.0)
         self.declare_parameter('buffer_size', 2)  # Double buffer (2 chunks ahead)
+        self.declare_parameter('voxtral_api_url', 'https://api.mistral.ai/v1/audio/speech')
+        self.declare_parameter('voxtral_api_key_env', 'VOXTRAL_API_KEY')
+        self.declare_parameter('voxtral_model', 'voxtral-mini-tts-2603')
+        self.declare_parameter('voxtral_response_format', 'wav')
+        self.declare_parameter('voxtral_voice_id', '')
+        self.declare_parameter('voxtral_ref_audio_path', '')
+        self.declare_parameter('voxtral_timeout_s', 30.0)
         
         self.voice_en = self.get_parameter('voice_en').value
         self.voice_ro = self.get_parameter('voice_ro').value
+        self.provider = str(self.get_parameter('provider').value).strip().lower()
         self.rate = self.get_parameter('rate').value
         self.pitch = self.get_parameter('pitch').value
+        self.volume = self.get_parameter('volume').value
+        self.output_gain = float(self.get_parameter('output_gain').value)
         self.buffer_size = self.get_parameter('buffer_size').value
-        
-        # Edge TTS requires soundfile for MP3 decoding
-        if not SOUNDFILE_AVAILABLE:
-            self.get_logger().error('soundfile not installed - required for edge-tts!')
-            raise RuntimeError('soundfile not available')
-        
-        if not EDGE_TTS_AVAILABLE:
-            self.get_logger().error('edge-tts not installed!')
-            raise RuntimeError('edge-tts not available')
+        self.voxtral_api_url = str(self.get_parameter('voxtral_api_url').value).strip()
+        self.voxtral_api_key_env = str(self.get_parameter('voxtral_api_key_env').value).strip()
+        self.voxtral_model = str(self.get_parameter('voxtral_model').value).strip()
+        self.voxtral_response_format = str(
+            self.get_parameter('voxtral_response_format').value
+        ).strip().lower()
+        self.voxtral_voice_id = str(self.get_parameter('voxtral_voice_id').value).strip()
+        self.voxtral_ref_audio_path = str(
+            self.get_parameter('voxtral_ref_audio_path').value
+        ).strip()
+        self.voxtral_timeout_s = float(self.get_parameter('voxtral_timeout_s').value)
 
-        self.get_logger().info(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
+        if self.provider not in {'edge', 'voxtral'}:
+            self.get_logger().warn(
+                f'Unknown TTS provider "{self.provider}", falling back to edge'
+            )
+            self.provider = 'edge'
+        
+        # All current providers decode audio via soundfile.
+        if not SOUNDFILE_AVAILABLE:
+            self.get_logger().error('soundfile not installed - required for TTS decoding!')
+            raise RuntimeError('soundfile not available')
+
+        self.voxtral_ref_audio_b64 = ''
+        if self.voxtral_ref_audio_path:
+            try:
+                with open(self.voxtral_ref_audio_path, 'rb') as ref_file:
+                    self.voxtral_ref_audio_b64 = base64.b64encode(ref_file.read()).decode('ascii')
+            except Exception as e:
+                self.get_logger().warn(
+                    f'Failed to load voxtral_ref_audio_path "{self.voxtral_ref_audio_path}": {e}'
+                )
+
+        self.voxtral_api_key = ''
+        if self.provider == 'voxtral':
+            if not REQUESTS_AVAILABLE:
+                raise RuntimeError('requests not available for Voxtral TTS provider')
+            self.voxtral_api_key = os.getenv(self.voxtral_api_key_env, '').strip()
+            if not self.voxtral_api_key:
+                raise RuntimeError(
+                    f'Missing Voxtral API key env var: {self.voxtral_api_key_env}'
+                )
+            if self.voxtral_response_format not in {'wav', 'mp3', 'flac', 'opus', 'pcm'}:
+                self.get_logger().warn(
+                    f'Unsupported Voxtral response_format "{self.voxtral_response_format}", using wav'
+                )
+                self.voxtral_response_format = 'wav'
+            self.get_logger().info(
+                '✅ TTS initialized with Voxtral: '
+                f'model={self.voxtral_model}, format={self.voxtral_response_format}, '
+                f'voice_id={"set" if self.voxtral_voice_id else "auto"}, '
+                f'ref_audio={"set" if self.voxtral_ref_audio_b64 else "none"}'
+            )
+        else:
+            if not EDGE_TTS_AVAILABLE:
+                raise RuntimeError('edge-tts not available for provider=edge')
+            self.get_logger().info(
+                f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}'
+            )
         
         # Target sample rate (fix "horror voice" issues by standardizing on 16kHz)
         self.target_sample_rate = 16000
@@ -459,6 +540,10 @@ class TTSNode(Node):
                     continue
                 
                 if audio_data is not None:
+                    if self.output_gain != 1.0:
+                        scaled = audio_data.astype(np.float32) * float(self.output_gain)
+                        audio_data = np.clip(scaled, -32768.0, 32767.0).astype(np.int16)
+
                     # Publish audio - audio_playback_node manages is_speaking state
                     out = Audio()
                     out.data = audio_data.tolist()
@@ -484,7 +569,8 @@ class TTSNode(Node):
             text,
             voice,
             rate=self.rate,
-            pitch=self.pitch
+            pitch=self.pitch,
+            volume=self.volume,
         )
         
         audio_data = b''
@@ -495,7 +581,9 @@ class TTSNode(Node):
         return audio_data
     
     def _synthesize(self, text: str, voice: str):
-        """Synthesize text to audio using Edge TTS."""
+        """Synthesize text to audio using configured TTS provider."""
+        if self.provider == 'voxtral':
+            return self._synthesize_voxtral(text)
         return self._synthesize_edge(text, voice)
     
     def _synthesize_edge(self, text: str, voice: str):
@@ -508,28 +596,63 @@ class TTSNode(Node):
             loop.close()
         
         # Use io.BytesIO directly in memory
-        import io
         mp3_io = io.BytesIO(audio_bytes)
         
         # Read MP3 directly from in-memory buffer
         audio_data, sample_rate = sf.read(mp3_io, dtype='int16')
         return audio_data, sample_rate
 
-    async def _synthesize_async(self, text: str, voice: str) -> bytes:
-        """Synthesize text to audio using Edge TTS."""
-        communicate = edge_tts.Communicate(
-            text,
-            voice,
-            rate=self.rate,
-            pitch=self.pitch
+    def _synthesize_voxtral(self, text: str):
+        """Synthesize with Voxtral TTS (Mistral Audio Speech endpoint)."""
+        payload = {
+            'input': text,
+            'model': self.voxtral_model,
+            'response_format': self.voxtral_response_format,
+            'stream': False,
+        }
+        if self.voxtral_voice_id:
+            payload['voice_id'] = self.voxtral_voice_id
+        elif self.voxtral_ref_audio_b64:
+            payload['ref_audio'] = self.voxtral_ref_audio_b64
+
+        headers = {
+            'Authorization': f'Bearer {self.voxtral_api_key}',
+            'Content-Type': 'application/json',
+        }
+        response = requests.post(
+            self.voxtral_api_url,
+            headers=headers,
+            json=payload,
+            timeout=self.voxtral_timeout_s,
         )
-        
-        audio_data = b''
-        async for chunk in communicate.stream():
-            if chunk['type'] == 'audio':
-                audio_data += chunk['data']
-        
-        return audio_data
+        if response.status_code >= 400:
+            err_msg = f'HTTP {response.status_code}'
+            try:
+                err_payload = response.json()
+                if isinstance(err_payload, dict) and err_payload.get('message'):
+                    err_msg = f'{err_msg}: {err_payload.get("message")}'
+            except Exception:
+                body = (response.text or '').strip()
+                if body:
+                    err_msg = f'{err_msg}: {body[:200]}'
+            raise RuntimeError(f'Voxtral TTS request failed: {err_msg}')
+
+        payload_out = response.json()
+        audio_b64 = str(payload_out.get('audio_data', '') or '')
+        if not audio_b64:
+            raise RuntimeError('Voxtral TTS response missing audio_data')
+        audio_bytes = base64.b64decode(audio_b64)
+
+        if self.voxtral_response_format == 'pcm':
+            # Docs define pcm as raw float32 LE samples.
+            pcm_f32 = np.frombuffer(audio_bytes, dtype='<f4')
+            pcm_f32 = np.clip(pcm_f32, -1.0, 1.0)
+            audio_i16 = (pcm_f32 * 32767.0).astype(np.int16)
+            return audio_i16, self.target_sample_rate
+
+        audio_buf = io.BytesIO(audio_bytes)
+        audio_data, sample_rate = sf.read(audio_buf, dtype='int16')
+        return audio_data, sample_rate
 
     def _resample(self, audio_data, original_rate, target_rate):
         """Resample audio data to target rate."""
