@@ -68,7 +68,7 @@ openai_realtime_node:
 audio_capture_node:
   ros__parameters:
     device_index: -1
-    respeaker_mode: true
+    respeaker_mode: false
     respeaker_channel: 0
     gain: 1.0
     chunk_ms: 60
