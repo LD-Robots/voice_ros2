@@ -65,6 +65,7 @@ class WakeWordNode(Node):
         self.declare_parameter('threshold', 0.5)     # Default detection threshold
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('cooldown_ms', 1500)  # Cooldown between detections
+        self.declare_parameter('ack_on_retrigger', True)
         
         # Custom ONNX models - can be set from launch/YAML
         # Format: "path1:kind1,path2:kind2" (e.g., "/path/hello.onnx:wake,/path/goodbye.onnx:stop")
@@ -77,6 +78,7 @@ class WakeWordNode(Node):
         self.threshold = self.get_parameter('threshold').value
         self.sample_rate = self.get_parameter('sample_rate').value
         self.cooldown_ms = self.get_parameter('cooldown_ms').value
+        self.ack_on_retrigger = bool(self.get_parameter('ack_on_retrigger').value)
         custom_models_str = self.get_parameter('custom_models').value
         model_thresholds_str = self.get_parameter('model_thresholds').value
         
@@ -312,8 +314,21 @@ class WakeWordNode(Node):
                     if not self.session_active:
                         self._activate_session(model_name, score)
                     else:
-                        # If already active, we can do an optional re-activate/ack
-                        self.get_logger().debug('ℹ️ Session already active (wake word ignored)')
+                        # Optional user feedback while already active
+                        if self.ack_on_retrigger:
+                            self.get_logger().info(
+                                f'🟢 Wake retrigger via "{model_name}" (score={score:.2f})'
+                            )
+                            wake_event = WakeWord()
+                            wake_event.header.stamp = self.get_clock().now().to_msg()
+                            wake_event.word = model_name
+                            wake_event.score = float(score)
+                            self.wake_word_pub.publish(wake_event)
+                            tts_cmd = String()
+                            tts_cmd.data = 'ack_en'
+                            self.tts_cmd_pub.publish(tts_cmd)
+                        else:
+                            self.get_logger().debug('ℹ️ Session already active (wake word ignored)')
     
     # ═══════════════════════════════════════════════════════════════════
     # SESSION ACTIVATION (wake word)

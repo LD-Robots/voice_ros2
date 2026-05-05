@@ -226,6 +226,41 @@ Recommended first test:
 
 When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
 
+### ReSpeaker Tuning Mode (XVF3000)
+
+`audio_capture_node` now supports ReSpeaker DSP tuning over USB (PyUSB), based on the XVF3000 `tuning.py` control interface.
+
+Important channel mapping for 6-channel firmware:
+- `0` = processed audio for ASR (recommended for conversation)
+- `1..4` = raw microphones
+- `5` = playback reference (using this as mic input can cause self-hearing loops)
+
+Default profile in YAML:
+- `respeaker_tuning_enabled: true`
+- `respeaker_tuning_profile: "aggressive_echo_guard"`
+- `respeaker_channel: 0`
+
+Useful parameters in `audio_capture_node`:
+- `respeaker_tuning_enabled` (bool)
+- `respeaker_vendor_id` (default `10374` = `0x2886`)
+- `respeaker_product_id` (default `24` = `0x0018`)
+- `respeaker_tuning_profile` (`none`, `voice_assistant`, `aggressive_echo_guard`)
+- `respeaker_tuning_overrides` (`NAME=VALUE,NAME=VALUE`)
+- `respeaker_doa_poll_interval_s`
+
+Example override in YAML:
+```yaml
+audio_capture_node:
+  ros__parameters:
+    respeaker_tuning_overrides: "GAMMAVAD_SR=3.4,ECHOONOFF=1,AGCONOFF=0"
+```
+
+Published runtime topics:
+- `/respeaker/doa_angle` (`std_msgs/Int32`)
+- `/respeaker/voice_activity` (`std_msgs/Bool`)
+
+This is designed to keep playback enabled while reducing robot self-hearing and reply loops.
+
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
 ```python

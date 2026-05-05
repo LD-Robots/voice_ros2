@@ -129,8 +129,10 @@ def generate_launch_description():
             parameters=[{
                 'device_index': 3,  # Explicit PulseAudio ca să prindem cele 6 canale ale ReSpeaker
                 'respeaker_mode': True,
-                'respeaker_channel': 5, # AEC procesat (Testele au arătat că 5 e mai bun)
-                'gain': 3.0,            # Gain digital pentru a nu avea clipping
+                'respeaker_channel': 0,  # 0=processed ASR channel; 5 is playback reference
+                'gain': 1.0,
+                'respeaker_tuning_enabled': True,
+                'respeaker_tuning_profile': 'aggressive_echo_guard',
             }]
         ),
         

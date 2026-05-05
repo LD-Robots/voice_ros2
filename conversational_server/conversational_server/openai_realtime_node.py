@@ -94,6 +94,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('capture_during_playback', True)
         self.declare_parameter('input_transcription_enabled', True)
         self.declare_parameter('input_transcription_model', 'gpt-4o-mini-transcribe')
+        self.declare_parameter('force_language', '')
         self.declare_parameter('vad_threshold', 0.90)
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 550)
@@ -154,6 +155,13 @@ class OpenAIRealtimeNode(Node):
         self.input_transcription_model = str(
             self.get_parameter('input_transcription_model').value
         )
+        force_language_raw = str(self.get_parameter('force_language').value or '').strip().lower()
+        if force_language_raw.startswith('en'):
+            self.force_language = 'en'
+        elif force_language_raw.startswith('ro'):
+            self.force_language = 'ro'
+        else:
+            self.force_language = ''
         self.vad_threshold = float(self.get_parameter('vad_threshold').value)
         self.vad_prefix_padding_ms = int(self.get_parameter('vad_prefix_padding_ms').value)
         self.vad_silence_duration_ms = int(
@@ -269,6 +277,8 @@ class OpenAIRealtimeNode(Node):
         self.language_tracker = ConversationLanguageTracker(
             int(self.get_parameter('language_switch_hits_required').value)
         )
+        if self.force_language:
+            self.language_tracker.seed(self.force_language)
 
         self.api_key = os.environ.get('OPENAI_API_KEY')
         if not self.api_key:
@@ -437,6 +447,8 @@ class OpenAIRealtimeNode(Node):
         self.session_active = bool(msg.data)
         if self.session_active:
             self.get_logger().info('OpenAI conversation session is ACTIVE')
+            if self.force_language:
+                self.language_tracker.seed(self.force_language)
             self._refresh_session()
         else:
             self.get_logger().info('OpenAI conversation session is INACTIVE')
@@ -538,7 +550,10 @@ class OpenAIRealtimeNode(Node):
             'preferred_language': str(payload.get('preferred_language', '') or ''),
             'facts': list(payload.get('facts', []) or []),
         }
-        self.language_tracker.seed(self.person_context.get('preferred_language', ''))
+        if self.force_language:
+            self.language_tracker.seed(self.force_language)
+        else:
+            self.language_tracker.seed(self.person_context.get('preferred_language', ''))
         self._refresh_session()
 
     def robot_command_callback(self, msg: RobotCommand):
@@ -767,10 +782,14 @@ class OpenAIRealtimeNode(Node):
                     self._resume_requested = self._is_resume_request(transcript)
                     if self._resume_requested:
                         self.get_logger().info('Resume request detected for interrupted reply')
-                active_language = self.language_tracker.observe(
-                    transcript,
-                    preferred_language=self.person_context.get('preferred_language', ''),
-                )
+                if self.force_language:
+                    active_language = self.force_language
+                    self.language_tracker.seed(self.force_language)
+                else:
+                    active_language = self.language_tracker.observe(
+                        transcript,
+                        preferred_language=self.person_context.get('preferred_language', ''),
+                    )
                 self._assistant_name_question_active = self._is_assistant_name_question(normalized)
                 self._refresh_session()
                 out = Transcription()
@@ -1098,6 +1117,15 @@ class OpenAIRealtimeNode(Node):
         preferred_language = self.person_context.get('preferred_language', '')
         if preferred_language:
             extras.append(f'Preferred language for this speaker: {preferred_language}.')
+        if self.force_language == 'en':
+            extras.append(
+                'Speak only English for every response unless the user explicitly asks to switch language.'
+            )
+        elif self.force_language == 'ro':
+            extras.append(
+                'Vorbeste doar in romana pentru toate raspunsurile, exceptand cazurile in care '
+                'utilizatorul cere explicit alta limba.'
+            )
         conversation_language = self.language_tracker.current_language
         if conversation_language == 'ro':
             extras.append(

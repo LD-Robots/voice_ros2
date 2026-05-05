@@ -223,7 +223,8 @@ class BargeInNode(Node):
         self.get_logger().info(
             f'🎯 Intelligent Barge-in started: min_voice={self.min_voice_ms}ms, '
             f'rms>{self.min_rms_dbfs}dB, hp={self.highpass_hz}Hz, '
-            f'zcr=[{self.zcr_min},{self.zcr_max}]'
+            f'zcr=[{self.zcr_min},{self.zcr_max}], '
+            f'voice_enabled={self.voice_enabled}, stop_enabled={self.stop_detector is not None}'
         )
     
     # ═══════════════════════════════════════════════════════════════════
