@@ -22,7 +22,12 @@ def _find_workspace_root():
 
 def generate_launch_description():
     # ========== SHARED CONTEXT ==========
-    realtime_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"])
+    openai_realtime_backend = PythonExpression(
+        ["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"]
+    )
+    hume_evi3_backend = PythonExpression(
+        ["'", LaunchConfiguration('conversation_backend'), "' == 'hume_evi3'"]
+    )
     
     client_share = get_package_share_directory('conversational_client')
     server_share = get_package_share_directory('conversational_server')
@@ -45,7 +50,11 @@ def generate_launch_description():
     return LaunchDescription([
         # ========== LAUNCH ARGUMENTS (CORE OVERRIDES) ==========
         DeclareLaunchArgument('config', default_value='raspberry', description='Profile (raspberry/laptop)'),
-        DeclareLaunchArgument('conversation_backend', default_value='openai_realtime', description='Backend (legacy/openai_realtime)'),
+        DeclareLaunchArgument(
+            'conversation_backend',
+            default_value='openai_realtime',
+            description='Backend (legacy/openai_realtime/hume_evi3)',
+        ),
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
         DeclareLaunchArgument('audio_device_index', default_value='3', description='Audio device override'),
         DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
@@ -84,7 +93,15 @@ def generate_launch_description():
             package='conversational_server',
             executable='openai_realtime_node',
             name='openai_realtime_node',
-            condition=IfCondition(realtime_backend),
+            condition=IfCondition(openai_realtime_backend),
+            parameters=[config_file_path]
+        ),
+
+        Node(
+            package='conversational_server',
+            executable='hume_evi3_node',
+            name='hume_evi3_node',
+            condition=IfCondition(hume_evi3_backend),
             parameters=[config_file_path]
         ),
         

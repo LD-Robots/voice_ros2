@@ -1,6 +1,6 @@
 # Voice ROS2 - Conversational Robot System
 
-A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with optional OpenAI-backed web search.
+A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and realtime speech-to-speech backends for OpenAI Realtime and Hume EVI 3.
 
 ## 🏗️ Architecture
 
@@ -11,6 +11,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - **LLM Node** - Language Model processing (Groq API with streaming)
 - **TTS Node** - Text-to-Speech (Edge TTS + Audio Cache)
 - **OpenAI Realtime Node** - Speech-to-speech via `gpt-realtime-mini`
+- **Hume EVI 3 Node** - Speech-to-speech via Hume EVI WebSocket API
 
 ### Client Nodes (Robot Hardware)
 - **Audio Capture Node** - Microphone input
@@ -74,6 +75,7 @@ Add your API keys:
 ```
 GROQ_API_KEY=your_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
+HUME_EVI=your_hume_api_key_here
 ```
 
 > **Note:** The `.env` file is already in `.gitignore` to protect your API key.
@@ -118,6 +120,13 @@ ros2 launch conversational_server full_system.launch.py \
     realtime_capture_during_playback:=true
 ```
 
+### Full System with Hume EVI 3
+```bash
+source /path/to/ros2_ws/install/setup.bash
+ros2 launch conversational_server full_system.launch.py \
+    conversation_backend:=hume_evi3
+```
+
 ### Server Only
 ```bash
 ros2 launch conversational_server server_pipeline.launch.py
@@ -140,6 +149,15 @@ ros2 launch conversational_server server_pipeline.launch.py \
     realtime_response_create_delay_ms:=100 \
     realtime_continued_turn_response_delay_ms:=450 \
     realtime_capture_during_playback:=true
+```
+
+Pentru Hume EVI 3:
+```bash
+source ~/voice_ros2/install/setup.bash
+ros2 launch conversational_server server_pipeline.launch.py \
+    conversation_backend:=hume_evi3 \
+    hume_capture_during_playback:=true \
+    hume_verbose_transcription:=true
 ```
 
 ### Client Only (on robot hardware)
@@ -224,6 +242,18 @@ Recommended first test:
 - `realtime_continued_turn_response_delay_ms:=450`
 - `realtime_capture_during_playback:=true`
 
+#### Hume EVI 3 Configuration
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    conversation_backend:=hume_evi3
+```
+
+Optional Hume overrides:
+- `hume_config_id:=<your_config_uuid>`
+- `hume_config_version:=<version_or_-1>`
+- `hume_capture_during_playback:=true`
+- `hume_verbose_transcription:=true`
+
 When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
 
 ### Wake Word Threshold
@@ -265,6 +295,12 @@ cat /path/to/ros2_ws/src/voice_ros2/.env
 Make sure `.env` contains:
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
+```
+
+### "HUME_EVI not set" Error
+Make sure `.env` contains:
+```bash
+HUME_EVI=your_hume_api_key_here
 ```
 
 ### Microphone Not Working

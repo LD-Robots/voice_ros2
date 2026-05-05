@@ -32,6 +32,7 @@ setup(
             'llm_node = conversational_server.llm_node:main',
             'tts_node = conversational_server.tts_node:main',
             'openai_realtime_node = conversational_server.openai_realtime_node:main',
+            'hume_evi3_node = conversational_server.hume_evi3_node:main',
             'backend_manager_node = conversational_server.backend_manager_node:main',
         ],
     },

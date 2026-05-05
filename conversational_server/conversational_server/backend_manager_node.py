@@ -3,7 +3,7 @@
 Backend Manager Node.
 
 Publishes the active conversation backend and automatically falls back to the
-legacy text pipeline when OpenAI Realtime becomes unavailable.
+legacy text pipeline when the preferred realtime backend becomes unavailable.
 """
 import time
 
@@ -29,15 +29,22 @@ class BackendManagerNode(Node):
         )
 
         self.active_backend = self.preferred_backend
-        self.realtime_status = 'unknown'
-        self.last_realtime_status_time = time.monotonic() if self.preferred_backend == 'openai_realtime' else 0.0
-
-        self.realtime_status_sub = self.create_subscription(
-            String,
-            '/openai_realtime_status',
-            self._realtime_status_callback,
-            10,
+        self.realtime_status_topic = self._status_topic_for_backend(
+            self.preferred_backend
         )
+        self.realtime_status = 'unknown'
+        self.last_realtime_status_time = (
+            time.monotonic() if self.realtime_status_topic else 0.0
+        )
+
+        self.realtime_status_sub = None
+        if self.realtime_status_topic:
+            self.realtime_status_sub = self.create_subscription(
+                String,
+                self.realtime_status_topic,
+                self._realtime_status_callback,
+                10,
+            )
         self.backend_pub = self.create_publisher(String, '/conversation_backend', 10)
         self.status_pub = self.create_publisher(String, '/conversation_backend_status', 10)
         self.timer = self.create_timer(1.0, self._timer_callback)
@@ -47,16 +54,27 @@ class BackendManagerNode(Node):
             f'Backend Manager started: preferred={self.preferred_backend}, fallback={self.fallback_backend}'
         )
 
+    @staticmethod
+    def _status_topic_for_backend(backend: str) -> str:
+        mapping = {
+            'openai_realtime': '/openai_realtime_status',
+            'hume_evi3': '/hume_evi_status',
+        }
+        return mapping.get((backend or '').strip(), '')
+
     def _realtime_status_callback(self, msg: String):
         self.realtime_status = msg.data.strip() or 'unknown'
         self.last_realtime_status_time = time.monotonic()
 
-        if self.preferred_backend != 'openai_realtime':
+        if not self.realtime_status_topic:
             return
 
         if self.realtime_status == 'online':
-            if self.auto_return_to_preferred and self.active_backend != 'openai_realtime':
-                self._publish_backend('openai_realtime', 'realtime_recovered')
+            if (
+                self.auto_return_to_preferred
+                and self.active_backend != self.preferred_backend
+            ):
+                self._publish_backend(self.preferred_backend, 'realtime_recovered')
             return
 
         if self.realtime_status in ('offline', 'error', 'auth_error'):
@@ -66,7 +84,7 @@ class BackendManagerNode(Node):
     def _timer_callback(self):
         self._publish_backend_topic()
 
-        if self.preferred_backend != 'openai_realtime':
+        if not self.realtime_status_topic:
             if self.active_backend != self.preferred_backend:
                 self._publish_backend(self.preferred_backend, 'preferred_backend')
             else:
@@ -74,7 +92,7 @@ class BackendManagerNode(Node):
             return
 
         now = time.monotonic()
-        if self.active_backend == 'openai_realtime':
+        if self.active_backend == self.preferred_backend:
             stale = (
                 self.last_realtime_status_time > 0.0
                 and (now - self.last_realtime_status_time) > self.offline_timeout_s
@@ -99,9 +117,10 @@ class BackendManagerNode(Node):
     def _publish_status(self, reason: str = ''):
         msg = String()
         reason_suffix = f'|{reason}' if reason else ''
+        realtime_label = self.preferred_backend if self.realtime_status_topic else 'n/a'
         msg.data = (
             f'active={self.active_backend};preferred={self.preferred_backend};'
-            f'realtime={self.realtime_status}{reason_suffix}'
+            f'realtime_backend={realtime_label};realtime={self.realtime_status}{reason_suffix}'
         )
         self.status_pub.publish(msg)
 

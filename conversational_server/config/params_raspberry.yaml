@@ -63,6 +63,23 @@ openai_realtime_node:
     language_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
 
+hume_evi3_node:
+  ros__parameters:
+    api_base_url: "wss://api.hume.ai/v0/evi/chat"
+    config_id: ""
+    config_version: -1
+    verbose_transcription: true
+    send_session_settings_on_connect: true
+    input_sample_rate: 16000
+    input_channels: 1
+    capture_during_playback: true
+    reconnect_delay_s: 3.0
+    pause_on_robot_confirmation: true
+    stop_playback_on_user_interruption: true
+    send_system_prompt_in_session_settings: false
+    context_text: ""
+    context_type: "persistent"
+
 # ========== CLIENT NODES ==========
 
 audio_capture_node:

@@ -13,14 +13,19 @@ from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
-    realtime_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"])
+    openai_realtime_backend = PythonExpression(
+        ["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"]
+    )
+    hume_evi3_backend = PythonExpression(
+        ["'", LaunchConfiguration('conversation_backend'), "' == 'hume_evi3'"]
+    )
 
     return LaunchDescription([
         # Declare arguments
         DeclareLaunchArgument(
             'conversation_backend',
             default_value='legacy',
-            description='Conversation backend (legacy/openai_realtime)'
+            description='Conversation backend (legacy/openai_realtime/hume_evi3)'
         ),
         DeclareLaunchArgument(
             'asr_model_size',
@@ -87,6 +92,26 @@ def generate_launch_description():
             default_value='450',
             description='Delay before answering a transcript that arrived after the user resumed speaking'
         ),
+        DeclareLaunchArgument(
+            'hume_config_id',
+            default_value='',
+            description='Optional Hume EVI configuration UUID'
+        ),
+        DeclareLaunchArgument(
+            'hume_config_version',
+            default_value='-1',
+            description='Optional Hume EVI configuration version (-1 uses latest)'
+        ),
+        DeclareLaunchArgument(
+            'hume_verbose_transcription',
+            default_value='true',
+            description='Enable Hume interim user_message events for faster interruption handling'
+        ),
+        DeclareLaunchArgument(
+            'hume_capture_during_playback',
+            default_value='true',
+            description='Stream microphone audio to Hume while robot playback is active'
+        ),
         
         # ASR Node
         Node(
@@ -146,7 +171,7 @@ def generate_launch_description():
             executable='openai_realtime_node',
             name='openai_realtime_node',
             output='screen',
-            condition=IfCondition(realtime_backend),
+            condition=IfCondition(openai_realtime_backend),
             parameters=[{
                 'model': LaunchConfiguration('realtime_model'),
                 'voice': LaunchConfiguration('realtime_voice'),
@@ -162,6 +187,20 @@ def generate_launch_description():
                     'realtime_continued_turn_response_delay_ms'
                 ),
                 'short_transcript_dedupe_window_s': 4.0,
+            }]
+        ),
+
+        Node(
+            package='conversational_server',
+            executable='hume_evi3_node',
+            name='hume_evi3_node',
+            output='screen',
+            condition=IfCondition(hume_evi3_backend),
+            parameters=[{
+                'config_id': LaunchConfiguration('hume_config_id'),
+                'config_version': LaunchConfiguration('hume_config_version'),
+                'verbose_transcription': LaunchConfiguration('hume_verbose_transcription'),
+                'capture_during_playback': LaunchConfiguration('hume_capture_during_playback'),
             }]
         ),
     ])
