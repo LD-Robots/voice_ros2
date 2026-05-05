@@ -31,6 +31,9 @@ class AudioCaptureNode(Node):
         self.declare_parameter('respeaker_mode', False)  # Use ReSpeaker 6-ch special mode
         self.declare_parameter('respeaker_channel', 5)   # Which channel to extract (5 = AEC for this device)
         self.declare_parameter('gain', 1.0)              # Digital gain multiplier
+        # stereo_mono_extract: open with 2ch (required by some hardware like ReSpeaker USB),
+        # but only publish channel 0 (left = AEC processed). Avoids PaErrorCode -9998.
+        self.declare_parameter('stereo_mono_extract', False)
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
@@ -39,6 +42,7 @@ class AudioCaptureNode(Node):
         self.respeaker_mode = self.get_parameter('respeaker_mode').value
         self.respeaker_channel = self.get_parameter('respeaker_channel').value
         self.gain = self.get_parameter('gain').value
+        self.stereo_mono_extract = self.get_parameter('stereo_mono_extract').value
         
         # Calculate block size (frames per chunk)
         self.block_size = int(self.sample_rate * self.chunk_ms / 1000)
@@ -89,9 +93,17 @@ class AudioCaptureNode(Node):
                 except:
                     pass
 
-            # If ReSpeaker mode, we MUST force 6 channels
-            capture_channels = 6 if self.respeaker_mode else self.channels
-            
+            # Channel selection logic:
+            # - respeaker_mode: open 6ch, extract respeaker_channel
+            # - stereo_mono_extract: open 2ch (hardware minimum), extract channel 0 (left = AEC)
+            # - default: use declared channels count
+            if self.respeaker_mode:
+                capture_channels = 6
+            elif self.stereo_mono_extract:
+                capture_channels = 2
+            else:
+                capture_channels = self.channels
+
             self.get_logger().info(
                 f"✅ Starting Capture: {self.sample_rate}Hz, {capture_channels}ch (publish={self.channels}ch), "
                 f"block={self.block_size} ({self.chunk_ms}ms), device={device}"
@@ -129,11 +141,13 @@ class AudioCaptureNode(Node):
             audio_f32 = indata * self.gain
             audio_f32 = np.clip(audio_f32, -1.0, 1.0)
             
-            # Handle multi-channel extraction for ReSpeaker
+            # Handle multi-channel extraction
             if self.respeaker_mode:
-                # indata shape is (frames, 6)
-                # Extract only the desired channel (5 = processed AEC)
+                # indata shape is (frames, 6) — extract desired channel
                 audio_f32 = audio_f32[:, self.respeaker_channel]
+            elif self.stereo_mono_extract:
+                # indata shape is (frames, 2) — extract channel 0 (left = AEC processed output)
+                audio_f32 = audio_f32[:, 0]
             
             # Scale and cast
             audio_i16 = (audio_f32 * 32767.0).astype(np.int16)
