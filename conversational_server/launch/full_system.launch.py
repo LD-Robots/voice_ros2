@@ -4,7 +4,7 @@ Relies on YAML configuration profiles for most parameters.
 """
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from ament_index_python.packages import get_package_share_directory
@@ -47,8 +47,15 @@ def generate_launch_description():
         DeclareLaunchArgument('config', default_value='raspberry', description='Profile (raspberry/laptop)'),
         DeclareLaunchArgument('conversation_backend', default_value='openai_realtime', description='Backend (legacy/openai_realtime)'),
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
-        DeclareLaunchArgument('audio_device_index', default_value='3', description='Audio device override'),
+        DeclareLaunchArgument('audio_device_index', default_value='-1', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
         DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
+        
+        # ========== PRE-LAUNCH SCRIPTS ==========
+        ExecuteProcess(
+            cmd=[os.path.join(str(workspace_root) if workspace_root else os.getcwd(), 'tools/usb_4_mic_array/apply_tuning.sh')],
+            name='respeaker_tuning',
+            output='screen'
+        ),
         
         # ========== SERVER NODES ==========
         
