@@ -79,6 +79,7 @@ vad_node:
     wake_word_enabled: true
     session_timeout: 30.0
     min_silence_frames: 14
+    use_hardware_vad: true
 
 audio_segment_node:
   ros__parameters:

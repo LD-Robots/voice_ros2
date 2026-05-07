@@ -21,6 +21,9 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool
 import numpy as np
+import struct
+import usb.core
+import usb.util
 
 # Try to import WebRTC VAD (simple variant)
 try:
@@ -29,6 +32,42 @@ try:
 except ImportError:
     WEBRTCVAD_AVAILABLE = False
     print("⚠️ webrtcvad not installed. Run: pip install webrtcvad")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# RESPEAKER TUNING HELPER (Simplified)
+# ═══════════════════════════════════════════════════════════════════
+
+class ReSpeakerVAD:
+    """Helper to read VOICEACTIVITY from ReSpeaker hardware via USB."""
+    def __init__(self, vid=0x2886, pid=0x0018):
+        self.dev = usb.core.find(idVendor=vid, idProduct=pid)
+        self.TIMEOUT = 1000
+
+    def is_connected(self):
+        return self.dev is not None
+
+    def read_vad(self):
+        if not self.dev:
+            return False
+        try:
+            # VOICEACTIVITY register: id=19, offset=32, type=int
+            # Control transfer parameters for reading:
+            # request=0, request_type=IN|VENDOR|DEVICE, value=0x80|offset, index=id
+            cmd = 0x80 | 32 | 0x40 # 0x40 is for int type
+            response = self.dev.ctrl_transfer(
+                usb.util.CTRL_IN | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
+                0, cmd, 19, 8, self.TIMEOUT)
+            if response:
+                # Use tostring() for older pyusb or memoryview for newer
+                try:
+                    data = response.tobytes()
+                except AttributeError:
+                    data = response.tostring()
+                return struct.unpack(b'ii', data)[0] == 1
+        except Exception:
+            pass
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -59,6 +98,7 @@ class VADNode(Node):
         self.declare_parameter('min_speech_frames', 5)
         self.declare_parameter('min_silence_frames', 14)
         self.declare_parameter('capture_during_playback', False)
+        self.declare_parameter('use_hardware_vad', False)
 
         
         self.sample_rate = self.get_parameter('sample_rate').value
@@ -69,6 +109,7 @@ class VADNode(Node):
         self.min_speech_frames = max(1, int(self.get_parameter('min_speech_frames').value))
         self.min_silence_frames = max(1, int(self.get_parameter('min_silence_frames').value))
         self.capture_during_playback = self.get_parameter('capture_during_playback').value
+        self.use_hardware_vad = self.get_parameter('use_hardware_vad').value
         
         # ─────────────────────────────────────────────────────────
         # STATE
@@ -79,7 +120,18 @@ class VADNode(Node):
         self.is_robot_speaking = False    # True when the robot is speaking (TTS playback)
         self.is_gate_open = not self.wake_word_enabled
         self.session_timer = None
-        self.is_speaking = False
+        
+        # ─────────────────────────────────────────────────────────
+        # HARDWARE VAD INITIALIZATION
+        # ─────────────────────────────────────────────────────────
+        self.hw_vad = None
+        if self.use_hardware_vad:
+            self.hw_vad = ReSpeakerVAD()
+            if self.hw_vad.is_connected():
+                self.get_logger().info('⚡ Hardware VAD: ReSpeaker detected and enabled!')
+            else:
+                self.get_logger().warn('⚠️ Hardware VAD: ReSpeaker NOT FOUND. Falling back to software.')
+                self.use_hardware_vad = False
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER
@@ -124,17 +176,20 @@ class VADNode(Node):
         # WEBRTC VAD INITIALIZATION
         # ─────────────────────────────────────────────────────────
         self.vad = None
-        if WEBRTCVAD_AVAILABLE:
-            try:
-                self.vad = webrtcvad.Vad(self.aggressiveness)
-                self.get_logger().info(
-                    f'🎯 VAD Node started (WebRTC, aggressiveness={self.aggressiveness})'
-                )
-            except Exception as e:
-                self.get_logger().error(f'❌ Failed to init WebRTC VAD: {e}')
+        if not self.use_hardware_vad:
+            if WEBRTCVAD_AVAILABLE:
+                try:
+                    self.vad = webrtcvad.Vad(self.aggressiveness)
+                    self.get_logger().info(
+                        f'🎯 VAD Node started (WebRTC, aggressiveness={self.aggressiveness})'
+                    )
+                except Exception as e:
+                    self.get_logger().error(f'❌ Failed to init WebRTC VAD: {e}')
+            else:
+                self.get_logger().warn('⚠️ WebRTC VAD not available - using energy-based detection')
+                self.get_logger().info(f'🎯 VAD Node started (energy threshold={self.energy_threshold})')
         else:
-            self.get_logger().warn('⚠️ WebRTC VAD not available - using energy-based detection')
-            self.get_logger().info(f'🎯 VAD Node started (energy threshold={self.energy_threshold})')
+            self.get_logger().info('🎯 VAD Node started (using Hardware ReSpeaker VAD)')
         
         self.frame_count = 0
         
@@ -307,9 +362,15 @@ class VADNode(Node):
     def _detect_voice(self, audio: np.ndarray) -> bool:
         """
         Detect whether audio contains voice.
-        Uses WebRTC VAD or falls back to energy.
+        Uses ReSpeaker Hardware, WebRTC VAD, or falls back to energy.
         """
         
+        # ─────────────────────────────────────────────────────
+        # METHOD 0: Hardware VAD (most efficient)
+        # ─────────────────────────────────────────────────────
+        if self.use_hardware_vad and self.hw_vad:
+            return self.hw_vad.read_vad()
+
         if self.vad is not None:
             # ─────────────────────────────────────────────────────
             # METHOD 1: WebRTC VAD (more accurate)
