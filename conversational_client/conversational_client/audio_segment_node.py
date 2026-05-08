@@ -72,6 +72,7 @@ class AudioSegmentNode(Node):
         self.session_active = False     # True when session is active (after wake word)
         self.is_robot_speaking = False  # True when the robot is speaking (TTS playback)
         self.ignore_segment = False     # Flag to ignore segment sending
+        self.ignore_until_mono = 0.0    # Short cooldown after barge-in to drop trailing leak
         self.channels = 1
         
         # ─────────────────────────────────────────────────────────
@@ -152,7 +153,6 @@ class AudioSegmentNode(Node):
             self.get_logger().info('🔇 Robot speaking - muting input')
             # Clear buffer immediately when robot starts speaking to remove any leak
             self.audio_buffer = []
-            self.ignore_segment = True  # Ignore any pending segment as it might be echo
         elif not msg.data and was_speaking:
             self.get_logger().info('🔊 Robot stopped - listening again')
 
@@ -163,7 +163,8 @@ class AudioSegmentNode(Node):
             self.audio_buffer = []
             self.pre_buffer = []
             self.is_speaking = False  # Reset VAD state locally
-            self.ignore_segment = True # Flag to ignore sending segment if VAD triggers later
+            # Drop only the immediate tail after barge-in, not the whole next utterance.
+            self.ignore_until_mono = time.monotonic() + 0.35
 
     def vad_callback(self, msg: Bool):
         """Callback for VAD state (voice activity)."""
@@ -228,10 +229,9 @@ class AudioSegmentNode(Node):
             self.audio_buffer = []
             return
             
-        if getattr(self, 'ignore_segment', False):
-            self.get_logger().warn('🚫 Segment BLOCKED - ignore flag set (barge-in)')
+        if time.monotonic() < getattr(self, 'ignore_until_mono', 0.0):
+            self.get_logger().warn('🚫 Segment BLOCKED - immediate post-barge-in tail')
             self.audio_buffer = []
-            self.ignore_segment = False
             return
         
         if not self.audio_buffer:

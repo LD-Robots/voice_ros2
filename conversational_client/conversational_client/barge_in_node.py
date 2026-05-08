@@ -115,6 +115,7 @@ class BargeInNode(Node):
         
         # Audio thresholds
         self.declare_parameter('min_rms_dbfs', -28.0)    # Minimum volume threshold
+        self.declare_parameter('max_dynamic_rms_dbfs', -12.0)  # Cap dynamic threshold for near-field speech
         self.declare_parameter('highpass_hz', 300.0)     # Filter for low thumps
         self.declare_parameter('zcr_min', 0.05)          # Min ZCR for voice
         self.declare_parameter('zcr_max', 0.35)          # Max ZCR for voice
@@ -143,6 +144,7 @@ class BargeInNode(Node):
         self.voice_drop_ms = self.get_parameter('voice_drop_ms').value
         
         self.min_rms_dbfs = self.get_parameter('min_rms_dbfs').value
+        self.max_dynamic_rms_dbfs = self.get_parameter('max_dynamic_rms_dbfs').value
         self.highpass_hz = self.get_parameter('highpass_hz').value
         self.zcr_min = self.get_parameter('zcr_min').value
         self.zcr_max = self.get_parameter('zcr_max').value
@@ -265,6 +267,7 @@ class BargeInNode(Node):
         
         # Convert to int16
         pcm = np.array(msg.data, dtype=np.int16)
+        frame_ms = max(1, int(round((len(pcm) * 1000.0) / float(self.sr))))
         has_voice_signature = self._is_human_voice(pcm, now_ms)
         
         # ══════════════════════════════════════════════════════════
@@ -290,10 +293,11 @@ class BargeInNode(Node):
         # HUMAN VOICE (standard barge-in)
         # ══════════════════════════════════════════════════════════
         if self.voice_enabled and self._is_human_voice(pcm, now_ms):
-            self.voiced_ms += 20
+            self.voiced_ms += frame_ms
             self.last_voice_ms = now_ms
         else:
-            self.voiced_ms = max(0, self.voiced_ms - self.voice_drop_ms)
+            decay_ms = max(1, int(round(self.voice_drop_ms * (frame_ms / 20.0))))
+            self.voiced_ms = max(0, self.voiced_ms - decay_ms)
             
         if self.voice_enabled and self.voiced_ms > self.min_voice_ms:
             self.get_logger().info(f'🗣️ Voice Barge-in detected ({self.voiced_ms}ms) - Stopping TTS')
@@ -320,7 +324,9 @@ class BargeInNode(Node):
         rms_threshold = self.min_rms_dbfs
         if self.leak_baseline_dbfs is not None:
             rms_threshold = max(rms_threshold, self.leak_baseline_dbfs + self.leak_margin_db)
-        
+        # Keep barge-in reachable even when playback leak baseline spikes.
+        rms_threshold = min(rms_threshold, float(self.max_dynamic_rms_dbfs))
+
         if rms < rms_threshold:
             self._update_leak_baseline(rms, now_ms, fast=False)
             return False

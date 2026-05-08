@@ -19,8 +19,8 @@ def generate_launch_description():
         # Declare arguments
         DeclareLaunchArgument(
             'conversation_backend',
-            default_value='legacy',
-            description='Conversation backend (legacy/openai_realtime)'
+            default_value='mistral_realtime',
+            description='Conversation backend (legacy/mistral_realtime/openai_realtime)'
         ),
         DeclareLaunchArgument(
             'asr_model_size',

@@ -12,23 +12,58 @@ backend_manager_node:
 
 asr_node:
   ros__parameters:
+    provider: "mistral_realtime"
     model_size: "medium"
     device: "cpu"
     compute_type: "int8"
+    min_audio_length: 0.35
     language: "ro_en"
     beam_size: 8
     initial_prompt: "A bilingual conversation in Romanian and English."
+    ignore_during_playback: true
+    playback_guard_post_ms: 2200
+    echo_recent_playback_window_s: 12.0
+    echo_recent_playback_threshold: 68
+    mistral_api_key_env: "VOXTRAL_API_KEY"
+    mistral_realtime_model: "voxtral-mini-realtime-latest"
+    mistral_batch_fallback_model: "voxtral-mini-latest"
+    mistral_use_batch_fallback: true
+    mistral_timeout_ms: 25000
+    mistral_target_streaming_delay_ms: 120
+    mistral_chunk_ms: 80
 
 llm_node:
   ros__parameters:
-    provider: "groq"
-    model: "llama-3.1-8b-instant"
-    max_tokens: 150
-    temperature: 0.7
+    provider: "mistral"
+    model: "mistral-small-latest"
+    max_tokens: 100
+    temperature: 0.65
     min_chunk_chars: 20
+    websearch_enabled: false
+    mistral_api_key_env: "VOXTRAL_API_KEY"
+    mistral_prompt_mode: "chat"
+    mistral_reasoning_effort: "none"
+    mistral_timeout_s: 35.0
+    mistral_include_thinking_chunks: false
+    assistant_echo_filter_enabled: true
+    assistant_echo_similarity_threshold: 84.0
+    assistant_echo_min_chars: 10
+    legacy_playback_guard_enabled: true
+    legacy_playback_guard_post_ms: 2200
 
 tts_node:
   ros__parameters:
+    provider: "voxtral"
+    provider_fallback_edge: true
+    voxtral_api_key_env: "VOXTRAL_API_KEY"
+    voxtral_model: "voxtral-mini-tts-latest"
+    voxtral_response_format: "wav"
+    voxtral_timeout_s: 20.0
+    voxtral_voice_id_en: ""
+    voxtral_voice_id_ro: ""
+    voxtral_ref_audio_en_path: "conversational_server/resources/static_audio/ack_en.wav"
+    voxtral_ref_audio_ro_path: "conversational_server/resources/static_audio/ack_en.wav"
+    voxtral_use_ref_audio_if_no_voice: true
     voice_en: "en-GB-RyanNeural"
     voice_ro: "ro-RO-EmilNeural"
     buffer_size: 1
@@ -78,29 +113,33 @@ vad_node:
     wake_word_enabled: true
     session_timeout: 30.0
     min_silence_frames: 14
+    capture_during_playback: true
 
 audio_segment_node:
   ros__parameters:
-    min_segment_seconds: 0.5
+    min_segment_seconds: 0.35
     max_segment_seconds: 30.0
 
 audio_playback_node:
   ros__parameters:
     sample_rate: 16000
     gain: 1.0
+    speaking_grace_period_s: 2.5
 
 barge_in_node:
   ros__parameters:
-    stop_enabled: false
+    stop_enabled: true
     stop_prob_threshold: 0.60
     stop_logit_margin: 0.3
-    stop_hits_required: 1
+    stop_hits_required: 2
     voice_enabled: true
-    min_voice_ms: 600
-    min_rms_dbfs: -50.0
+    min_voice_ms: 260
+    min_rms_dbfs: -26.0
+    max_dynamic_rms_dbfs: -18.0
+    leak_margin_db: 3.0
     highpass_hz: 300.0
-    zcr_min: 0.05
-    zcr_max: 0.35
+    zcr_min: 0.02
+    zcr_max: 0.45
 
 speaker_id_node:
   ros__parameters:

@@ -45,10 +45,10 @@ def generate_launch_description():
     return LaunchDescription([
         # ========== LAUNCH ARGUMENTS (CORE OVERRIDES) ==========
         DeclareLaunchArgument('config', default_value='raspberry', description='Profile (raspberry/laptop)'),
-        DeclareLaunchArgument('conversation_backend', default_value='openai_realtime', description='Backend (legacy/openai_realtime)'),
+        DeclareLaunchArgument('conversation_backend', default_value='mistral_realtime', description='Backend (legacy/mistral_realtime/openai_realtime)'),
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
-        DeclareLaunchArgument('audio_device_index', default_value='3', description='Audio device override'),
-        DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
+        DeclareLaunchArgument('audio_device_index', default_value='-1', description='Audio device override'),
+        DeclareLaunchArgument('stop_enabled', default_value='true', description='PyTorch stop override'),
         
         # ========== SERVER NODES ==========
         

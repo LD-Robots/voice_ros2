@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-LLM Node - Language Model processing using Groq API with STREAMING.
+LLM Node - Language Model processing with streaming output.
 
 FEATURES (synced with Conversational_Robot Python):
+  - Provider options: Groq or Mistral
   - Web search via Groq Compound model for current questions
   - Keyword detection for news, weather, prices, elections, etc.
 
@@ -14,15 +15,19 @@ Publishes to:
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 import json
 import os
 import re
 import uuid
 import threading
 import time
+import unicodedata
 from datetime import datetime
 from pathlib import Path
+from urllib import error as urlerror
+from urllib import request as urlrequest
+from conversational_client.conversation_utils import detect_control_action, normalize_text
 from conversational_client.robot_command_utils import looks_like_robot_command
 from .prompt_config import load_prompt_defaults
 
@@ -80,6 +85,17 @@ class LLMNode(Node):
         self.declare_parameter('websearch_enabled', True)
         self.declare_parameter('websearch_model', 'compound-beta')  # Groq compound model
         self.declare_parameter('websearch_max_tokens', 300)
+        self.declare_parameter('legacy_playback_guard_enabled', True)
+        self.declare_parameter('legacy_playback_guard_post_ms', 900)
+        self.declare_parameter('mistral_api_url', 'https://api.mistral.ai/v1/chat/completions')
+        self.declare_parameter('mistral_api_key_env', 'VOXTRAL_API_KEY')
+        self.declare_parameter('mistral_prompt_mode', 'reasoning')
+        self.declare_parameter('mistral_reasoning_effort', 'none')
+        self.declare_parameter('mistral_timeout_s', 45.0)
+        self.declare_parameter('mistral_include_thinking_chunks', False)
+        self.declare_parameter('assistant_echo_filter_enabled', True)
+        self.declare_parameter('assistant_echo_similarity_threshold', 84.0)
+        self.declare_parameter('assistant_echo_min_chars', 10)
         
         self.provider = str(self.get_parameter('provider').value).lower()
         self.model = self.get_parameter('model').value
@@ -88,16 +104,50 @@ class LLMNode(Node):
         self.min_chunk_chars = self.get_parameter('min_chunk_chars').value
         self.system_prompt = self.get_parameter('system_prompt').value
         self.transcription_topic = str(self.get_parameter('transcription_topic').value)
+        self.mistral_api_url = str(self.get_parameter('mistral_api_url').value).strip()
+        self.mistral_api_key_env = str(
+            self.get_parameter('mistral_api_key_env').value
+        ).strip() or 'VOXTRAL_API_KEY'
+        self.mistral_prompt_mode = str(
+            self.get_parameter('mistral_prompt_mode').value
+        ).strip().lower()
+        self.mistral_reasoning_effort = str(
+            self.get_parameter('mistral_reasoning_effort').value
+        ).strip().lower()
+        self.mistral_timeout_s = max(
+            1.0,
+            float(self.get_parameter('mistral_timeout_s').value),
+        )
+        self.mistral_include_thinking_chunks = bool(
+            self.get_parameter('mistral_include_thinking_chunks').value
+        )
+        self.assistant_echo_filter_enabled = bool(
+            self.get_parameter('assistant_echo_filter_enabled').value
+        )
+        self.assistant_echo_similarity_threshold = float(
+            self.get_parameter('assistant_echo_similarity_threshold').value
+        )
+        self.assistant_echo_min_chars = max(
+            1, int(self.get_parameter('assistant_echo_min_chars').value)
+        )
 
-        if self.provider != 'groq':
-            raise RuntimeError(
-                f"Unsupported llm provider '{self.provider}'. Only 'groq' is implemented."
-            )
-        
         # Web search
         self.websearch_enabled = self.get_parameter('websearch_enabled').value
         self.websearch_model = self.get_parameter('websearch_model').value
         self.websearch_max_tokens = self.get_parameter('websearch_max_tokens').value
+        self.legacy_playback_guard_enabled = bool(
+            self.get_parameter('legacy_playback_guard_enabled').value
+        )
+        self.legacy_playback_guard_post_ms = max(
+            0,
+            int(self.get_parameter('legacy_playback_guard_post_ms').value),
+        )
+        self.websearch_supported = self.provider == 'groq'
+        if self.websearch_enabled and not self.websearch_supported:
+            self.get_logger().warn(
+                f'Websearch disabled for provider={self.provider}; supported only on groq pipeline'
+            )
+            self.websearch_enabled = False
         
         # Stream shaper parameters
         self.declare_parameter('prebuffer_chars', 120)
@@ -136,19 +186,31 @@ class LLMNode(Node):
             'unknown_ro': self.get_parameter('fallback_unknown_ro').value,
         }
         
-        # Check API key
-        self.api_key = os.environ.get('GROQ_API_KEY')
-        if not self.api_key:
-            self.get_logger().error('GROQ_API_KEY environment variable not set!')
-            raise RuntimeError('GROQ_API_KEY not set')
-        
-        if not GROQ_AVAILABLE:
-            self.get_logger().error('groq package not installed!')
-            raise RuntimeError('groq not available')
-        
-        # Initialize Groq client
-        self.client = Groq(api_key=self.api_key)
-        self.get_logger().debug(f'✅ Groq client initialized with model: {self.model}')
+        self.client = None
+        self.api_key = ''
+        if self.provider == 'groq':
+            self.api_key = os.environ.get('GROQ_API_KEY', '')
+            if not self.api_key:
+                self.get_logger().error('GROQ_API_KEY environment variable not set!')
+                raise RuntimeError('GROQ_API_KEY not set')
+            if not GROQ_AVAILABLE:
+                self.get_logger().error('groq package not installed!')
+                raise RuntimeError('groq not available')
+            self.client = Groq(api_key=self.api_key)
+            self.get_logger().debug(f'✅ Groq client initialized with model: {self.model}')
+        elif self.provider == 'mistral':
+            self.api_key = os.environ.get(self.mistral_api_key_env, '')
+            if not self.api_key:
+                self.get_logger().error(f'{self.mistral_api_key_env} environment variable not set!')
+                raise RuntimeError(f'{self.mistral_api_key_env} not set')
+            self.get_logger().info(
+                '✅ Mistral LLM initialized '
+                f'(model={self.model}, prompt_mode={self.mistral_prompt_mode})'
+            )
+        else:
+            raise RuntimeError(
+                f"Unsupported llm provider '{self.provider}'. Use 'groq' or 'mistral'."
+            )
         
         # Conversation history
         self.conversation_history = []
@@ -160,6 +222,8 @@ class LLMNode(Node):
             'preferred_language': '',
             'facts': [],
         }
+        self.robot_speaking = False
+        self.last_robot_speaking_end_at = 0.0
         
         # Speaker identification — who is speaking now
         self.current_speaker = "Unknown"
@@ -194,6 +258,12 @@ class LLMNode(Node):
             String,
             '/conversation_control',
             self._control_callback,
+            10
+        )
+        self.speaking_sub = self.create_subscription(
+            Bool,
+            '/is_speaking',
+            self._speaking_callback,
             10
         )
         
@@ -291,7 +361,111 @@ class LLMNode(Node):
                 return True
         
         return False
-    
+
+    def _extract_mistral_text(self, content) -> str:
+        """Extract visible answer text from Mistral content chunks."""
+        if isinstance(content, str):
+            return content.strip()
+
+        if not isinstance(content, list):
+            return ''
+
+        parts = []
+        for chunk in content:
+            if isinstance(chunk, str):
+                if chunk.strip():
+                    parts.append(chunk.strip())
+                continue
+
+            if not isinstance(chunk, dict):
+                continue
+
+            chunk_type = str(chunk.get('type', '')).lower()
+            if chunk_type == 'text':
+                text = str(chunk.get('text', '') or '').strip()
+                if text:
+                    parts.append(text)
+                continue
+
+            if chunk_type == 'thinking' and self.mistral_include_thinking_chunks:
+                thinking_items = chunk.get('thinking') or []
+                if isinstance(thinking_items, list):
+                    for item in thinking_items:
+                        if isinstance(item, dict) and str(item.get('type', '')).lower() == 'text':
+                            text = str(item.get('text', '') or '').strip()
+                            if text:
+                                parts.append(text)
+
+        return '\n'.join(parts).strip()
+
+    def _mistral_chat_complete(self, messages, model: str, max_tokens: int) -> str:
+        """Call Mistral Chat Completions (non-streaming) and return final answer text."""
+        payload = {
+            'model': model,
+            'messages': messages,
+            'max_tokens': int(max_tokens),
+            'temperature': float(self.temperature),
+            'stream': False,
+        }
+        if self.mistral_prompt_mode == 'reasoning':
+            payload['prompt_mode'] = 'reasoning'
+        if self.mistral_reasoning_effort in {'none', 'low', 'medium', 'high'}:
+            payload['reasoning_effort'] = self.mistral_reasoning_effort
+
+        candidate_payloads = [payload]
+        relaxed_payload = dict(payload)
+        relaxed_payload.pop('prompt_mode', None)
+        relaxed_payload.pop('reasoning_effort', None)
+        if relaxed_payload != payload:
+            candidate_payloads.append(relaxed_payload)
+
+        last_error = None
+        for idx, body in enumerate(candidate_payloads):
+            req = urlrequest.Request(
+                self.mistral_api_url,
+                data=json.dumps(body).encode('utf-8'),
+                headers={
+                    'Authorization': f'Bearer {self.api_key}',
+                    'Content-Type': 'application/json',
+                },
+                method='POST',
+            )
+            try:
+                with urlrequest.urlopen(req, timeout=self.mistral_timeout_s) as resp:
+                    raw = resp.read().decode('utf-8')
+                response = json.loads(raw)
+                choices = response.get('choices') or []
+                if not choices:
+                    raise RuntimeError('Mistral response missing choices')
+                message = choices[0].get('message') or {}
+                text = self._extract_mistral_text(message.get('content'))
+                if not text:
+                    text = str(message.get('content', '') or '').strip()
+                if not text:
+                    raise RuntimeError('Mistral response did not include answer text')
+                return text
+            except urlerror.HTTPError as exc:
+                detail = exc.read().decode('utf-8', errors='ignore')
+                last_error = RuntimeError(f'Mistral HTTP {exc.code}: {detail[:240]}')
+                if idx + 1 < len(candidate_payloads):
+                    continue
+                raise last_error from exc
+            except urlerror.URLError as exc:
+                raise RuntimeError(f'Mistral connection error: {exc}') from exc
+            except Exception as exc:
+                last_error = exc
+                if idx + 1 < len(candidate_payloads):
+                    continue
+                raise
+
+        raise RuntimeError(f'Mistral request failed: {last_error}')
+
+    @staticmethod
+    def _text_to_token_stream(text: str):
+        """Yield pseudo-stream tokens from complete text."""
+        for token in re.findall(r'\S+\s*', text):
+            yield token
+
     def _is_robot_command(self, text: str) -> bool:
         """Check if the text is likely a robot command, to avoid LLM chatter."""
         return looks_like_robot_command(text, require_direct_robot_address=True)
@@ -323,8 +497,65 @@ class LLMNode(Node):
         backend = msg.data.strip() or 'legacy'
         self.current_backend = backend
 
+    def _speaking_callback(self, msg: Bool):
+        was_speaking = self.robot_speaking
+        self.robot_speaking = bool(msg.data)
+        if was_speaking and not self.robot_speaking:
+            self.last_robot_speaking_end_at = time.monotonic()
+
+    def _is_playback_guard_active(self) -> bool:
+        if not self.legacy_playback_guard_enabled:
+            return False
+        if self.robot_speaking:
+            return True
+        if self.last_robot_speaking_end_at <= 0.0:
+            return False
+        elapsed_ms = (time.monotonic() - self.last_robot_speaking_end_at) * 1000.0
+        return elapsed_ms <= float(self.legacy_playback_guard_post_ms)
+
+    @staticmethod
+    def _is_control_transcript(text: str) -> bool:
+        normalized = normalize_text(text)
+        return bool(detect_control_action(normalized))
+
+    @staticmethod
+    def _normalize_for_echo(text: str) -> str:
+        if not text:
+            return ''
+        text = text.lower()
+        text = unicodedata.normalize('NFD', text)
+        text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+        text = re.sub(r'[^a-z0-9\s]', ' ', text)
+        return ' '.join(text.split()).strip()
+
+    def _looks_like_assistant_echo(self, user_text: str) -> bool:
+        if not self.assistant_echo_filter_enabled:
+            return False
+        if not self.last_assistant_response:
+            return False
+
+        user_norm = self._normalize_for_echo(user_text)
+        assistant_norm = self._normalize_for_echo(self.last_assistant_response)
+        if (
+            len(user_norm) < self.assistant_echo_min_chars
+            or len(assistant_norm) < self.assistant_echo_min_chars
+        ):
+            return False
+
+        if user_norm in assistant_norm:
+            return True
+
+        user_words = set(user_norm.split())
+        assistant_words = set(assistant_norm.split())
+        if len(user_words) >= 3:
+            overlap_ratio = len(user_words.intersection(assistant_words)) / max(1, len(user_words))
+            if overlap_ratio >= (self.assistant_echo_similarity_threshold / 100.0):
+                return True
+
+        return False
+
     def _control_callback(self, msg: String):
-        if self.current_backend != 'legacy':
+        if self.current_backend not in ('legacy', 'mistral_realtime'):
             return
 
         try:
@@ -350,7 +581,7 @@ class LLMNode(Node):
 
     def transcription_callback(self, msg: Transcription):
         """Process transcription and publish the LLM response in streaming."""
-        if self.current_backend != 'legacy':
+        if self.current_backend not in ('legacy', 'mistral_realtime'):
             return
 
         user_text = msg.text.strip()
@@ -369,6 +600,20 @@ class LLMNode(Node):
         if self.waiting_for_robot_confirmation:
             self.get_logger().info(f'🔇 Ignored text during robot confirmation: {user_text}')
             # We don't reset the flag here, we let the status topic do it
+            return
+
+        # Ignore regular user queries while robot playback is active
+        # to avoid self-triggering on assistant voice leakage.
+        # Control phrases (stop/continue/repeat/hold_on) still pass through.
+        if self._is_playback_guard_active():
+            if self._is_control_transcript(user_text):
+                self.get_logger().debug('🎚️ Allowing control phrase during playback guard')
+            else:
+                self.get_logger().info(f'🔇 Ignored transcript during robot playback: {user_text}')
+                return
+
+        if self._looks_like_assistant_echo(user_text):
+            self.get_logger().info(f'🔇 Ignored transcript similar to assistant reply: {user_text}')
             return
         
         self.get_logger().info(f'💬 User [{user_lang}]: {user_text}')
@@ -491,45 +736,61 @@ class LLMNode(Node):
                 model_to_use = self.model
                 max_tokens_to_use = self.max_tokens
             
-            # Groq API call with STREAMING
-            stream = self.client.chat.completions.create(
-                model=model_to_use,
-                messages=messages,
-                max_tokens=max_tokens_to_use,
-                temperature=self.temperature,
-                stream=True  # STREAMING!
-            )
-            
             # Buffer and state for stream shaper
-            buffer = ""
             full_response = ""
             chunk_count = 0
             first_token_time = None
             start_time = time.time()
             backchannel_sent = False
             
-            # Token generator with backchannel
-            def token_generator():
-                nonlocal first_token_time, backchannel_sent
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        token = chunk.choices[0].delta.content
-                        
-                        # Backchannel: if first token is delayed > delay_ms
-                        if first_token_time is None:
-                            first_token_time = time.time()
-                            ttft_ms = (first_token_time - start_time) * 1000
-                            self.get_logger().debug(f'⏱️ Time to first token: {ttft_ms:.0f}ms')
-                            
-                            # Send backchannel if it took too long
-                            if self.backchannel_enabled and ttft_ms > self.backchannel_delay_ms and not backchannel_sent:
-                                backchannel_sent = True
-                                phrase = self.backchannel_phrase_ro if user_lang.startswith('ro') else self.backchannel_phrase_en
-                                self.get_logger().debug(f'⌛ Backchannel: TTFT > {self.backchannel_delay_ms}ms, sending "{phrase}"')
-                                cmd = String()
-                                cmd.data = 'filler_ro' if user_lang.startswith('ro') else 'filler_en'
-                                self.tts_cmd_pub.publish(cmd)
-                        
+            if self.provider == 'groq':
+                stream = self.client.chat.completions.create(
+                    model=model_to_use,
+                    messages=messages,
+                    max_tokens=max_tokens_to_use,
+                    temperature=self.temperature,
+                    stream=True
+                )
+
+                # Token generator with backchannel
+                def token_generator():
+                    nonlocal first_token_time, backchannel_sent
+                    for chunk in stream:
+                        if chunk.choices[0].delta.content:
+                            token = chunk.choices[0].delta.content
+
+                            # Backchannel: if first token is delayed > delay_ms
+                            if first_token_time is None:
+                                first_token_time = time.time()
+                                ttft_ms = (first_token_time - start_time) * 1000
+                                self.get_logger().debug(f'⏱️ Time to first token: {ttft_ms:.0f}ms')
+
+                                # Send backchannel if it took too long
+                                if self.backchannel_enabled and ttft_ms > self.backchannel_delay_ms and not backchannel_sent:
+                                    backchannel_sent = True
+                                    phrase = self.backchannel_phrase_ro if user_lang.startswith('ro') else self.backchannel_phrase_en
+                                    self.get_logger().debug(
+                                        f'⌛ Backchannel: TTFT > {self.backchannel_delay_ms}ms, sending "{phrase}"'
+                                    )
+                                    cmd = String()
+                                    cmd.data = 'filler_ro' if user_lang.startswith('ro') else 'filler_en'
+                                    self.tts_cmd_pub.publish(cmd)
+
+                            yield token
+            else:
+                response_text = self._mistral_chat_complete(
+                    messages=messages,
+                    model=model_to_use,
+                    max_tokens=max_tokens_to_use,
+                )
+                first_token_time = time.time()
+                ttft_ms = (first_token_time - start_time) * 1000
+                self.get_logger().debug(
+                    f'⏱️ Mistral completion latency before first output token: {ttft_ms:.0f}ms'
+                )
+
+                def token_generator():
+                    for token in self._text_to_token_stream(response_text):
                         yield token
             
             # Process tokens with stream shaper logic
