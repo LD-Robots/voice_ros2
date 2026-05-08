@@ -50,13 +50,6 @@ def generate_launch_description():
         DeclareLaunchArgument('audio_device_index', default_value='-1', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
         DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
         
-        # ========== PRE-LAUNCH SCRIPTS ==========
-        ExecuteProcess(
-            cmd=[os.path.join(str(workspace_root) if workspace_root else os.getcwd(), 'tools/usb_4_mic_array/apply_tuning.sh')],
-            name='respeaker_tuning',
-            output='screen'
-        ),
-        
         # ========== SERVER NODES ==========
         
         Node(
