@@ -20,4 +20,7 @@ python3 "$DIR/tuning.py" GAMMA_E 3.0
 python3 "$DIR/tuning.py" GAMMA_ETAIL 3.0
 python3 "$DIR/tuning.py" GAMMA_ENL 5.0
 
+# AGCONOFF: Oprim amplificarea automata a volumului (AGC) ca sa nu distorsioneze ("tipe") cand esti aproape
+python3 "$DIR/tuning.py" AGCONOFF 0
+
 echo "[ReSpeaker Tuning] Done."

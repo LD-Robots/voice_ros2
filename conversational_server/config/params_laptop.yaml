@@ -79,7 +79,7 @@ vad_node:
     wake_word_enabled: true
     session_timeout: 30.0
     min_silence_frames: 14
-    use_hardware_vad: true
+    use_hardware_vad: false
 
 audio_segment_node:
   ros__parameters:
@@ -130,7 +130,7 @@ wake_word_node:
   ros__parameters:
     threshold: 0.5
     cooldown_ms: 1500
-    model_thresholds: "hello_robot:0.50,goodbye_robot:0.75"
+    model_thresholds: "hello_robot:0.30,goodbye_robot:0.75"
 
 voice_command_node:
   ros__parameters:
