@@ -10,6 +10,8 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Audio
 import numpy as np
 import sys
+import wave
+import os
 
 # Replace PyAudio with sounddevice
 try:
@@ -31,9 +33,9 @@ class AudioCaptureNode(Node):
         self.declare_parameter('respeaker_mode', False)  # Use ReSpeaker 6-ch special mode
         self.declare_parameter('respeaker_channel', 5)   # Which channel to extract (5 = AEC for this device)
         self.declare_parameter('gain', 1.0)              # Digital gain multiplier
-        # stereo_mono_extract: open with 2ch (required by some hardware like ReSpeaker USB),
-        # but only publish channel 0 (left = AEC processed). Avoids PaErrorCode -9998.
         self.declare_parameter('stereo_mono_extract', False)
+        self.declare_parameter('debug_recording', False) # Save to local WAV file
+        self.declare_parameter('debug_wav_path', '/home/valee/voice_ros2/debug_mic_capture.wav')
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
@@ -43,6 +45,8 @@ class AudioCaptureNode(Node):
         self.respeaker_channel = self.get_parameter('respeaker_channel').value
         self.gain = self.get_parameter('gain').value
         self.stereo_mono_extract = self.get_parameter('stereo_mono_extract').value
+        self.debug_recording = self.get_parameter('debug_recording').value
+        self.debug_wav_path = self.get_parameter('debug_wav_path').value
         
         # Calculate block size (frames per chunk)
         self.block_size = int(self.sample_rate * self.chunk_ms / 1000)
@@ -52,6 +56,19 @@ class AudioCaptureNode(Node):
         self.stream = None
         self.frame_count = 0
         self.running = True
+        
+        # Debug recording setup
+        self.debug_wav = None
+        if self.debug_recording:
+            try:
+                self.debug_wav = wave.open(self.debug_wav_path, 'wb')
+                self.debug_wav.setnchannels(self.channels)
+                self.debug_wav.setsampwidth(2) # 16-bit
+                self.debug_wav.setframerate(self.sample_rate)
+                self.get_logger().info(f"🔴 DEBUG RECORDING ENABLED: Saving to {self.debug_wav_path}")
+            except Exception as e:
+                self.get_logger().error(f"❌ Failed to open debug WAV file: {e}")
+
         
         if SD_AVAILABLE:
             self.start_capture()
@@ -162,6 +179,10 @@ class AudioCaptureNode(Node):
             msg.data = audio_data
             self.audio_pub.publish(msg)
             
+            # Save to debug WAV
+            if self.debug_wav:
+                self.debug_wav.writeframes(audio_i16.tobytes())
+            
             self.frame_count += 1
             
             # Periodic logging
@@ -183,6 +204,10 @@ class AudioCaptureNode(Node):
             if self.stream:
                 self.stream.stop()
                 self.stream.close()
+            
+            if self.debug_wav:
+                self.debug_wav.close()
+                print(f"📄 Debug recording saved to {self.debug_wav_path}")
         except Exception as e:
             print(f"Error closing audio stream: {e}")
             

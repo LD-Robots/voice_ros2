@@ -4,6 +4,7 @@ import sys
 import struct
 import usb.core
 import usb.util
+import time
 
 USAGE = """Usage: python {} -h
         -p      show all parameters
@@ -62,7 +63,7 @@ PARAMETERS = {
 
 
 class Tuning:
-    TIMEOUT = 100000
+    TIMEOUT = 5000
 
     def __init__(self, dev):
         self.dev = dev
@@ -143,6 +144,11 @@ def find(vid=0x2886, pid=0x0018):
     if not dev:
         return
 
+    try:
+        dev.set_configuration()
+    except usb.core.USBError:
+        pass
+
     # configuration = dev.get_active_configuration()
 
     # interface_number = None
@@ -180,14 +186,33 @@ def main():
                 for name in sorted(PARAMETERS.keys()):
                     print('{:24} {}'.format(name, dev.read(name)))
             else:
-                name = sys.argv[1].upper()
-                if name in PARAMETERS:
-                    if len(sys.argv) > 2:
-                        dev.write(name, sys.argv[2])
-                    
-                    print('{}: {}'.format(name, dev.read(name)))
-                else:
-                    print('{} is not a valid name'.format(name))
+                # Support multiple pairs of arguments: PARAM1 VAL1 PARAM2 VAL2...
+                args = sys.argv[1:]
+                if len(args) % 2 != 0:
+                    # If odd number of args, the last one might be a single flag like -r
+                    # but for now we assume pairs for simplicity or handle the first one
+                    pass
+                
+                i = 0
+                while i < len(args):
+                    name = args[i].upper()
+                    if name in PARAMETERS:
+                        if i + 1 < len(args):
+                            value = args[i+1]
+                            print('Setting {} to {}...'.format(name, value))
+                            try:
+                                dev.write(name, value)
+                                # Small delay between writes in the same session
+                                time.sleep(0.1)
+                            except Exception as e:
+                                print('Error setting {}: {}'.format(name, e))
+                            i += 2
+                        else:
+                            print('{}: {}'.format(name, dev.read(name)))
+                            i += 1
+                    else:
+                        print('{} is not a valid name'.format(name))
+                        i += 1
 
             dev.close()
     else:

@@ -1,26 +1,19 @@
 #!/bin/bash
-# Aplica parametrii optimi pe ReSpeaker la fiecare pornire
+# Aplica parametrii optimi pe ReSpeaker la fiecare pornire (Consolidated version)
 # Scris in sesiunea de calibrare ROS2
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "[ReSpeaker Tuning] Applying AEC and VAD parameters..."
+echo "[ReSpeaker Tuning] Applying stable parameters in a single session..."
 
-# NLAEC_MODE: Non-Linear AEC training mode. 1 = ON
-python3 "$DIR/tuning.py" NLAEC_MODE 1
-
-# NLATTENONOFF: Non-Linear echo attenuation. 1 = ON
-python3 "$DIR/tuning.py" NLATTENONOFF 1
-
-# GAMMAVAD_SR: Voice Activity Detection Threshold. 5.0 = sensibilitate buna
-python3 "$DIR/tuning.py" GAMMAVAD_SR 5.0
-
-# GAMMA_E / GAMMA_ENL: Agresivitate maxima a scaderii ecoului si distorsiunilor
-python3 "$DIR/tuning.py" GAMMA_E 3.0
-python3 "$DIR/tuning.py" GAMMA_ETAIL 3.0
-python3 "$DIR/tuning.py" GAMMA_ENL 5.0
-
-# AGCONOFF: Oprim amplificarea automata a volumului (AGC) ca sa nu distorsioneze ("tipe") cand esti aproape
-python3 "$DIR/tuning.py" AGCONOFF 0
+# We removed NLAEC_MODE because it was causing USB timeouts on this laptop
+python3 "$DIR/tuning.py" \
+    AGCGAIN 1.0 \
+    NLATTENONOFF 1 \
+    GAMMAVAD_SR 5.0 \
+    GAMMA_E 3.0 \
+    GAMMA_ETAIL 3.0 \
+    GAMMA_ENL 5.0 \
+    AGCONOFF 0
 
 echo "[ReSpeaker Tuning] Done."

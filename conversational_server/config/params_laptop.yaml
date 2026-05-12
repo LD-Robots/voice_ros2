@@ -50,7 +50,7 @@ openai_realtime_node:
     short_transcript_dedupe_window_s: 4.0
     playback_input_filter_enabled: true
     playback_input_filter_post_playback_ms: 800
-    playback_input_filter_min_rms_dbfs: -4.0
+    playback_input_filter_min_rms_dbfs: -17.0
     playback_input_filter_hits_required: 2
     assistant_echo_filter_enabled: true
     assistant_echo_window_s: 8.0
@@ -70,9 +70,10 @@ audio_capture_node:
     device_index: -1       # -1 = auto-detect (ReSpeaker will be found automatically)
     respeaker_mode: false  # not needed: 1-channel firmware outputs mono natively
     respeaker_channel: 0
-    stereo_mono_extract: false
+    stereo_mono_extract: true
     gain: 1.0
     chunk_ms: 60
+    debug_recording: true
 
 vad_node:
   ros__parameters:
