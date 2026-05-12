@@ -101,14 +101,16 @@ def generate_launch_description():
             package='conversational_client',
             executable='vad_node',
             name='vad_node',
-            parameters=[config_file_path]
+            parameters=[config_file_path],
+            remappings=[('/audio_raw', '/audio_clean')]
         ),
 
         Node(
             package='conversational_client',
             executable='audio_segment_node',
             name='audio_segment_node',
-            parameters=[config_file_path]
+            parameters=[config_file_path],
+            remappings=[('/audio_raw', '/audio_clean')]
         ),
         
         Node(
@@ -158,11 +160,19 @@ def generate_launch_description():
 
         Node(
             package='conversational_client',
+            executable='echo_canceller_node',
+            name='echo_canceller_node',
+            parameters=[config_file_path]
+        ),
+
+        Node(
+            package='conversational_client',
             executable='wake_word_node',
             name='wake_word_node',
             parameters=[config_file_path, {
                 'custom_models': ','.join([f'{hello_model_path}:wake', f'{goodbye_model_path}:stop']),
-            }]
+            }],
+            remappings=[('/audio_raw', '/audio_clean')]
         ),
 
         Node(

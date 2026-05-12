@@ -45,6 +45,7 @@ setup(
             'attention_manager_node = conversational_client.attention_manager_node:main',
             'person_memory_store_node = conversational_client.person_memory_store_node:main',
             'conversation_control_node = conversational_client.conversation_control_node:main',
+            'echo_canceller_node = conversational_client.echo_canceller_node:main',
         ],
     },
 )

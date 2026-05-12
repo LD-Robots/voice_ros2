@@ -349,6 +349,9 @@ class OpenAIRealtimeNode(Node):
         self._current_input_channels = 1
         self._handled_tool_call_ids = set()
         self._tool_call_lock = threading.Lock()
+        
+        # State pentru Resampling fara drift (24kHz -> 16kHz)
+        self._resample_accumulator = 0.0
 
         self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
         self.user_audio_segment_pub = self.create_publisher(Audio, '/realtime_user_audio_segment', 10)

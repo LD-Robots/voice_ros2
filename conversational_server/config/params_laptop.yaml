@@ -155,3 +155,13 @@ robot_command_executor_node:
     confirmation_timeout_s: 12.0
     risky_steps_threshold: 5
     risky_backward_steps_threshold: 3
+
+echo_canceller_node:
+  ros__parameters:
+    filter_length_ms: 50         # Redus pentru viteza in Python
+    step_size: 0.1               # Adaptare mai agresiva
+    max_delay_ms: 3000           # Crescut la 3 secunde pentru a acoperi latenta extrema
+    debug_recording: true
+    raw_wav_path: "/home/valee/voice_ros2/aec_raw.wav"
+    ref_wav_path: "/home/valee/voice_ros2/aec_reference.wav"
+    clean_wav_path: "/home/valee/voice_ros2/aec_cleaned.wav"
