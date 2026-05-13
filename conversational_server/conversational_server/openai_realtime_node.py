@@ -384,7 +384,7 @@ class OpenAIRealtimeNode(Node):
         self.stream_pub = self.create_publisher(TextChunk, '/llm_stream', 10)
         self.response_pub = self.create_publisher(Transcription, '/llm_response', 10)
         self.pause_state_pub = self.create_publisher(Bool, '/conversation_pause', 10)
-        self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.tts_stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
         self.status_pub = self.create_publisher(String, '/openai_realtime_status', 10)
 
         self.audio_sub = self.create_subscription(Audio, '/audio_raw', self.audio_callback, 10)
@@ -400,7 +400,7 @@ class OpenAIRealtimeNode(Node):
             self.speaking_callback,
             10,
         )
-        self.stop_sub = self.create_subscription(Bool, '/tts_stop', self.stop_callback, 10)
+        self.stop_sub = self.create_subscription(Bool, '/stop_playback', self.stop_callback, 10)
         self.progress_sub = self.create_subscription(
             String,
             '/audio_playback_progress',

@@ -166,17 +166,16 @@ class TTSNode(Node):
         )
         
         # Publisher for speaking status
-        from std_msgs.msg import Bool
         self.speaking_pub = self.create_publisher(
             Bool,
-            '/tts_speaking',  # Renamed for clarity
+            '/tts_speaking',
             10
         )
         
         # Subscriber for stop TTS
         self.stop_sub = self.create_subscription(
             Bool,
-            '/tts_stop',
+            '/stop_playback',
             self.stop_callback,
             10
         )

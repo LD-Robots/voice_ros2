@@ -13,8 +13,8 @@ class EchoCancellerNode(Node):
     def __init__(self):
         super().__init__('echo_canceller_node')
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('filter_length_ms', 150)
-        self.declare_parameter('step_size', 0.08)
+        self.declare_parameter('filter_length_ms', 120)
+        self.declare_parameter('step_size', 0.05)       # Pas mult mai mic si sigur
         self.declare_parameter('max_delay_ms', 3000)
         
         self.sample_rate = self.get_parameter('sample_rate').value
@@ -22,31 +22,31 @@ class EchoCancellerNode(Node):
         self.mu = self.get_parameter('step_size').value
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
         
-        # Buffer Circular AEC (Banda de timp real)
         self.buffer_size = self.max_delay_samples + self.sample_rate * 5
         self.ref_circle = np.zeros(self.buffer_size, dtype=np.float32)
         self.ref_ptr = 0
-        
-        # Coada de asteptare pentru sunetul de la server (care vine in rafale)
         self.ref_queue = collections.deque()
-        
         self.mic_history = collections.deque(maxlen=int(0.5 * self.sample_rate))
         self.total_ref_samples = 0
+        
         self.w = np.zeros(self.filter_length)
         self.current_delay = 0
         self.robot_speaking = False
+        
+        # Power smoothing
+        self.d_pow = 1e-4
+        self.e_pow = 1e-4
         
         self.raw_sub = self.create_subscription(Audio, '/audio_raw', self.raw_callback, 10)
         self.out_sub = self.create_subscription(Audio, '/audio_out', self.out_callback, 10)
         self.is_speaking_sub = self.create_subscription(Bool, '/is_speaking', self.is_speaking_callback, 10)
         self.clean_pub = self.create_publisher(Audio, '/audio_clean', 10)
         
-        # Debug Recordings
         self.wav_raw = self.open_wav("/home/valee/voice_ros2/aec_raw.wav", 16000)
         self.wav_ref_aligned = self.open_wav("/home/valee/voice_ros2/aec_reference.wav", 16000)
         self.wav_clean = self.open_wav("/home/valee/voice_ros2/aec_cleaned.wav", 16000)
         
-        print(f"🚀 [AEC] Time-Locked Node Started. Rate: {self.sample_rate}Hz", flush=True)
+        print(f"🚀 [AEC] Safe-Mode Node Started. Filter: {self.filter_length} taps", flush=True)
 
     def is_speaking_callback(self, msg):
         self.robot_speaking = msg.data
@@ -61,7 +61,6 @@ class EchoCancellerNode(Node):
         except: return None
 
     def out_callback(self, msg):
-        # Cand vine sunetul de la server, il punem in coada, NU in bufferul circular inca
         if len(msg.data) == 0: return
         audio_data = np.array(msg.data, dtype=np.int16).astype(np.float32) / 32768.0
         self.ref_queue.extend(audio_data)
@@ -81,16 +80,11 @@ class EchoCancellerNode(Node):
         d = d_i16.astype(np.float32) / 32768.0
         n = len(d)
         
-        # --- SINCRONIZARE PE BANDA ---
-        # Extragem din coada exact n eșantioane pentru a tine pasul cu microfonul
+        # Consume from queue to sync with microphone clock
         ref_chunk = np.zeros(n, dtype=np.float32)
         for i in range(n):
-            if self.ref_queue:
-                ref_chunk[i] = self.ref_queue.popleft()
-            else:
-                ref_chunk[i] = 0.0 # Silent daca nu mai avem date de la server
+            if self.ref_queue: ref_chunk[i] = self.ref_queue.popleft()
         
-        # Punem in bufferul circular (care acum se misca sincron cu microfonul)
         if self.ref_ptr + n <= self.buffer_size:
             self.ref_circle[self.ref_ptr : self.ref_ptr + n] = ref_chunk
         else:
@@ -100,28 +94,27 @@ class EchoCancellerNode(Node):
         self.ref_ptr = (self.ref_ptr + n) % self.buffer_size
         self.total_ref_samples += n
         
-        # Restul procesarii ramane la fel
         self.mic_history.extend(d)
         if self.wav_raw: self.wav_raw.writeframes(d_i16.tobytes())
             
         if not self.robot_speaking:
             self.current_delay = 0
-            # Optional: golim coada daca robotul a tacut de mult sa nu avem lag
-            if len(self.ref_queue) > self.sample_rate: # Mai mult de 1 secunda ramasa
-                 self.ref_queue.clear()
+            if len(self.ref_queue) > self.sample_rate: self.ref_queue.clear()
         
         if self.robot_speaking and self.current_delay == 0:
             footprint = np.array(self.mic_history)
-            if len(footprint) >= self.sample_rate * 0.3:
+            if len(footprint) >= self.sample_rate * 0.4:
                 slen = self.max_delay_samples + len(footprint)
                 area = self.get_ref_slice(slen, slen)
                 corr = signal.correlate(area, footprint, mode='valid')
                 peak = np.argmax(corr)
                 delay = slen - peak - len(footprint)
-                if 50 < delay < self.max_delay_samples: # delay minim redus
+                # Omitim delay-urile prea mici care pot fi artefacte
+                if 30 < delay < self.max_delay_samples:
                     self.current_delay = delay
-                    self.get_logger().info(f"🔒 DELAY BLOCAT: {self.current_delay/self.sample_rate*1000:.1f}ms")
+                    self.get_logger().info(f"🔒 AEC LOCKED: {self.current_delay/self.sample_rate*1000:.1f}ms")
 
+        e = np.copy(d)
         if self.current_delay > 0:
             x_hist = self.get_ref_slice(self.current_delay + n + self.filter_length, n + self.filter_length)
             if len(x_hist) >= n + self.filter_length:
@@ -130,13 +123,27 @@ class EchoCancellerNode(Node):
                     self.wav_ref_aligned.writeframes((np.clip(ref, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes())
                 
                 # NLMS Loop
-                e = np.zeros(n)
                 for i in range(n):
                     x_vec = x_hist[i : i + self.filter_length][::-1]
                     y = np.dot(x_vec, self.w)
-                    e[i] = d[i] - y
-                    norm = np.dot(x_vec, x_vec) + 1e-4
-                    self.w += self.mu * e[i] * x_vec / norm
+                    ei = d[i] - y
+                    e[i] = ei
+                    
+                    # Update power
+                    self.d_pow = 0.99 * self.d_pow + 0.01 * (d[i]**2)
+                    self.e_pow = 0.99 * self.e_pow + 0.01 * (ei**2)
+                    
+                    # PROTECTIE DIVERGENTA: Daca eroarea e mult mai mare decat mic, resetam greutatile
+                    if self.e_pow > 2.0 * self.d_pow:
+                        self.w *= 0.8 # Reducem agresiv greutatile daca incepem sa amplificam
+                        continue
+                    
+                    # DOUBLE TALK PROTECTION: Nu invatam daca eroarea e vizibil mai mare decat media recenta
+                    if self.e_pow > 1.1 * self.d_pow:
+                        continue 
+                        
+                    norm = np.dot(x_vec, x_vec) + 1e-3
+                    self.w += self.mu * ei * x_vec / norm
             else: e = d
         else:
             e = d
