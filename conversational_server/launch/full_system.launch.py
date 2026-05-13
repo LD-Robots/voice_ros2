@@ -85,7 +85,8 @@ def generate_launch_description():
             executable='openai_realtime_node',
             name='openai_realtime_node',
             condition=IfCondition(realtime_backend),
-            parameters=[config_file_path]
+            parameters=[config_file_path],
+            remappings=[('/audio_raw', '/audio_clean')]
         ),
         
         # ========== CLIENT NODES ==========

@@ -75,6 +75,28 @@ def _find_workspace_root() -> Path | None:
                 return parent
     return None
 
+class StatefulResampler:
+    """Resampler that maintains phase state between chunks to avoid pitch/speed drift."""
+    def __init__(self, original_rate, target_rate):
+        self.original_rate = original_rate
+        self.target_rate = target_rate
+        self.step = original_rate / target_rate
+        self.current_pos = 0.0
+
+    def resample(self, audio_data):
+        if self.original_rate == self.target_rate or audio_data.size == 0:
+            return audio_data
+        n_in = len(audio_data)
+        out_positions = []
+        curr = self.current_pos
+        while curr < n_in:
+            out_positions.append(curr)
+            curr += self.step
+        self.current_pos = curr - n_in
+        if not out_positions:
+            return np.array([], dtype=audio_data.dtype)
+        resampled = np.interp(out_positions, np.arange(n_in), audio_data.astype(np.float32))
+        return np.clip(np.round(resampled), -32768, 32767).astype(np.int16)
 
 class OpenAIRealtimeNode(Node):
     def __init__(self):
@@ -314,6 +336,9 @@ class OpenAIRealtimeNode(Node):
         self._user_speaking = False
         self._audio_chunks_sent = 0
         self._seen_output_audio_for_response = set()
+
+        # Output Resampler (Convert 24kHz OpenAI -> 16kHz System)
+        self.output_resampler = StatefulResampler(24000, 16000)
         self._last_playback_progress = {
             'stream_id': '',
             'item_id': '',
@@ -865,12 +890,17 @@ class OpenAIRealtimeNode(Node):
         if pcm.size == 0:
             return
 
+        # STATEFUL RESAMPLING: 24kHz -> 16kHz
+        pcm_resampled = self.output_resampler.resample(pcm)
+        if pcm_resampled.size == 0:
+            return
+
         self._last_assistant_audio_at = time.monotonic()
 
         out = Audio()
-        out.sample_rate = self.api_sample_rate
+        out.sample_rate = 16000  # Now always 16kHz
         out.channels = 1
-        out.data = pcm.tolist()
+        out.data = pcm_resampled.tolist()
         out.stream_id = str(event.get('response_id', '') or '')
         out.item_id = str(event.get('item_id', '') or '')
         self.audio_pub.publish(out)
