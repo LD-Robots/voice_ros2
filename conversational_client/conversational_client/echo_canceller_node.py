@@ -30,13 +30,13 @@ class EchoCancellerNode(Node):
         
         # Initialize WebRTC Audio Processor
         if WEBRTC_AVAILABLE:
-            # Default init enables AEC, NS, and AGC
-            self.apm = AudioProcessor(enable_aec=True, enable_ns=True, ns_level=2, enable_agc=True)
+            # AGC disabled per user request to avoid over-amplification
+            self.apm = AudioProcessor(enable_aec=True, enable_ns=True, ns_level=3, enable_agc=False)
             self.apm.set_stream_format(16000, 1)
             self.apm.set_reverse_stream_format(16000, 1)
-            self.get_logger().info("🚀 [AEC] WebRTC Professional Engine Started (AEC+NS+AGC).")
+            self.get_logger().info("🚀 [AEC] WebRTC Engine Started (AEC+NS, AGC Disabled).")
         else:
-            self.get_logger().error("❌ [AEC] WebRTC Library NOT FOUND! Install with: pip install aec-audio-processing")
+            self.get_logger().error("❌ [AEC] WebRTC Library NOT FOUND!")
             self.apm = None
 
         self.buffer_size = self.max_delay_samples + self.sample_rate * 5
@@ -47,6 +47,7 @@ class EchoCancellerNode(Node):
         
         self.current_delay = 0
         self.robot_speaking = False
+        self.tail_samples = 0
         self._lock_count = 0
         self.total_ref_samples = 0
         
@@ -110,13 +111,18 @@ class EchoCancellerNode(Node):
         self.mic_history.extend(d_f32)
         if self.wav_raw: self.wav_raw.writeframes(d_i16.tobytes())
             
-        if not self.robot_speaking:
-            self.current_delay = 0
-            if len(self.ref_queue) > self.sample_rate: self.ref_queue.clear()
-            self._lock_count = 0
+        if self.robot_speaking:
+            self.tail_samples = int(0.5 * self.sample_rate) # 500ms tail
+        else:
+            if self.tail_samples > 0:
+                self.tail_samples -= n
+            else:
+                self.current_delay = 0
+                if len(self.ref_queue) > self.sample_rate: self.ref_queue.clear()
+                self._lock_count = 0
         
         # Delay Estimation
-        if self.robot_speaking and self._lock_count < 10:
+        if (self.robot_speaking or self.tail_samples > 0) and self._lock_count < 10:
             footprint = np.array(self.mic_history)
             if len(footprint) >= self.sample_rate * 0.5:
                 slen = self.max_delay_samples + len(footprint)
@@ -156,7 +162,7 @@ class EchoCancellerNode(Node):
                 m_frame = mic_i16[i : i + self.frame_size_10ms]
                 r_frame = ref_i16[i : i + self.frame_size_10ms]
                 
-                # WebRTC API (expects bytes)
+                # WebRTC API
                 self.apm.process_reverse_stream(r_frame.tobytes())
                 res_bytes = self.apm.process_stream(m_frame.tobytes())
                 processed_frame = np.frombuffer(res_bytes, dtype=np.int16)
