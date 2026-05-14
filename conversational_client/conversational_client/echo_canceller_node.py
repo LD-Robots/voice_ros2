@@ -16,6 +16,15 @@ try:
 except ImportError:
     WEBRTC_AVAILABLE = False
 
+# Import DeepFilterNet
+try:
+    import torch
+    import torchaudio
+    from df.enhance import init_df, enhance
+    DF_AVAILABLE = True
+except ImportError:
+    DF_AVAILABLE = False
+
 class EchoCancellerNode(Node):
     def __init__(self):
         super().__init__('echo_canceller_node')
@@ -38,6 +47,27 @@ class EchoCancellerNode(Node):
         else:
             self.get_logger().error("❌ [AEC] WebRTC Library NOT FOUND!")
             self.apm = None
+
+        # Initialize DeepFilterNet
+        self.declare_parameter('deep_filter_enabled', True)
+        self.deep_filter_enabled = self.get_parameter('deep_filter_enabled').value and DF_AVAILABLE
+        
+        if self.deep_filter_enabled:
+            self.get_logger().info("🧠 [DF] Loading DeepFilterNet model... (this may take a few seconds)")
+            start_t = time.time()
+            self.df_model, self.df_state, _ = init_df()
+            self.df_sr = self.df_state.sr() # Usually 48000
+            self.df_hop = self.df_state.hop_size() # Usually 480
+            
+            # Resamplers for DF (16kHz <-> 48kHz)
+            self.resampler_16to48 = torchaudio.transforms.Resample(16000, self.df_sr)
+            self.resampler_48to16 = torchaudio.transforms.Resample(self.df_sr, 16000)
+            
+            self.get_logger().info(f"✅ [DF] Model Loaded in {time.time()-start_t:.2f}s. Running at {self.df_sr}Hz.")
+        else:
+            if not DF_AVAILABLE:
+                self.get_logger().warn("⚠️ [DF] DeepFilterNet NOT INSTALLED. Skipping AI enhancement.")
+            self.df_model = None
 
         self.buffer_size = self.max_delay_samples + self.sample_rate * 5
         self.ref_circle = np.zeros(self.buffer_size, dtype=np.float32)
@@ -170,6 +200,29 @@ class EchoCancellerNode(Node):
             
             if clean_out:
                 final_clean = np.concatenate(clean_out)
+                
+            # --- DeepFilterNet Stage ---
+            if self.df_model and len(final_clean) > 0:
+                try:
+                    # Convert to torch tensor (normalized float32)
+                    clean_f32 = final_clean.astype(np.float32) / 32768.0
+                    clean_t = torch.from_numpy(clean_f32).unsqueeze(0)
+                    
+                    # Resample 16kHz -> 48kHz
+                    clean_48k = self.resampler_16to48(clean_t)
+                    
+                    # Enhance with DeepFilterNet
+                    # We process the whole chunk, DF handles internal state persistence via self.df_state
+                    enhanced_48k = enhance(self.df_model, self.df_state, clean_48k)
+                    
+                    # Resample 48kHz -> 16kHz
+                    enhanced_16k = self.resampler_48to16(enhanced_48k)
+                    
+                    # Convert back to int16
+                    enhanced_np = (torch.clamp(enhanced_16k.squeeze(0), -1.0, 1.0).numpy() * 32767.0).astype(np.int16)
+                    final_clean = enhanced_np
+                except Exception as e:
+                    self.get_logger().error(f"❌ [DF] Enhancement Error: {e}")
         else:
             if self.wav_ref_aligned: self.wav_ref_aligned.writeframes(np.zeros(n, dtype=np.int16).tobytes())
 

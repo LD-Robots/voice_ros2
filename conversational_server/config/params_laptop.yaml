@@ -165,3 +165,7 @@ echo_canceller_node:
     raw_wav_path: "/home/valee/voice_ros2/aec_raw.wav"
     ref_wav_path: "/home/valee/voice_ros2/aec_reference.wav"
     clean_wav_path: "/home/valee/voice_ros2/aec_cleaned.wav"
+    
+    # DeepFilterNet Settings
+    deep_filter_enabled: true
+    deep_filter_attenuation: 100  # Percentage of noise reduction (0-100)
