@@ -9,44 +9,56 @@ import wave
 import collections
 import time
 
+# Import WebRTC Audio Processing
+try:
+    from aec_audio_processing import AudioProcessor
+    WEBRTC_AVAILABLE = True
+except ImportError:
+    WEBRTC_AVAILABLE = False
+
 class EchoCancellerNode(Node):
     def __init__(self):
         super().__init__('echo_canceller_node')
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('filter_length_ms', 120)
-        self.declare_parameter('step_size', 0.05)       # Pas mult mai mic si sigur
         self.declare_parameter('max_delay_ms', 3000)
         
         self.sample_rate = self.get_parameter('sample_rate').value
-        self.filter_length = int(self.get_parameter('filter_length_ms').value * self.sample_rate / 1000)
-        self.mu = self.get_parameter('step_size').value
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
         
+        # WebRTC strictly works on 10ms frames
+        self.frame_size_10ms = self.sample_rate // 100 # 160 samples @ 16kHz
+        
+        # Initialize WebRTC Audio Processor
+        if WEBRTC_AVAILABLE:
+            # Default init enables AEC, NS, and AGC
+            self.apm = AudioProcessor(enable_aec=True, enable_ns=True, ns_level=2, enable_agc=True)
+            self.apm.set_stream_format(16000, 1)
+            self.apm.set_reverse_stream_format(16000, 1)
+            self.get_logger().info("🚀 [AEC] WebRTC Professional Engine Started (AEC+NS+AGC).")
+        else:
+            self.get_logger().error("❌ [AEC] WebRTC Library NOT FOUND! Install with: pip install aec-audio-processing")
+            self.apm = None
+
         self.buffer_size = self.max_delay_samples + self.sample_rate * 5
         self.ref_circle = np.zeros(self.buffer_size, dtype=np.float32)
         self.ref_ptr = 0
         self.ref_queue = collections.deque()
         self.mic_history = collections.deque(maxlen=int(0.5 * self.sample_rate))
-        self.total_ref_samples = 0
         
-        self.w = np.zeros(self.filter_length)
         self.current_delay = 0
         self.robot_speaking = False
-        
-        # Power smoothing
-        self.d_pow = 1e-4
-        self.e_pow = 1e-4
+        self._lock_count = 0
+        self.total_ref_samples = 0
         
         self.raw_sub = self.create_subscription(Audio, '/audio_raw', self.raw_callback, 10)
         self.out_sub = self.create_subscription(Audio, '/audio_out', self.out_callback, 10)
         self.is_speaking_sub = self.create_subscription(Bool, '/is_speaking', self.is_speaking_callback, 10)
         self.clean_pub = self.create_publisher(Audio, '/audio_clean', 10)
         
+        # Debug files
         self.wav_raw = self.open_wav("/home/valee/voice_ros2/aec_raw.wav", 16000)
         self.wav_ref_aligned = self.open_wav("/home/valee/voice_ros2/aec_reference.wav", 16000)
         self.wav_clean = self.open_wav("/home/valee/voice_ros2/aec_cleaned.wav", 16000)
-        
-        print(f"🚀 [AEC] Safe-Mode Node Started. Filter: {self.filter_length} taps", flush=True)
 
     def is_speaking_callback(self, msg):
         self.robot_speaking = msg.data
@@ -77,14 +89,15 @@ class EchoCancellerNode(Node):
     def raw_callback(self, msg):
         if len(msg.data) == 0: return
         d_i16 = np.array(msg.data, dtype=np.int16)
-        d = d_i16.astype(np.float32) / 32768.0
-        n = len(d)
+        d_f32 = d_i16.astype(np.float32) / 32768.0
+        n = len(d_f32)
         
-        # Consume from queue to sync with microphone clock
+        # Sync reference queue
         ref_chunk = np.zeros(n, dtype=np.float32)
         for i in range(n):
             if self.ref_queue: ref_chunk[i] = self.ref_queue.popleft()
         
+        # Write to circular buffer
         if self.ref_ptr + n <= self.buffer_size:
             self.ref_circle[self.ref_ptr : self.ref_ptr + n] = ref_chunk
         else:
@@ -94,65 +107,69 @@ class EchoCancellerNode(Node):
         self.ref_ptr = (self.ref_ptr + n) % self.buffer_size
         self.total_ref_samples += n
         
-        self.mic_history.extend(d)
+        self.mic_history.extend(d_f32)
         if self.wav_raw: self.wav_raw.writeframes(d_i16.tobytes())
             
         if not self.robot_speaking:
             self.current_delay = 0
             if len(self.ref_queue) > self.sample_rate: self.ref_queue.clear()
+            self._lock_count = 0
         
-        if self.robot_speaking and self.current_delay == 0:
+        # Delay Estimation
+        if self.robot_speaking and self._lock_count < 10:
             footprint = np.array(self.mic_history)
-            if len(footprint) >= self.sample_rate * 0.4:
+            if len(footprint) >= self.sample_rate * 0.5:
                 slen = self.max_delay_samples + len(footprint)
                 area = self.get_ref_slice(slen, slen)
-                corr = signal.correlate(area, footprint, mode='valid')
+                f_norm = (footprint - np.mean(footprint)) / (np.std(footprint) + 1e-6)
+                a_norm = (area - np.mean(area)) / (np.std(area) + 1e-6)
+                corr = signal.correlate(a_norm, f_norm, mode='valid')
                 peak = np.argmax(corr)
-                delay = slen - peak - len(footprint)
-                # Omitim delay-urile prea mici care pot fi artefacte
-                if 30 < delay < self.max_delay_samples:
-                    self.current_delay = delay
-                    self.get_logger().info(f"🔒 AEC LOCKED: {self.current_delay/self.sample_rate*1000:.1f}ms")
-
-        e = np.copy(d)
-        if self.current_delay > 0:
-            x_hist = self.get_ref_slice(self.current_delay + n + self.filter_length, n + self.filter_length)
-            if len(x_hist) >= n + self.filter_length:
-                if self.wav_ref_aligned:
-                    ref = x_hist[self.filter_length : self.filter_length + n]
-                    self.wav_ref_aligned.writeframes((np.clip(ref, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes())
+                score = corr[peak] / len(f_norm)
+                delay = slen - peak - len(f_norm)
                 
-                # NLMS Loop
-                for i in range(n):
-                    x_vec = x_hist[i : i + self.filter_length][::-1]
-                    y = np.dot(x_vec, self.w)
-                    ei = d[i] - y
-                    e[i] = ei
-                    
-                    # Update power
-                    self.d_pow = 0.99 * self.d_pow + 0.01 * (d[i]**2)
-                    self.e_pow = 0.99 * self.e_pow + 0.01 * (ei**2)
-                    
-                    # PROTECTIE DIVERGENTA: Daca eroarea e mult mai mare decat mic, resetam greutatile
-                    if self.e_pow > 2.0 * self.d_pow:
-                        self.w *= 0.8 # Reducem agresiv greutatile daca incepem sa amplificam
-                        continue
-                    
-                    # DOUBLE TALK PROTECTION: Nu invatam daca eroarea e vizibil mai mare decat media recenta
-                    if self.e_pow > 1.1 * self.d_pow:
-                        continue 
-                        
-                    norm = np.dot(x_vec, x_vec) + 1e-3
-                    self.w += self.mu * ei * x_vec / norm
-            else: e = d
+                if score > 0.15:
+                    if abs(delay - self.current_delay) < 50:
+                        self._lock_count += 1
+                    else:
+                        self.current_delay = delay
+                        self._lock_count = 1
+                    if self._lock_count == 5:
+                        self.get_logger().info(f"🔒 AEC LOCKED: {self.current_delay/self.sample_rate*1000:.1f}ms")
+
+        # Process through WebRTC
+        final_clean = d_i16
+        if self.apm and self.current_delay > 0:
+            # Extract aligned reference
+            ref_aligned = self.get_ref_slice(self.current_delay + n, n)
+            if self.wav_ref_aligned:
+                self.wav_ref_aligned.writeframes((np.clip(ref_aligned, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes())
+            
+            # Split into 10ms frames for WebRTC
+            clean_out = []
+            mic_i16 = d_i16
+            ref_i16 = (np.clip(ref_aligned, -1.0, 1.0) * 32767.0).astype(np.int16)
+            
+            for i in range(0, n, self.frame_size_10ms):
+                if i + self.frame_size_10ms > n: break
+                
+                m_frame = mic_i16[i : i + self.frame_size_10ms]
+                r_frame = ref_i16[i : i + self.frame_size_10ms]
+                
+                # WebRTC API (expects bytes)
+                self.apm.process_reverse_stream(r_frame.tobytes())
+                res_bytes = self.apm.process_stream(m_frame.tobytes())
+                processed_frame = np.frombuffer(res_bytes, dtype=np.int16)
+                clean_out.append(processed_frame)
+            
+            if clean_out:
+                final_clean = np.concatenate(clean_out)
         else:
-            e = d
             if self.wav_ref_aligned: self.wav_ref_aligned.writeframes(np.zeros(n, dtype=np.int16).tobytes())
-        
-        clean_i16 = (np.clip(e, -1.0, 1.0) * 32767.0).astype(np.int16)
-        msg.data = clean_i16.tolist()
+
+        msg.data = final_clean.tolist()
         self.clean_pub.publish(msg)
-        if self.wav_clean: self.wav_clean.writeframes(clean_i16.tobytes())
+        if self.wav_clean: self.wav_clean.writeframes(final_clean.tobytes())
 
     def destroy_node(self):
         for f in [self.wav_raw, self.wav_ref_aligned, self.wav_clean]:
