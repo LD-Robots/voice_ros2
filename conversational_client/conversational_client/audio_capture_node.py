@@ -12,6 +12,7 @@ import numpy as np
 import sys
 import wave
 import os
+from pathlib import Path
 
 # Replace PyAudio with sounddevice
 try:
@@ -35,7 +36,7 @@ class AudioCaptureNode(Node):
         self.declare_parameter('gain', 1.0)              # Digital gain multiplier
         self.declare_parameter('stereo_mono_extract', False)
         self.declare_parameter('debug_recording', False) # Save to local WAV file
-        self.declare_parameter('debug_wav_path', '/home/valee/voice_ros2/debug_mic_capture.wav')
+        self.declare_parameter('debug_wav_path', '')
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
@@ -46,7 +47,9 @@ class AudioCaptureNode(Node):
         self.gain = self.get_parameter('gain').value
         self.stereo_mono_extract = self.get_parameter('stereo_mono_extract').value
         self.debug_recording = self.get_parameter('debug_recording').value
-        self.debug_wav_path = self.get_parameter('debug_wav_path').value
+        self.debug_wav_path = str(self.get_parameter('debug_wav_path').value or '')
+        if self.debug_recording and not self.debug_wav_path:
+            self.debug_wav_path = str(self._find_workspace_root() / 'debug_mic_capture.wav')
         
         # Calculate block size (frames per chunk)
         self.block_size = int(self.sample_rate * self.chunk_ms / 1000)
@@ -74,6 +77,13 @@ class AudioCaptureNode(Node):
             self.start_capture()
         else:
             self.get_logger().error("sounddevice library missing! Cannot capture audio.")
+
+    def _find_workspace_root(self):
+        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+            for parent in [base] + list(base.parents):
+                if parent.name == 'voice_ros2':
+                    return parent
+        return Path.cwd()
 
     def start_capture(self):
         try:

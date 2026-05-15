@@ -17,7 +17,7 @@ asr_node:
     compute_type: "int8"
     language: "ro_en"
     beam_size: 5
-    initial_prompt: "A bilingual conversation in Romanian and English."
+    initial_prompt: "A multilingual spoken conversation. Preserve the user's current language unless they clearly switch."
 
 llm_node:
   ros__parameters:
@@ -56,8 +56,12 @@ openai_realtime_node:
     assistant_echo_window_s: 8.0
     assistant_echo_similarity_threshold: 84.0
     web_search_enabled: true
+    web_search_provider: "brave"
     web_search_model: "gpt-4o-mini"
     web_search_context_size: "medium"
+    brave_search_country: "ALL"
+    brave_search_lang: "en"
+    brave_search_count: 5
     capture_during_playback: true
     speaker_switch_hits_required: 2
     language_switch_hits_required: 2
@@ -162,9 +166,6 @@ echo_canceller_node:
     step_size: 0.15              # Putin mai agresiv
     max_delay_ms: 3000           # Crescut la 3 secunde pentru a acoperi latenta extrema
     debug_recording: true
-    raw_wav_path: "/home/valee/voice_ros2/aec_raw.wav"
-    ref_wav_path: "/home/valee/voice_ros2/aec_reference.wav"
-    clean_wav_path: "/home/valee/voice_ros2/aec_cleaned.wav"
     
     # DeepFilterNet Settings
     deep_filter_enabled: true

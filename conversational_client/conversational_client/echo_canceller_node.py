@@ -8,49 +8,82 @@ from scipy import signal
 import wave
 import collections
 import time
+from pathlib import Path
+import sys
+import types
 
 # Import WebRTC Audio Processing
 try:
     from aec_audio_processing import AudioProcessor
     WEBRTC_AVAILABLE = True
-except ImportError:
+    WEBRTC_IMPORT_ERROR = ''
+except ImportError as exc:
     WEBRTC_AVAILABLE = False
+    WEBRTC_IMPORT_ERROR = str(exc)
 
 # Import DeepFilterNet
 try:
     import torch
     import torchaudio
+    if 'torchaudio.backend.common' not in sys.modules:
+        common_mod = types.ModuleType('torchaudio.backend.common')
+        common_mod.AudioMetaData = type('AudioMetaData', (), {})
+        backend_mod = types.ModuleType('torchaudio.backend')
+        backend_mod.common = common_mod
+        sys.modules['torchaudio.backend'] = backend_mod
+        sys.modules['torchaudio.backend.common'] = common_mod
     from df.enhance import init_df, enhance
     DF_AVAILABLE = True
-except ImportError:
+    DF_IMPORT_ERROR = ''
+except ImportError as exc:
     DF_AVAILABLE = False
+    DF_IMPORT_ERROR = str(exc)
 
 class EchoCancellerNode(Node):
     def __init__(self):
         super().__init__('echo_canceller_node')
+        self.declare_parameter('enabled', True)
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('max_delay_ms', 3000)
+        self.declare_parameter('debug_recording', False)
+        self.declare_parameter('debug_dir', '')
+        self.declare_parameter('raw_wav_path', '')
+        self.declare_parameter('ref_wav_path', '')
+        self.declare_parameter('clean_wav_path', '')
         
+        self.enabled = bool(self.get_parameter('enabled').value)
         self.sample_rate = self.get_parameter('sample_rate').value
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
+        self.debug_recording = bool(self.enabled and self.get_parameter('debug_recording').value)
+        self.debug_dir = str(self.get_parameter('debug_dir').value or '')
+        self.raw_wav_path = str(self.get_parameter('raw_wav_path').value or '')
+        self.ref_wav_path = str(self.get_parameter('ref_wav_path').value or '')
+        self.clean_wav_path = str(self.get_parameter('clean_wav_path').value or '')
         
         # WebRTC strictly works on 10ms frames
         self.frame_size_10ms = self.sample_rate // 100 # 160 samples @ 16kHz
         
         # Initialize WebRTC Audio Processor
-        if WEBRTC_AVAILABLE:
+        if not self.enabled:
+            self.apm = None
+            self.get_logger().info("⏭️ [AEC] ROS echo canceller disabled; passing /audio_raw to /audio_clean.")
+        elif WEBRTC_AVAILABLE:
             # AGC disabled per user request to avoid over-amplification
             self.apm = AudioProcessor(enable_aec=True, enable_ns=True, ns_level=3, enable_agc=False)
             self.apm.set_stream_format(16000, 1)
             self.apm.set_reverse_stream_format(16000, 1)
             self.get_logger().info("🚀 [AEC] WebRTC Engine Started (AEC+NS, AGC Disabled).")
         else:
-            self.get_logger().error("❌ [AEC] WebRTC Library NOT FOUND!")
+            self.get_logger().error(f"❌ [AEC] WebRTC Library NOT FOUND: {WEBRTC_IMPORT_ERROR}")
             self.apm = None
 
         # Initialize DeepFilterNet
         self.declare_parameter('deep_filter_enabled', True)
-        self.deep_filter_enabled = self.get_parameter('deep_filter_enabled').value and DF_AVAILABLE
+        self.deep_filter_enabled = (
+            self.enabled
+            and bool(self.get_parameter('deep_filter_enabled').value)
+            and DF_AVAILABLE
+        )
         
         if self.deep_filter_enabled:
             self.get_logger().info("🧠 [DF] Loading DeepFilterNet model... (this may take a few seconds)")
@@ -65,8 +98,10 @@ class EchoCancellerNode(Node):
             
             self.get_logger().info(f"✅ [DF] Model Loaded in {time.time()-start_t:.2f}s. Running at {self.df_sr}Hz.")
         else:
-            if not DF_AVAILABLE:
-                self.get_logger().warn("⚠️ [DF] DeepFilterNet NOT INSTALLED. Skipping AI enhancement.")
+            if self.enabled and not DF_AVAILABLE:
+                self.get_logger().warn(
+                    f"⚠️ [DF] DeepFilterNet unavailable: {DF_IMPORT_ERROR}. Skipping AI enhancement."
+                )
             self.df_model = None
 
         self.buffer_size = self.max_delay_samples + self.sample_rate * 5
@@ -87,9 +122,20 @@ class EchoCancellerNode(Node):
         self.clean_pub = self.create_publisher(Audio, '/audio_clean', 10)
         
         # Debug files
-        self.wav_raw = self.open_wav("/home/valee/voice_ros2/aec_raw.wav", 16000)
-        self.wav_ref_aligned = self.open_wav("/home/valee/voice_ros2/aec_reference.wav", 16000)
-        self.wav_clean = self.open_wav("/home/valee/voice_ros2/aec_cleaned.wav", 16000)
+        if self.debug_recording:
+            debug_dir = Path(self.debug_dir).expanduser() if self.debug_dir else self._find_workspace_root()
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            self.wav_raw = self.open_wav(self.raw_wav_path or str(debug_dir / "aec_raw.wav"), 16000)
+            self.wav_ref_aligned = self.open_wav(
+                self.ref_wav_path or str(debug_dir / "aec_reference.wav"),
+                16000,
+            )
+            self.wav_clean = self.open_wav(
+                self.clean_wav_path or str(debug_dir / "aec_cleaned.wav"),
+                16000,
+            )
+        else:
+            self.wav_raw = self.wav_ref_aligned = self.wav_clean = None
 
     def is_speaking_callback(self, msg):
         self.robot_speaking = msg.data
@@ -101,7 +147,21 @@ class EchoCancellerNode(Node):
             w.setsampwidth(2)
             w.setframerate(rate)
             return w
-        except: return None
+        except Exception as exc:
+            self.get_logger().error(f"Failed to open WAV {path}: {exc}")
+            try:
+                if 'w' in locals():
+                    w.close()
+            except Exception:
+                pass
+            return None
+
+    def _find_workspace_root(self):
+        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+            for parent in [base] + list(base.parents):
+                if parent.name == 'voice_ros2':
+                    return parent
+        return Path.cwd()
 
     def out_callback(self, msg):
         if len(msg.data) == 0: return
@@ -119,6 +179,10 @@ class EchoCancellerNode(Node):
 
     def raw_callback(self, msg):
         if len(msg.data) == 0: return
+        if not self.enabled:
+            self.clean_pub.publish(msg)
+            return
+
         d_i16 = np.array(msg.data, dtype=np.int16)
         d_f32 = d_i16.astype(np.float32) / 32768.0
         n = len(d_f32)
