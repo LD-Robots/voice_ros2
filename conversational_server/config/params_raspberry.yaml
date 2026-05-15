@@ -72,6 +72,8 @@ audio_capture_node:
     respeaker_channel: 0
     gain: 1.0
     chunk_ms: 60
+    debug_recording: true
+    debug_wav_path: "debug_mic_capture.wav"
 
 vad_node:
   ros__parameters:
@@ -152,3 +154,10 @@ robot_command_executor_node:
     confirmation_timeout_s: 12.0
     risky_steps_threshold: 5
     risky_backward_steps_threshold: 3
+    
+echo_canceller_node:
+  ros__parameters:
+    raw_wav_path: "aec_raw.wav"
+    ref_wav_path: "aec_reference.wav"
+    clean_wav_path: "aec_cleaned.wav"
+    debug_recording: true

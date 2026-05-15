@@ -35,7 +35,7 @@ class AudioCaptureNode(Node):
         self.declare_parameter('gain', 1.0)              # Digital gain multiplier
         self.declare_parameter('stereo_mono_extract', False)
         self.declare_parameter('debug_recording', False) # Save to local WAV file
-        self.declare_parameter('debug_wav_path', '/home/valee/voice_ros2/debug_mic_capture.wav')
+        self.declare_parameter('debug_wav_path', '')
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
