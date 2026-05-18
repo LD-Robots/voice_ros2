@@ -34,6 +34,14 @@ class EchoCancellerNode(Node):
         self.sample_rate = self.get_parameter('sample_rate').value
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
         
+        self.declare_parameter('raw_wav_path', '')
+        self.declare_parameter('ref_wav_path', '')
+        self.declare_parameter('clean_wav_path', '')
+        
+        raw_path = self.get_parameter('raw_wav_path').value
+        ref_path = self.get_parameter('ref_wav_path').value
+        clean_path = self.get_parameter('clean_wav_path').value
+        
         # WebRTC strictly works on 10ms frames
         self.frame_size_10ms = self.sample_rate // 100 # 160 samples @ 16kHz
         
@@ -86,10 +94,10 @@ class EchoCancellerNode(Node):
         self.is_speaking_sub = self.create_subscription(Bool, '/is_speaking', self.is_speaking_callback, 10)
         self.clean_pub = self.create_publisher(Audio, '/audio_clean', 10)
         
-        # Debug files
-        self.wav_raw = self.open_wav("/tmp/aec_raw.wav", 16000)
-        self.wav_ref_aligned = self.open_wav("/tmp/aec_reference.wav", 16000)
-        self.wav_clean = self.open_wav("/tmp/aec_cleaned.wav", 16000)
+        # Debug files (only open if path is provided)
+        self.wav_raw = self.open_wav(raw_path, 16000) if raw_path else None
+        self.wav_ref_aligned = self.open_wav(ref_path, 16000) if ref_path else None
+        self.wav_clean = self.open_wav(clean_path, 16000) if clean_path else None
 
     def is_speaking_callback(self, msg):
         self.robot_speaking = msg.data
