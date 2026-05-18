@@ -1,0 +1,17 @@
+{
+    "include": [
+        "conversational_server",
+        "conversational_client",
+        "conversational_interfaces"
+    ],
+    "extraPaths": [
+        "/opt/ros/jazzy/lib/python3.12/site-packages",
+        "./install/conversational_interfaces/lib/python3.12/site-packages",
+        "./install/conversational_client/lib/python3.12/site-packages",
+        "./install/conversational_server/lib/python3.12/site-packages",
+        "./conversational_server",
+        "./conversational_client"
+    ],
+    "typeCheckingMode": "off",
+    "reportMissingImports": false
+}

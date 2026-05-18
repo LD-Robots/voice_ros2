@@ -162,9 +162,9 @@ echo_canceller_node:
     step_size: 0.15              # Putin mai agresiv
     max_delay_ms: 3000           # Crescut la 3 secunde pentru a acoperi latenta extrema
     debug_recording: true
-    raw_wav_path: "/home/valee/voice_ros2/aec_raw.wav"
-    ref_wav_path: "/home/valee/voice_ros2/aec_reference.wav"
-    clean_wav_path: "/home/valee/voice_ros2/aec_cleaned.wav"
+    raw_wav_path: "/tmp/aec_raw.wav"
+    ref_wav_path: "/tmp/aec_reference.wav"
+    clean_wav_path: "/tmp/aec_cleaned.wav"
     
     # DeepFilterNet Settings
     deep_filter_enabled: true

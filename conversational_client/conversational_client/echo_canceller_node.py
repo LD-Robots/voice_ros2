@@ -87,9 +87,9 @@ class EchoCancellerNode(Node):
         self.clean_pub = self.create_publisher(Audio, '/audio_clean', 10)
         
         # Debug files
-        self.wav_raw = self.open_wav("/home/valee/voice_ros2/aec_raw.wav", 16000)
-        self.wav_ref_aligned = self.open_wav("/home/valee/voice_ros2/aec_reference.wav", 16000)
-        self.wav_clean = self.open_wav("/home/valee/voice_ros2/aec_cleaned.wav", 16000)
+        self.wav_raw = self.open_wav("/tmp/aec_raw.wav", 16000)
+        self.wav_ref_aligned = self.open_wav("/tmp/aec_reference.wav", 16000)
+        self.wav_clean = self.open_wav("/tmp/aec_cleaned.wav", 16000)
 
     def is_speaking_callback(self, msg):
         self.robot_speaking = msg.data
