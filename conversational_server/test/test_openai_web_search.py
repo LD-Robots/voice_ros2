@@ -2,13 +2,16 @@ import json
 
 from conversational_server.openai_web_search import (
     WEB_SEARCH_FUNCTION_NAME,
+    build_brave_llm_context_tool_output,
     build_brave_web_search_tool_output,
     build_realtime_web_search_tool,
     build_web_search_tool_output,
+    call_brave_llm_context,
     call_brave_web_search,
     extract_brave_results,
     extract_response_sources,
     extract_response_text,
+    should_use_web_search,
 )
 
 
@@ -128,6 +131,30 @@ def test_build_brave_web_search_tool_output_serializes_results():
     ]
 
 
+def test_build_brave_llm_context_tool_output_serializes_grounding():
+    payload = {
+        'grounding': {
+            'generic': [
+                {
+                    'title': 'Romanian SuperLiga table',
+                    'url': 'https://standings.example',
+                    'snippets': ['Team A 43 points', 'Team B 41 points'],
+                },
+            ],
+        },
+        'sources': {},
+    }
+
+    output = json.loads(build_brave_llm_context_tool_output('superliga table', payload=payload))
+
+    assert output['ok'] is True
+    assert output['provider'] == 'brave_llm_context'
+    assert 'Team A 43 points' in output['summary']
+    assert output['sources'] == [
+        {'title': 'Romanian SuperLiga table', 'url': 'https://standings.example'},
+    ]
+
+
 def test_call_brave_web_search_normalizes_invalid_country_and_uppercase_lang(monkeypatch):
     captured = {}
 
@@ -148,3 +175,42 @@ def test_call_brave_web_search_normalizes_invalid_country_and_uppercase_lang(mon
 
     assert captured['params']['country'] == 'ALL'
     assert captured['params']['search_lang'] == 'en'
+
+
+def test_call_brave_llm_context_uses_context_params(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        ok = True
+
+        @staticmethod
+        def json():
+            return {'grounding': {'generic': []}}
+
+    def fake_get(url, *, headers, params, timeout):
+        captured['params'] = params
+        return FakeResponse()
+
+    monkeypatch.setattr('conversational_server.openai_web_search.requests.get', fake_get)
+
+    call_brave_llm_context('key', 'standings', country='ALL', search_lang='EN', count=60)
+
+    assert captured['params']['country'] == 'US'
+    assert captured['params']['search_lang'] == 'en'
+    assert captured['params']['count'] == 50
+    assert captured['params']['context_threshold_mode'] == 'lenient'
+
+
+def test_should_use_web_search_for_live_or_current_requests():
+    assert should_use_web_search('How will the weather be tomorrow?')[0] is True
+    assert should_use_web_search('Some football matches from tomorrow in Romania')[0] is True
+    assert should_use_web_search('Cauta online ultimele stiri din Romania')[0] is True
+    assert should_use_web_search('Who is the CEO of OpenAI?')[0] is True
+    assert should_use_web_search('But about Ukraine war')[0] is True
+
+
+def test_should_not_use_web_search_for_stable_local_requests():
+    assert should_use_web_search('Explain what a neural network is')[0] is False
+    assert should_use_web_search('Robot, give me a handshake')[0] is False
+    assert should_use_web_search('How are you today?')[0] is False
+    assert should_use_web_search('Cum ești azi?')[0] is False

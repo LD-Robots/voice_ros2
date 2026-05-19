@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-LLM Node - Language Model processing using Groq API with STREAMING.
+LLM Node - Language Model processing using OpenAI reasoning + Brave Search.
 
 FEATURES (synced with Conversational_Robot Python):
-  - Web search via Groq Compound model for current questions
+  - Web search via Brave Search for current questions
   - Keyword detection for news, weather, prices, elections, etc.
 
 Subscribes to: /transcription (Transcription)
@@ -14,7 +14,7 @@ Publishes to:
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 import json
 import os
 import re
@@ -23,7 +23,21 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+import requests
 from conversational_client.robot_command_utils import looks_like_robot_command
+from .openai_web_search import (
+    DEFAULT_BRAVE_SEARCH_COUNT,
+    DEFAULT_BRAVE_SEARCH_COUNTRY,
+    DEFAULT_BRAVE_SEARCH_LANG,
+    DEFAULT_BRAVE_LLM_CONTEXT_COUNT,
+    DEFAULT_BRAVE_LLM_CONTEXT_TOKENS,
+    build_brave_llm_context_tool_output,
+    build_brave_web_search_tool_output,
+    call_brave_llm_context,
+    call_brave_web_search,
+    extract_response_text,
+    should_use_web_search,
+)
 from .prompt_config import load_prompt_defaults
 
 # Load variables from .env
@@ -48,14 +62,6 @@ try:
 except ImportError:
     print("⚠️ python-dotenv not installed. Run: pip install python-dotenv")
 
-# Groq for LLM
-try:
-    from groq import Groq
-    GROQ_AVAILABLE = True
-except ImportError:
-    GROQ_AVAILABLE = False
-    print("⚠️ groq not installed. Run: pip install groq")
-
 # Regex to detect the end of a sentence
 SENTENCE_END = re.compile(r'[.!?;:]\s*$')
 
@@ -65,10 +71,16 @@ class LLMNode(Node):
         super().__init__('llm_node')
         
         # Configurable parameters
-        self.declare_parameter('provider', 'groq')
-        self.declare_parameter('model', 'llama-3.1-8b-instant')
+        self.declare_parameter('provider', 'openai')
+        self.declare_parameter('model', 'gpt-5.5')
+        self.declare_parameter('fast_model_enabled', True)
+        self.declare_parameter('fast_model', 'gpt-5-mini')
+        self.declare_parameter('fast_reasoning_effort', 'minimal')
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
+        self.declare_parameter('reasoning_effort', 'low')
+        self.declare_parameter('openai_api_key_env', 'OPENAI_API_KEY')
+        self.declare_parameter('openai_timeout_s', 45.0)
         self.declare_parameter('min_chunk_chars', 40)  # Min chars per chunk
         self.declare_parameter('transcription_topic', '/attended_transcription')
         
@@ -78,26 +90,68 @@ class LLMNode(Node):
         
         # Web search parameters
         self.declare_parameter('websearch_enabled', True)
-        self.declare_parameter('websearch_model', 'compound-beta')  # Groq compound model
+        self.declare_parameter('websearch_provider', 'brave')
         self.declare_parameter('websearch_max_tokens', 300)
+        self.declare_parameter('search_router_enabled', True)
+        self.declare_parameter('search_router_model', 'gpt-5-mini')
+        self.declare_parameter('search_router_reasoning_effort', 'minimal')
+        self.declare_parameter('search_router_timeout_s', 8.0)
+        self.declare_parameter('brave_search_country', DEFAULT_BRAVE_SEARCH_COUNTRY)
+        self.declare_parameter('brave_search_lang', DEFAULT_BRAVE_SEARCH_LANG)
+        self.declare_parameter('brave_search_count', DEFAULT_BRAVE_SEARCH_COUNT)
+        self.declare_parameter('brave_search_timeout_s', 12.0)
+        self.declare_parameter('brave_llm_context_enabled', True)
+        self.declare_parameter('brave_llm_context_count', DEFAULT_BRAVE_LLM_CONTEXT_COUNT)
+        self.declare_parameter('brave_llm_context_max_tokens', DEFAULT_BRAVE_LLM_CONTEXT_TOKENS)
         
         self.provider = str(self.get_parameter('provider').value).lower()
         self.model = self.get_parameter('model').value
+        self.fast_model_enabled = bool(self.get_parameter('fast_model_enabled').value)
+        self.fast_model = str(self.get_parameter('fast_model').value)
+        self.fast_reasoning_effort = str(
+            self.get_parameter('fast_reasoning_effort').value or ''
+        ).strip()
         self.max_tokens = self.get_parameter('max_tokens').value
         self.temperature = self.get_parameter('temperature').value
+        self.reasoning_effort = str(self.get_parameter('reasoning_effort').value or '').strip()
+        self.openai_api_key_env = str(self.get_parameter('openai_api_key_env').value)
+        self.openai_timeout_s = float(self.get_parameter('openai_timeout_s').value)
         self.min_chunk_chars = self.get_parameter('min_chunk_chars').value
         self.system_prompt = self.get_parameter('system_prompt').value
         self.transcription_topic = str(self.get_parameter('transcription_topic').value)
 
-        if self.provider != 'groq':
+        if self.provider != 'openai':
             raise RuntimeError(
-                f"Unsupported llm provider '{self.provider}'. Only 'groq' is implemented."
+                f"Unsupported llm provider '{self.provider}'. Only 'openai' is implemented."
             )
         
         # Web search
         self.websearch_enabled = self.get_parameter('websearch_enabled').value
-        self.websearch_model = self.get_parameter('websearch_model').value
+        self.websearch_provider = str(self.get_parameter('websearch_provider').value).lower()
         self.websearch_max_tokens = self.get_parameter('websearch_max_tokens').value
+        self.search_router_enabled = bool(
+            self.get_parameter('search_router_enabled').value
+        )
+        self.search_router_model = str(self.get_parameter('search_router_model').value)
+        self.search_router_reasoning_effort = str(
+            self.get_parameter('search_router_reasoning_effort').value or ''
+        ).strip()
+        self.search_router_timeout_s = float(
+            self.get_parameter('search_router_timeout_s').value
+        )
+        self.brave_search_country = str(self.get_parameter('brave_search_country').value)
+        self.brave_search_lang = str(self.get_parameter('brave_search_lang').value)
+        self.brave_search_count = int(self.get_parameter('brave_search_count').value)
+        self.brave_search_timeout_s = float(self.get_parameter('brave_search_timeout_s').value)
+        self.brave_llm_context_enabled = bool(
+            self.get_parameter('brave_llm_context_enabled').value
+        )
+        self.brave_llm_context_count = int(
+            self.get_parameter('brave_llm_context_count').value
+        )
+        self.brave_llm_context_max_tokens = int(
+            self.get_parameter('brave_llm_context_max_tokens').value
+        )
         
         # Stream shaper parameters
         self.declare_parameter('prebuffer_chars', 120)
@@ -136,19 +190,18 @@ class LLMNode(Node):
             'unknown_ro': self.get_parameter('fallback_unknown_ro').value,
         }
         
-        # Check API key
-        self.api_key = os.environ.get('GROQ_API_KEY')
+        # Check API keys
+        self.api_key = os.environ.get(self.openai_api_key_env)
         if not self.api_key:
-            self.get_logger().error('GROQ_API_KEY environment variable not set!')
-            raise RuntimeError('GROQ_API_KEY not set')
-        
-        if not GROQ_AVAILABLE:
-            self.get_logger().error('groq package not installed!')
-            raise RuntimeError('groq not available')
-        
-        # Initialize Groq client
-        self.client = Groq(api_key=self.api_key)
-        self.get_logger().debug(f'✅ Groq client initialized with model: {self.model}')
+            self.get_logger().error(f'{self.openai_api_key_env} environment variable not set!')
+            raise RuntimeError(f'{self.openai_api_key_env} not set')
+        self.brave_search_api_key = os.environ.get('BRAVE_SEARCH_API_KEY', '')
+        if self.websearch_enabled and self.websearch_provider == 'brave' and not self.brave_search_api_key:
+            self.get_logger().warn(
+                'BRAVE_SEARCH_API_KEY not set; online search decisions will be logged but skipped.'
+            )
+
+        self.get_logger().debug(f'✅ OpenAI reasoning initialized with model: {self.model}')
         
         # Conversation history
         self.conversation_history = []
@@ -160,6 +213,8 @@ class LLMNode(Node):
             'preferred_language': '',
             'facts': [],
         }
+        self.latest_diarization = {}
+        self.stop_epoch = 0
         
         # Speaker identification — who is speaking now
         self.current_speaker = "Unknown"
@@ -184,6 +239,12 @@ class LLMNode(Node):
             self._person_context_callback,
             10
         )
+        self.diarization_sub = self.create_subscription(
+            String,
+            '/elevenlabs_diarization',
+            self._diarization_callback,
+            10,
+        )
         self.backend_sub = self.create_subscription(
             String,
             '/conversation_backend',
@@ -195,6 +256,12 @@ class LLMNode(Node):
             '/conversation_control',
             self._control_callback,
             10
+        )
+        self.stop_sub = self.create_subscription(
+            Bool,
+            '/stop_playback',
+            self._stop_playback_callback,
+            10,
         )
         
         # Subscriber for transcription
@@ -225,8 +292,16 @@ class LLMNode(Node):
             '/tts_command',
             10
         )
+        self.web_search_status_pub = self.create_publisher(
+            String,
+            '/web_search_status',
+            10,
+        )
         
-        self.get_logger().debug(f'LLM Node started with STREAMING + BACKCHANNEL! websearch={self.websearch_enabled}')
+        self.get_logger().debug(
+            f'LLM Node started with OpenAI reasoning + Brave Search! '
+            f'websearch={self.websearch_enabled}'
+        )
     
     def _get_system_prompt_with_date(self) -> str:
         """Return system prompt with the current date injected."""
@@ -242,55 +317,172 @@ class LLMNode(Node):
         """Detect whether the question needs up-to-date web info."""
         if not self.websearch_enabled:
             return False
-        
-        text_lower = text.lower()
-        
-        # Keywords that indicate a need for current info
-        current_info_keywords = [
-            # English - time-sensitive
-            "news", "today", "latest", "current", "recent", "now",
-            "weather", "price", "stock", "score", "result",
-            "who won", "what happened", "breaking",
-            # English - factual questions that benefit from search
-            "who is the", "who is", "president", "prime minister",
-            "ceo of", "founder of", "how much does", "how much is",
-            # English - elections & politics
-            "election", "elected", "candidate", "vote", "voting",
-            "parliament", "congress", "senator", "governor",
-            # English - sports
-            "match", "game", "championship", "tournament", "league",
-            "world cup", "olympics", "fifa", "nba", "nfl",
-            # English - entertainment
-            "movie", "film", "actor", "actress", "oscar", "grammy",
-            "album", "song", "concert", "tour", "netflix", "spotify",
-            # English - tech & business
-            "iphone", "android", "google", "apple", "microsoft", "tesla",
-            "chatgpt", "openai", "cryptocurrency", "bitcoin", "gpt-4", "gpt-5",
-            # Romanian - time-sensitive
-            "știri", "stiri", "azi", "acum", "recent", "ultima",
-            "vreme", "preț", "pret", "scor", "rezultat",
-            "cine a câștigat", "cine a castigat", "ce s-a întâmplat",
-            "cine este", "președinte", "presedinte", "prim-ministru",
-            # Romanian - elections & politics
-            "alegeri", "ales", "candidat", "vot", "votat", "votare",
-            "parlament", "senator", "deputat", "partid", "guvern",
-            "tur", "turul doi", "turul întâi", "campanie",
-            # Romanian - sports
-            "meci", "joc", "campionat", "liga", "fotbal", "nationala",
-            "steaua", "dinamo", "cfr", "fcsb", "simona halep",
-            # Romanian - entertainment
-            "film", "actor", "actriță", "actrita", "serial", "netflix",
-            "muzică", "muzica", "concert", "album", "cântăreț", "cantaret",
-            # Romanian - tech & business
-            "telefon", "aplicație", "aplicatie", "emag", "olx"
-        ]
-        
-        for keyword in current_info_keywords:
-            if keyword in text_lower:
-                self.get_logger().debug(f'🔍 Web search triggered by keyword: "{keyword}"')
-                return True
-        
-        return False
+
+        needs_search, reason = should_use_web_search(text)
+        if needs_search:
+            self.get_logger().debug(f'🔍 Web search recommended: {reason}')
+        return needs_search
+
+    def _websearch_decision(self, text: str) -> tuple[bool, str, str]:
+        if not self.websearch_enabled:
+            return False, 'web search disabled', text
+
+        rule_search, rule_reason = should_use_web_search(text)
+        if rule_search:
+            if self.search_router_enabled:
+                routed = self._route_web_search_with_model(
+                    text,
+                    force_search=True,
+                    force_reason=rule_reason,
+                )
+                if routed is not None:
+                    return True, routed[1] or rule_reason, routed[2] or text
+            return True, rule_reason or 'rule matched current-information need', text
+        if rule_reason == 'social conversation does not need web search':
+            return False, rule_reason, text
+
+        local_reason = self._local_no_search_reason(text)
+        if local_reason:
+            return False, local_reason, text
+
+        if self.search_router_enabled:
+            routed = self._route_web_search_with_model(text)
+            if routed is not None:
+                return routed
+
+        return False, rule_reason or 'no current-information signal', text
+
+    @staticmethod
+    def _local_no_search_reason(text: str) -> str:
+        normalized = str(text or '').strip().lower()
+        if not normalized:
+            return ''
+        no_search_patterns = (
+            (r'\b(tell me|say|give me)\b.*\b(joke|story|poem|riddle)\b', 'creative request does not need web search'),
+            (r'\b(make it|say it|explain it|tell it)\b.*\b(shorter|simpler|funnier|clearer|for a child|like a child)\b', 'style rewrite of existing context does not need web search'),
+            (r'\b(that\'s good|that is good|good one|i like it|i don\'t like it|not like that|try again)\b', 'conversation feedback does not need web search'),
+            (r'\b(thank you|thanks|ok|okay|understood|got it|yes|no)\b[.! ]*$', 'short acknowledgement does not need web search'),
+            (r'\b(repeat that|say that again|continue|go on)\b', 'conversation control does not need web search'),
+            (r'\b(explain|what is|what are|how does|why does)\b.*\b(work|mean|concept|idea|neural network|bitcoin|tesla)\b', 'stable explanation does not need web search'),
+        )
+        for pattern, reason in no_search_patterns:
+            if re.search(pattern, normalized):
+                return reason
+        return ''
+
+    def _route_web_search_with_model(
+        self,
+        text: str,
+        *,
+        force_search: bool = False,
+        force_reason: str = '',
+    ) -> tuple[bool, str, str] | None:
+        recent_messages = self.conversation_history[-8:]
+        router_input = {
+            'current_user_text': text,
+            'recent_conversation': recent_messages,
+            'current_date': datetime.now().strftime('%Y-%m-%d'),
+            'force_search': force_search,
+            'force_reason': force_reason,
+            'local_region_hint': 'Romania / Europe',
+        }
+        instructions = (
+            'You are a search-routing classifier for a voice robot. Decide if the current user turn '
+            'needs fresh online information. Use search for news, politics, wars, weather, sports, '
+            'prices, laws, products, elections, public/company leaders, recent events, and follow-up '
+            'questions that inherit a current-news topic from the recent conversation. Do not search '
+            'for greetings, emotional support, stable explanations, math, personal memory, or robot '
+            'movement commands. Return only compact JSON with keys: search (boolean), reason (string), '
+            'query (string). If search is false, query should be empty. If search is true, rewrite a '
+            'short web query in English or the user language. Resolve pronouns like "that team", '
+            '"this week", "current table", or "point results" using recent conversation. Include the '
+            'main entity, league/country, season/year, and today/current/latest terms when useful.\n\n'
+            'Examples:\n'
+            'User: "How are you today?" -> {"search":false,"reason":"social greeting","query":""}\n'
+            'User: "Tell me a story" -> {"search":false,"reason":"creative request","query":""}\n'
+            'User: "Do you know the recent news from Romania?" -> {"search":true,"reason":"recent news request","query":"recent Romania political news"}\n'
+            'Previous topic: recent news from Romania. User: "But about Ukraine war" -> {"search":true,"reason":"current-event follow-up about war","query":"latest Ukraine war news Romania impact"}\n'
+            'User: "Who is the CEO of OpenAI?" -> {"search":true,"reason":"company leadership can change","query":"current CEO of OpenAI"}\n'
+            'User: "Explain what NATO is" -> {"search":false,"reason":"stable explanation","query":""}\n'
+            'User: "What did NATO say this week?" -> {"search":true,"reason":"time-sensitive NATO news","query":"NATO statements this week"}\n'
+            'Previous topic: Romanian SuperLiga standings 2025/2026. User: "give me the latest point results" -> {"search":true,"reason":"current sports standings follow-up","query":"Romanian SuperLiga 2025-2026 current standings table points today"}\n'
+            'Previous topic: Romanian SuperLiga champion. User: "how many points has that team?" -> {"search":true,"reason":"current sports points follow-up","query":"Romanian SuperLiga 2025-2026 champion current points standings"}'
+        )
+        if force_search:
+            instructions += (
+                '\n\nA deterministic rule has already decided that search is required. '
+                'Return search=true and focus on rewriting the best possible query.'
+            )
+        body = {
+            'model': self.search_router_model,
+            'instructions': instructions,
+            'input': [
+                {
+                    'role': 'user',
+                    'content': json.dumps(router_input, ensure_ascii=False),
+                }
+            ],
+            'max_output_tokens': 160,
+            'store': False,
+            'text': {
+                'format': {
+                    'type': 'json_schema',
+                    'name': 'search_router_decision',
+                    'strict': True,
+                    'schema': {
+                        'type': 'object',
+                        'properties': {
+                            'search': {'type': 'boolean'},
+                            'reason': {'type': 'string'},
+                            'query': {'type': 'string'},
+                        },
+                        'required': ['search', 'reason', 'query'],
+                        'additionalProperties': False,
+                    },
+                },
+            },
+        }
+        if self.search_router_reasoning_effort:
+            body['reasoning'] = {'effort': self.search_router_reasoning_effort}
+
+        try:
+            response = requests.post(
+                'https://api.openai.com/v1/responses',
+                headers={
+                    'Authorization': f'Bearer {self.api_key}',
+                    'Content-Type': 'application/json',
+                },
+                json=body,
+                timeout=max(1.0, self.search_router_timeout_s),
+            )
+            if not response.ok:
+                raise RuntimeError(f'HTTP {response.status_code}: {response.text[:200]}')
+            raw_text = extract_response_text(response.json()).strip()
+            payload = self._parse_router_json(raw_text)
+            should_search = bool(payload.get('search', False))
+            if force_search:
+                should_search = True
+            reason = str(payload.get('reason', '') or '').strip()
+            query = str(payload.get('query', '') or '').strip()
+            if should_search and not query:
+                query = text
+            if not reason:
+                reason = 'search router decision' if should_search else 'search router skipped'
+            self.get_logger().info(
+                f'🧭 Search router: search={should_search}, reason={reason}, query="{query}"'
+            )
+            return should_search, reason, query or text
+        except Exception as exc:
+            self.get_logger().warn(f'Search router failed; falling back to rules: {exc}')
+            return None
+
+    @staticmethod
+    def _parse_router_json(raw_text: str) -> dict:
+        text = (raw_text or '').strip()
+        if text.startswith('```'):
+            text = re.sub(r'^```(?:json)?\s*', '', text)
+            text = re.sub(r'\s*```$', '', text)
+        return json.loads(text)
     
     def _is_robot_command(self, text: str) -> bool:
         """Check if the text is likely a robot command, to avoid LLM chatter."""
@@ -318,6 +510,13 @@ class LLMNode(Node):
             'preferred_language': str(payload.get('preferred_language', '') or ''),
             'facts': list(payload.get('facts', []) or []),
         }
+
+    def _diarization_callback(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+        self.latest_diarization = payload if isinstance(payload, dict) else {}
 
     def _backend_callback(self, msg: String):
         backend = msg.data.strip() or 'legacy'
@@ -347,6 +546,11 @@ class LLMNode(Node):
                 daemon=True,
             )
             thread.start()
+
+    def _stop_playback_callback(self, msg: Bool):
+        if msg.data and self.current_backend == 'legacy':
+            self.stop_epoch += 1
+            self.get_logger().debug(f'⏹️ LLM output cancelled (epoch now {self.stop_epoch})')
 
     def transcription_callback(self, msg: Transcription):
         """Process transcription and publish the LLM response in streaming."""
@@ -428,10 +632,9 @@ class LLMNode(Node):
     
     def _get_person_context_prompt(self) -> str:
         speaker = self.person_context.get('speaker', 'Unknown') or 'Unknown'
-        if speaker == 'Unknown':
-            return ''
-
-        extras = [f'Current stored speaker profile label: {speaker}.']
+        extras = []
+        if speaker != 'Unknown':
+            extras.append(f'Current stored speaker profile label: {speaker}.')
         preferred_name = self.person_context.get('preferred_name', '')
         if preferred_name:
             extras.append(f'Preferred name: {preferred_name}.')
@@ -441,11 +644,37 @@ class LLMNode(Node):
         facts = self.person_context.get('facts', []) or []
         if facts:
             extras.append('Known personal facts: ' + '; '.join(str(fact) for fact in facts[:8]) + '.')
+        diarization_prompt = self._get_diarization_prompt()
+        if diarization_prompt:
+            extras.append(diarization_prompt)
         return ' '.join(extras)
+
+    def _get_diarization_prompt(self) -> str:
+        payload = self.latest_diarization if isinstance(self.latest_diarization, dict) else {}
+        counts = payload.get('speaker_word_counts', {}) or {}
+        if not counts:
+            return ''
+        dominant = str(payload.get('dominant_speaker_id', '') or 'unknown')
+        speakers = ', '.join(
+            f'{speaker}:{count}'
+            for speaker, count in sorted(counts.items())
+        )
+        if len(counts) <= 1:
+            return (
+                f'Latest ElevenLabs STT diarization detected one anonymous speaker '
+                f'({dominant}).'
+            )
+        return (
+            'Latest ElevenLabs STT diarization detected multiple anonymous speakers '
+            f'({speakers}); dominant speaker is {dominant}. '
+            'Treat these as turn-level diarization labels, not persistent person identities. '
+            'Use the enrolled speaker profile, if available, for memory and names.'
+        )
 
     def _process_streaming(self, user_text: str, user_lang: str):
         """Process the LLM response with streaming."""
         session_id = str(uuid.uuid4())[:8]
+        start_epoch = self.stop_epoch
         
         try:
             # Add the user's message to history (with language instruction)
@@ -468,74 +697,70 @@ class LLMNode(Node):
                 'content': user_message_with_lang
             })
             
-            # Build messages for the API
-            messages = [
-                {
-                    'role': 'system',
-                    'content': ' '.join(filter(None, [
-                        self._get_system_prompt_with_date(),
-                        self._get_person_context_prompt(),
-                    ])),
-                }
-            ] + self.conversation_history
+            system_instructions = ' '.join(filter(None, [
+                self._get_system_prompt_with_date(),
+                self._get_person_context_prompt(),
+                (
+                    'When fresh web results are included in the user input, answer from those results. '
+                    'Do not claim you searched online unless web results were provided. '
+                    'For stable knowledge, answer directly without web search.'
+                ),
+            ]))
             
             # Detect if the question needs web search
-            needs_websearch = self._needs_websearch(user_text)
-            
-            # Select model and max_tokens based on web search
+            needs_websearch, websearch_reason, websearch_query = self._websearch_decision(user_text)
+            web_context = ''
             if needs_websearch:
-                model_to_use = self.websearch_model
-                max_tokens_to_use = self.websearch_max_tokens
-                self.get_logger().debug(f'🌐 Using web search model: {model_to_use}')
+                web_context = self._run_brave_web_search(websearch_query, websearch_reason)
             else:
-                model_to_use = self.model
-                max_tokens_to_use = self.max_tokens
+                self._publish_web_search_status(False, websearch_reason, websearch_query)
+                self.get_logger().info(f'🌐 Web search skipped: {websearch_reason}')
+
+            messages = list(self.conversation_history)
+            if web_context:
+                messages[-1] = {
+                    'role': 'user',
+                    'content': (
+                        f'{user_message_with_lang}\n\n'
+                        'Fresh Brave Search results for this turn:\n'
+                        f'{web_context}'
+                    ),
+                }
+            max_tokens_to_use = self.websearch_max_tokens if web_context else self.max_tokens
+            model_to_use = self.model
+            reasoning_to_use = self.reasoning_effort
+            if not web_context and self.fast_model_enabled and self.fast_model:
+                model_to_use = self.fast_model
+                reasoning_to_use = self.fast_reasoning_effort
             
-            # Groq API call with STREAMING
-            stream = self.client.chat.completions.create(
-                model=model_to_use,
+            # OpenAI Responses API call.
+            start_time = time.time()
+            full_response = self._call_openai_response(
+                instructions=system_instructions,
                 messages=messages,
                 max_tokens=max_tokens_to_use,
-                temperature=self.temperature,
-                stream=True  # STREAMING!
+                model=model_to_use,
+                reasoning_effort=reasoning_to_use,
             )
+            if start_epoch != self.stop_epoch:
+                self.get_logger().info('⏹️ LLM response discarded because the user interrupted')
+                return
+            first_token_time = time.time()
+            ttft_ms = (first_token_time - start_time) * 1000
+            self.get_logger().debug(f'⏱️ OpenAI response time: {ttft_ms:.0f}ms')
             
             # Buffer and state for stream shaper
-            buffer = ""
-            full_response = ""
             chunk_count = 0
-            first_token_time = None
-            start_time = time.time()
-            backchannel_sent = False
-            
-            # Token generator with backchannel
-            def token_generator():
-                nonlocal first_token_time, backchannel_sent
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        token = chunk.choices[0].delta.content
-                        
-                        # Backchannel: if first token is delayed > delay_ms
-                        if first_token_time is None:
-                            first_token_time = time.time()
-                            ttft_ms = (first_token_time - start_time) * 1000
-                            self.get_logger().debug(f'⏱️ Time to first token: {ttft_ms:.0f}ms')
-                            
-                            # Send backchannel if it took too long
-                            if self.backchannel_enabled and ttft_ms > self.backchannel_delay_ms and not backchannel_sent:
-                                backchannel_sent = True
-                                phrase = self.backchannel_phrase_ro if user_lang.startswith('ro') else self.backchannel_phrase_en
-                                self.get_logger().debug(f'⌛ Backchannel: TTFT > {self.backchannel_delay_ms}ms, sending "{phrase}"')
-                                cmd = String()
-                                cmd.data = 'filler_ro' if user_lang.startswith('ro') else 'filler_en'
-                                self.tts_cmd_pub.publish(cmd)
-                        
-                        yield token
+
+            if self.backchannel_enabled and ttft_ms > self.backchannel_delay_ms:
+                cmd = String()
+                cmd.data = 'filler_ro' if user_lang.startswith('ro') else 'filler_en'
+                self.tts_cmd_pub.publish(cmd)
             
             # Process tokens with stream shaper logic
             from .stream_shaper import shape_stream
             shaped_tokens = shape_stream(
-                token_generator(),
+                self._word_token_generator(full_response),
                 prebuffer_chars=self.prebuffer_chars,
                 min_chunk_chars=self.min_chunk_chars,
                 soft_max_chars=self.soft_max_chars,
@@ -543,8 +768,12 @@ class LLMNode(Node):
             )
             
             # Publish smoothed chunks
+            published_response = ""
             for shaped_chunk in shaped_tokens:
-                full_response += shaped_chunk
+                if start_epoch != self.stop_epoch:
+                    self.get_logger().info('⏹️ LLM stream stopped because the user interrupted')
+                    return
+                published_response += shaped_chunk
                 self._publish_chunk(shaped_chunk.strip(), user_lang, False, session_id)
                 chunk_count += 1
             
@@ -552,22 +781,22 @@ class LLMNode(Node):
             self._publish_chunk("", user_lang, True, session_id)
             
             # Update history
-            if full_response:
+            if published_response:
                 self.conversation_history.append({
                     'role': 'assistant',
-                    'content': full_response
+                    'content': published_response
                 })
-                self.last_assistant_response = full_response
+                self.last_assistant_response = published_response
                 
                 # Limit history
                 if len(self.conversation_history) > 10:
                     self.conversation_history = self.conversation_history[-10:]
                 
-                self.get_logger().info(f'🤖 Bot ({chunk_count} chunks): {full_response}')
+                self.get_logger().info(f'🤖 Bot ({chunk_count} chunks): {published_response}')
                 
                 # Also publish the full response for compatibility
                 out = Transcription()
-                out.text = full_response
+                out.text = published_response
                 out.language = user_lang
                 out.confidence = 1.0
                 self.response_pub.publish(out)
@@ -582,6 +811,113 @@ class LLMNode(Node):
             if fallback_msg:
                 self.get_logger().debug(f'📢 Sending fallback response: {fallback_msg}')
                 self._publish_chunk(fallback_msg, user_lang, True, session_id)
+
+    def _call_openai_response(
+        self,
+        *,
+        instructions: str,
+        messages: list[dict],
+        max_tokens: int,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> str:
+        model = model or self.model
+        reasoning_effort = self.reasoning_effort if reasoning_effort is None else reasoning_effort
+        body = {
+            'model': model,
+            'instructions': instructions,
+            'input': messages,
+            'max_output_tokens': int(max_tokens),
+            'store': False,
+        }
+        if reasoning_effort:
+            body['reasoning'] = {'effort': reasoning_effort}
+        # Some newer reasoning models ignore temperature; keep it only for classic models.
+        if not str(model).startswith(('gpt-5', 'o')):
+            body['temperature'] = float(self.temperature)
+
+        response = requests.post(
+            'https://api.openai.com/v1/responses',
+            headers={
+                'Authorization': f'Bearer {self.api_key}',
+                'Content-Type': 'application/json',
+            },
+            json=body,
+            timeout=max(1.0, self.openai_timeout_s),
+        )
+        if not response.ok:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = response.text.strip()
+            raise RuntimeError(f'OpenAI Responses HTTP {response.status_code}: {payload}')
+
+        text = extract_response_text(response.json()).strip()
+        if not text:
+            raise RuntimeError('OpenAI response did not contain output text')
+        return text
+
+    def _run_brave_web_search(self, query: str, reason: str) -> str:
+        self._publish_web_search_status(True, reason, query)
+        self.get_logger().info(f'🌐 Brave Search triggered: {reason}; query="{query}"')
+        if not self.brave_search_api_key:
+            self.get_logger().warn('Brave Search skipped because BRAVE_SEARCH_API_KEY is missing')
+            return ''
+        if self.brave_llm_context_enabled:
+            try:
+                payload = call_brave_llm_context(
+                    self.brave_search_api_key,
+                    query,
+                    country=self.brave_search_country,
+                    search_lang=self.brave_search_lang,
+                    count=self.brave_llm_context_count,
+                    max_tokens=self.brave_llm_context_max_tokens,
+                    timeout_s=self.brave_search_timeout_s,
+                )
+                output = build_brave_llm_context_tool_output(query, payload=payload)
+                if self._tool_output_ok(output):
+                    self.get_logger().info('🌐 Brave LLM Context returned grounding')
+                    return output
+                self.get_logger().warn('Brave LLM Context returned no grounding; falling back to web snippets')
+            except Exception as exc:
+                self.get_logger().warn(f'Brave LLM Context failed; falling back to web snippets: {exc}')
+        try:
+            payload = call_brave_web_search(
+                self.brave_search_api_key,
+                query,
+                country=self.brave_search_country,
+                search_lang=self.brave_search_lang,
+                count=self.brave_search_count,
+                timeout_s=self.brave_search_timeout_s,
+            )
+            return build_brave_web_search_tool_output(query, payload=payload)
+        except Exception as exc:
+            self.get_logger().error(f'Brave Search failed: {exc}')
+            return build_brave_web_search_tool_output(query, error=str(exc))
+
+    @staticmethod
+    def _tool_output_ok(output: str) -> bool:
+        try:
+            payload = json.loads(output)
+        except Exception:
+            return False
+        return bool(payload.get('ok') and str(payload.get('summary', '')).strip())
+
+    def _publish_web_search_status(self, used: bool, reason: str, query: str):
+        msg = String()
+        msg.data = json.dumps({
+            'used': bool(used),
+            'provider': 'brave' if used else '',
+            'reason': reason,
+            'query': query,
+        }, ensure_ascii=False, separators=(',', ':'))
+        self.web_search_status_pub.publish(msg)
+
+    @staticmethod
+    def _word_token_generator(text: str):
+        for part in re.split(r'(\s+)', text or ''):
+            if part:
+                yield part
     
     def _publish_chunk(self, text: str, language: str, is_final: bool, session_id: str):
         """Publish a text chunk."""

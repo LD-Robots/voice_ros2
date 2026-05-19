@@ -160,7 +160,7 @@ def generate_launch_description():
                 'wake_word_enabled': True,
                 'session_timeout': 30.0,
                 'min_silence_frames': LaunchConfiguration('vad_min_silence_frames'),
-                'capture_during_playback': False, # Dezactivăm captarea server-side în timpul redării pentru a evita bucla
+                'capture_during_playback': True,
             }]
         ),
         
@@ -174,7 +174,8 @@ def generate_launch_description():
             parameters=[{
                 'min_segment_seconds': 0.5,
                 'max_segment_seconds': 30.0,
-                'capture_during_playback': False, # Revenim la Half-Duplex pentru stabilitate
+                'capture_during_playback': True,
+                'stop_playback_on_voice_start': True,
             }]
         ),
         
@@ -294,6 +295,7 @@ def generate_launch_description():
                 'cmd_vel_topic': '/cmd_vel',
                 'behavior_mode': 'topic',
                 'behavior_topic': '/robot_behavior_command',
+                'handshake_service': '/handshake',
                 'raise_hands_service': '/raise_hands',
                 'dance_service': '/dance',
                 'preempt_on_new_command': True,

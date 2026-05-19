@@ -25,17 +25,37 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'asr_model_size',
             default_value='small',
-            description='Whisper model size'
+            description='Whisper model size when asr_provider:=whisper'
+        ),
+        DeclareLaunchArgument(
+            'asr_provider',
+            default_value='elevenlabs',
+            description='ASR provider (elevenlabs/whisper)'
+        ),
+        DeclareLaunchArgument(
+            'eleven_stt_model',
+            default_value='scribe_v2',
+            description='ElevenLabs STT model'
         ),
         DeclareLaunchArgument(
             'llm_provider',
-            default_value='groq',
-            description='LLM provider (groq/ollama)'
+            default_value='openai',
+            description='LLM provider (openai)'
         ),
         DeclareLaunchArgument(
             'llm_model',
-            default_value='llama-3.1-8b-instant',
+            default_value='gpt-5.5',
             description='LLM model name'
+        ),
+        DeclareLaunchArgument(
+            'tts_provider',
+            default_value='elevenlabs',
+            description='TTS provider (elevenlabs/edge)'
+        ),
+        DeclareLaunchArgument(
+            'eleven_tts_model',
+            default_value='eleven_v3',
+            description='ElevenLabs TTS model'
         ),
         DeclareLaunchArgument(
             'realtime_model',
@@ -108,10 +128,14 @@ def generate_launch_description():
             name='asr_node',
             output='screen',
             parameters=[{
+                'provider': LaunchConfiguration('asr_provider'),
                 'model_size': LaunchConfiguration('asr_model_size'),
                 'device': 'cpu',
                 'compute_type': 'int8',
                 'language': 'ro_en',  # Force EN/RO detection only
+                'eleven_model_id': LaunchConfiguration('eleven_stt_model'),
+                'eleven_diarize': True,
+                'eleven_diarization_threshold': 0.22,
             }]
         ),
         
@@ -124,8 +148,11 @@ def generate_launch_description():
             parameters=[{
                 'provider': LaunchConfiguration('llm_provider'),
                 'model': LaunchConfiguration('llm_model'),
+                'reasoning_effort': 'low',
                 'max_tokens': 150,
                 'temperature': 0.7,
+                'websearch_enabled': True,
+                'websearch_provider': 'brave',
             }]
         ),
         
@@ -136,6 +163,12 @@ def generate_launch_description():
             name='tts_node',
             output='screen',
             parameters=[{
+                'provider': LaunchConfiguration('tts_provider'),
+                'eleven_model_id': LaunchConfiguration('eleven_tts_model'),
+                'eleven_voice_id_en': 'JBFqnCBsd6RMkjVDRZzb',
+                'eleven_voice_id_ro': 'JBFqnCBsd6RMkjVDRZzb',
+                'eleven_output_format': 'pcm_16000',
+                'fallback_to_edge': True,
                 'voice_en': 'en-GB-RyanNeural',
                 'voice_ro': 'ro-RO-EmilNeural',
             }]

@@ -402,7 +402,8 @@ def advance_attention_focus(
 
 def is_robot_directive(normalized_text: str) -> bool:
     return bool(re.search(
-        r'\b(move|go|walk|step|turn|rotate|dance|wave|stop|halt|cancel|forward|backward|left|right|'
-        r'mergi|inainte|inapoi|stanga|dreapta|ridica|coboara|danseaza|saluta|opreste|anuleaza)\b',
+        r'\b(move|go|walk|step|turn|rotate|dance|wave|handshake|stop|halt|cancel|'
+        r'forward|backward|left|right|mergi|inainte|inapoi|stanga|dreapta|ridica|'
+        r'coboara|danseaza|saluta|strange|mana|opreste|anuleaza)\b',
         normalized_text,
     ))

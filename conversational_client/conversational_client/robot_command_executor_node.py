@@ -15,7 +15,7 @@ import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import RobotCommand, Transcription
 from geometry_msgs.msg import Twist
-from std_msgs.msg import String
+from std_msgs.msg import Int32, String
 from std_srvs.srv import Trigger
 
 
@@ -39,6 +39,7 @@ class RobotCommandExecutorNode(Node):
 
         self.declare_parameter('behavior_mode', 'topic')  # topic | service | both
         self.declare_parameter('behavior_topic', '/robot_behavior_command')
+        self.declare_parameter('handshake_service', '/handshake')
         self.declare_parameter('raise_hands_service', '/raise_hands')
         self.declare_parameter('lower_hands_service', '/lower_hands')
         self.declare_parameter('wave_service', '/wave')
@@ -77,6 +78,7 @@ class RobotCommandExecutorNode(Node):
 
         self.behavior_mode = str(self.get_parameter('behavior_mode').value)
         self.behavior_topic = str(self.get_parameter('behavior_topic').value)
+        self.handshake_service = str(self.get_parameter('handshake_service').value)
         self.raise_hands_service = str(self.get_parameter('raise_hands_service').value)
         self.lower_hands_service = str(self.get_parameter('lower_hands_service').value)
         self.wave_service = str(self.get_parameter('wave_service').value)
@@ -133,13 +135,16 @@ class RobotCommandExecutorNode(Node):
         self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
         self.move_topic_pub = self.create_publisher(String, self.move_topic, 10)
         self.behavior_pub = self.create_publisher(String, self.behavior_topic, 10)
+        self.command_code_pub = self.create_publisher(Int32, '/robot_command_code', 10)
         self.status_pub = self.create_publisher(String, '/robot_command_status', 10)
 
+        self.handshake_client = self.create_client(Trigger, self.handshake_service)
         self.raise_hands_client = self.create_client(Trigger, self.raise_hands_service)
         self.lower_hands_client = self.create_client(Trigger, self.lower_hands_service)
         self.wave_client = self.create_client(Trigger, self.wave_service)
         self.dance_client = self.create_client(Trigger, self.dance_service)
         self.behavior_clients = {
+            'handshake': self.handshake_client,
             'raise_hands': self.raise_hands_client,
             'lower_hands': self.lower_hands_client,
             'wave': self.wave_client,
@@ -257,6 +262,7 @@ class RobotCommandExecutorNode(Node):
 
     def _execute(self, msg: RobotCommand):
         intent = msg.intent.strip().lower()
+        self._publish_command_code(msg)
         if intent == 'stop':
             self._cancel_active_execution('stop intent')
             self._clear_queue()
@@ -268,7 +274,7 @@ class RobotCommandExecutorNode(Node):
         if intent == 'turn':
             self._execute_turn(msg)
             return
-        if intent in ('raise_hands', 'lower_hands', 'wave', 'dance'):
+        if intent in ('handshake', 'raise_hands', 'lower_hands', 'wave', 'dance'):
             self._execute_behavior(intent)
             return
         self.get_logger().warn(f'Unsupported intent: {intent}')
@@ -427,6 +433,15 @@ class RobotCommandExecutorNode(Node):
             else:
                 self.get_logger().warn(f'Service execution failed for {intent}: {result.message}')
                 self._publish_status(f'executed_behavior_service:{intent}:failed')
+
+    def _publish_command_code(self, msg: RobotCommand):
+        command_id = int(getattr(msg, 'command_id', 0))
+        if command_id <= 0:
+            return
+        code_msg = Int32()
+        code_msg.data = command_id
+        self.command_code_pub.publish(code_msg)
+        self.get_logger().info(f'Published command code: {command_id} ({msg.intent})')
 
     def _enqueue_command(self, msg: RobotCommand, preempt: bool):
         if preempt:

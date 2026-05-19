@@ -4,6 +4,19 @@ import unicodedata
 from .conversation_utils import has_direct_robot_address
 
 
+COMMAND_IDS = {
+    'handshake': 1,
+    'raise_hands': 2,
+    'lower_hands': 3,
+    'wave': 4,
+    'dance': 5,
+    'stop': 10,
+    'move_forward': 20,
+    'move_backward': 21,
+    'turn_left': 30,
+    'turn_right': 31,
+}
+
 NUMBER_WORDS = {
     'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
     'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
@@ -91,6 +104,12 @@ WAVE_PATTERNS = (
 DANCE_PATTERNS = (
     r'^(dance|danseaza)\b',
     r'^(do a|fa un) dans\b',
+)
+
+HANDSHAKE_PATTERNS = (
+    r'^(handshake|shake hands)\b',
+    r'^(give me|do|make)\b.*\b(handshake|shake hand|shake hands)\b',
+    r'^(strange mana|da mana|salut cu mana)\b',
 )
 
 FORWARD_PATTERNS = ('forward', 'ahead', 'inainte', 'in fata')
@@ -240,6 +259,7 @@ def _parse_stop(body: str, direct_address: bool):
         return None
     return {
         'intent': 'stop',
+        'command_id': COMMAND_IDS['stop'],
         'direction': 'none',
         'steps': 0,
         'confidence': 0.98,
@@ -248,10 +268,21 @@ def _parse_stop(body: str, direct_address: bool):
 
 
 def _parse_behavior(body: str):
+    for pattern in HANDSHAKE_PATTERNS:
+        if re.match(pattern, body):
+            return {
+                'intent': 'handshake',
+                'command_id': COMMAND_IDS['handshake'],
+                'direction': 'none',
+                'steps': 0,
+                'confidence': 0.94,
+                'parameters': {'motion': 'upper_body', 'style': 'handshake'},
+            }
     for pattern in RAISE_HANDS_PATTERNS:
         if re.match(pattern, body):
             return {
                 'intent': 'raise_hands',
+                'command_id': COMMAND_IDS['raise_hands'],
                 'direction': 'none',
                 'steps': 0,
                 'confidence': 0.95,
@@ -261,6 +292,7 @@ def _parse_behavior(body: str):
         if re.match(pattern, body):
             return {
                 'intent': 'lower_hands',
+                'command_id': COMMAND_IDS['lower_hands'],
                 'direction': 'none',
                 'steps': 0,
                 'confidence': 0.93,
@@ -270,6 +302,7 @@ def _parse_behavior(body: str):
         if re.match(pattern, body):
             return {
                 'intent': 'dance',
+                'command_id': COMMAND_IDS['dance'],
                 'direction': 'none',
                 'steps': 0,
                 'confidence': 0.90,
@@ -279,6 +312,7 @@ def _parse_behavior(body: str):
         if re.match(pattern, body):
             return {
                 'intent': 'wave',
+                'command_id': COMMAND_IDS['wave'],
                 'direction': 'none',
                 'steps': 0,
                 'confidence': 0.91,
@@ -299,6 +333,7 @@ def _parse_turn(body: str):
 
     return {
         'intent': 'turn',
+        'command_id': COMMAND_IDS[f'turn_{direction}'],
         'direction': direction,
         'steps': 0,
         'confidence': 0.90,
@@ -331,6 +366,7 @@ def _parse_move(body: str, *, default_steps: int, max_steps: int, direct_address
     steps = max(1, min(int(steps), max_steps))
     return {
         'intent': 'move',
+        'command_id': COMMAND_IDS[f'move_{direction}'],
         'direction': direction,
         'steps': steps,
         'confidence': 0.88,

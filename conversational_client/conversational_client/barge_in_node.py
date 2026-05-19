@@ -16,7 +16,8 @@ Subscribes to:
 
 Publishes to:
   - /barge_in (Bool) - interruption signal
-  - /tts_stop (Bool) - stop TTS command
+  - /stop_playback (Bool) - stop playback/TTS command
+  - /tts_stop (Bool) - legacy stop command
 """
 
 import rclpy
@@ -218,7 +219,8 @@ class BargeInNode(Node):
         # PUBLISHERS
         # ─────────────────────────────────────────────────────────
         self.barge_pub = self.create_publisher(Bool, '/barge_in', 10)
-        self.stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
+        self.legacy_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
         
         self.get_logger().info(
             f'🎯 Intelligent Barge-in started: min_voice={self.min_voice_ms}ms, '
@@ -387,6 +389,7 @@ class BargeInNode(Node):
         
         # Send stop directly to TTS
         self.stop_pub.publish(msg)
+        self.legacy_stop_pub.publish(msg)
 
 
 # ═══════════════════════════════════════════════════════════════════

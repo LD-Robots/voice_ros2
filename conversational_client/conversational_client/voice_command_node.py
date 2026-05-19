@@ -98,6 +98,7 @@ class VoiceCommandNode(Node):
         cmd = RobotCommand()
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.intent = parsed['intent']
+        cmd.command_id = int(parsed.get('command_id', 0))
         cmd.direction = parsed['direction']
         cmd.steps = int(parsed['steps'])
         cmd.confidence = float(parsed['confidence'])
@@ -113,7 +114,8 @@ class VoiceCommandNode(Node):
             self.tts_cmd_pub.publish(ack)
 
         self.get_logger().info(
-            f'Command detected: intent={cmd.intent}, direction={cmd.direction}, steps={cmd.steps}, speaker={cmd.speaker}'
+            f'Command detected: id={cmd.command_id}, intent={cmd.intent}, '
+            f'direction={cmd.direction}, steps={cmd.steps}, speaker={cmd.speaker}'
         )
 
 

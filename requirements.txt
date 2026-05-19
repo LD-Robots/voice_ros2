@@ -13,8 +13,8 @@ webrtcvad==2.0.10
 faster-whisper==1.2.1
 rapidfuzz>=3.0.0
 
-# LLM and realtime backends
-groq==1.0.0
+# LLM, search, and realtime backends
+elevenlabs>=1.0.0
 python-dotenv==1.2.1
 requests>=2.31.0
 websocket-client>=1.8.0

@@ -27,6 +27,20 @@ import scipy.signal  # For resampling
 import re
 import wave
 from pathlib import Path
+import io
+
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    print("⚠️ requests not installed. Run: pip install requests")
 
 def _find_workspace_root():
     for base in (Path(__file__).resolve(), Path.cwd().resolve()):
@@ -62,30 +76,79 @@ except ImportError:
 class TTSNode(Node):
     def __init__(self):
         super().__init__('tts_node')
+
+        self._load_env()
         
         # Configurable parameters
+        self.declare_parameter('provider', 'edge')
         self.declare_parameter('voice_en', 'en-IE-EmilyNeural')
         self.declare_parameter('voice_ro', 'ro-RO-AlinaNeural')
         self.declare_parameter('rate', '+0%')
         self.declare_parameter('pitch', '+0Hz')
         self.declare_parameter('buffer_size', 2)  # Double buffer (2 chunks ahead)
+        self.declare_parameter('eleven_api_key_env', 'ELEVEN_API_KEY')
+        self.declare_parameter('eleven_model_id', 'eleven_v3')
+        self.declare_parameter('eleven_voice_id_en', 'JBFqnCBsd6RMkjVDRZzb')
+        self.declare_parameter('eleven_voice_id_ro', 'JBFqnCBsd6RMkjVDRZzb')
+        self.declare_parameter('eleven_output_format', 'pcm_16000')
+        self.declare_parameter('eleven_timeout_s', 30.0)
+        self.declare_parameter('eleven_stability', 0.45)
+        self.declare_parameter('eleven_similarity_boost', 0.75)
+        self.declare_parameter('eleven_style', 0.35)
+        self.declare_parameter('eleven_use_speaker_boost', True)
+        self.declare_parameter('fallback_to_edge', True)
         
+        self.provider = str(self.get_parameter('provider').value or 'edge').strip().lower()
         self.voice_en = self.get_parameter('voice_en').value
         self.voice_ro = self.get_parameter('voice_ro').value
         self.rate = self.get_parameter('rate').value
         self.pitch = self.get_parameter('pitch').value
         self.buffer_size = self.get_parameter('buffer_size').value
+        self.eleven_api_key_env = str(self.get_parameter('eleven_api_key_env').value)
+        self.eleven_model_id = str(self.get_parameter('eleven_model_id').value)
+        self.eleven_voice_id_en = str(self.get_parameter('eleven_voice_id_en').value)
+        self.eleven_voice_id_ro = str(self.get_parameter('eleven_voice_id_ro').value)
+        self.eleven_output_format = str(self.get_parameter('eleven_output_format').value)
+        self.eleven_timeout_s = float(self.get_parameter('eleven_timeout_s').value)
+        self.eleven_stability = float(self.get_parameter('eleven_stability').value)
+        self.eleven_similarity_boost = float(
+            self.get_parameter('eleven_similarity_boost').value
+        )
+        self.eleven_style = float(self.get_parameter('eleven_style').value)
+        self.eleven_use_speaker_boost = bool(
+            self.get_parameter('eleven_use_speaker_boost').value
+        )
+        self.fallback_to_edge = bool(self.get_parameter('fallback_to_edge').value)
         
-        # Edge TTS requires soundfile for MP3 decoding
         if not SOUNDFILE_AVAILABLE:
-            self.get_logger().error('soundfile not installed - required for edge-tts!')
+            self.get_logger().error('soundfile not installed - required for TTS decoding!')
             raise RuntimeError('soundfile not available')
-        
-        if not EDGE_TTS_AVAILABLE:
+
+        self.eleven_api_key = ''
+        if self.provider == 'elevenlabs':
+            if not REQUESTS_AVAILABLE:
+                self.get_logger().error('requests not installed - required for ElevenLabs TTS!')
+                raise RuntimeError('requests not available')
+            self.eleven_api_key = os.environ.get(self.eleven_api_key_env, '')
+            if not self.eleven_api_key:
+                self.get_logger().error(
+                    f'{self.eleven_api_key_env} environment variable not set!'
+                )
+                raise RuntimeError(f'{self.eleven_api_key_env} not set')
+
+        if (self.provider == 'edge' or self.fallback_to_edge) and not EDGE_TTS_AVAILABLE:
             self.get_logger().error('edge-tts not installed!')
             raise RuntimeError('edge-tts not available')
 
-        self.get_logger().info(f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}')
+        if self.provider == 'elevenlabs':
+            self.get_logger().info(
+                f'✅ TTS initialized with ElevenLabs: model={self.eleven_model_id}, '
+                f'EN voice={self.eleven_voice_id_en}, RO voice={self.eleven_voice_id_ro}'
+            )
+        else:
+            self.get_logger().info(
+                f'✅ TTS initialized with edge-tts: EN={self.voice_en}, RO={self.voice_ro}'
+            )
         
         # Target sample rate (fix "horror voice" issues by standardizing on 16kHz)
         self.target_sample_rate = 16000
@@ -97,17 +160,27 @@ class TTSNode(Node):
         # Common phrases for cache
         self.cache_phrases = {
             'ack_en': ('Hello. I am here and listening.', 'en'),
+            'ack_ro': ('Bună. Sunt aici și ascult.', 'ro'),
             'filler_en': ('One moment please...', 'en'),
+            'filler_ro': ('Un moment...', 'ro'),
             'goodbye_en': ('Goodbye. I will be here when you need me again.', 'en'),
+            'goodbye_ro': ('La revedere. Sunt aici când ai nevoie de mine din nou.', 'ro'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
+            'error_ro': ('Îmi pare rău, am întâmpinat o eroare.', 'ro'),
             'confirm_en': ('Are you sure? Please say yes or no.', 'en'),
+            'confirm_ro': ('Ești sigur? Te rog spune da sau nu.', 'ro'),
         }
         self.system_commands = {
             'ack_en',
+            'ack_ro',
             'goodbye_en',
+            'goodbye_ro',
             'error_en',
+            'error_ro',
             'confirm_en',
+            'confirm_ro',
             'filler_en',
+            'filler_ro',
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
@@ -123,6 +196,7 @@ class TTSNode(Node):
         
         self.is_speaking = False
         self.current_session = None
+        self.cancelled_sessions = set()
         self.stop_requested = False
         self.stop_epoch = 0  # Epoch counter - increments on stop(), chunks with old epoch are skipped
         self.current_backend = 'legacy'
@@ -195,6 +269,14 @@ class TTSNode(Node):
         self.consumer_thread.start()
         
         self.get_logger().debug('TTS Node started with DOUBLE BUFFER + CACHE! Listening on /llm_stream')
+
+    def _load_env(self):
+        if not DOTENV_AVAILABLE:
+            return
+        workspace_root = _find_workspace_root()
+        env_path = workspace_root / '.env' if workspace_root else None
+        if env_path and env_path.exists():
+            load_dotenv(dotenv_path=env_path)
     
     def _publish_speaking_status(self):
         """Periodically publish the is_speaking state to /tts_speaking."""
@@ -210,7 +292,7 @@ class TTSNode(Node):
     
     def _precache(self):
         """Pre-generate audio for common phrases or load static files."""
-        self.get_logger().info('🔄 Initializing TTS cache (prioritizing OpenAI static voices)...')
+        self.get_logger().info('🔄 Initializing TTS cache...')
         
         workspace_root = _find_workspace_root()
         static_dir = None
@@ -223,7 +305,7 @@ class TTSNode(Node):
             try:
                 # 1. Check if a static version exists (OpenAI Cedar)
                 static_file = None
-                if static_dir:
+                if static_dir and not key.startswith('filler_'):
                     static_file = static_dir / f"{key}.wav"
                 
                 if static_file and static_file.exists():
@@ -233,7 +315,7 @@ class TTSNode(Node):
                 else:
                     # 2. Fall back to Edge-TTS
                     voice = self._pick_voice(lang)
-                    audio_data, sample_rate = self._synthesize(text, voice)
+                    audio_data, sample_rate = self._synthesize(text, voice, lang)
                 
                 # Resample immediately for cache
                 if sample_rate != self.target_sample_rate:
@@ -282,6 +364,10 @@ class TTSNode(Node):
     def _pick_voice(self, lang: str) -> str:
         """Choose the voice - Romanian or English (default for anything else)."""
         lang = lang.lower() if lang else 'en'
+        if self.provider == 'elevenlabs':
+            if lang.startswith('ro'):
+                return self.eleven_voice_id_ro
+            return self.eleven_voice_id_en
         if lang.startswith('ro'):
             return self.voice_ro
         # Any other language -> English
@@ -335,6 +421,11 @@ class TTSNode(Node):
     def stream_callback(self, msg: TextChunk):
         """Process streaming text chunks."""
         if self.current_backend != 'legacy':
+            return
+        if msg.session_id in self.cancelled_sessions:
+            if msg.is_final:
+                self.cancelled_sessions.discard(msg.session_id)
+            self.get_logger().debug(f'🚫 Ignoring cancelled TTS session: {msg.session_id}')
             return
         # New session - reset
         if self.current_session and msg.session_id != self.current_session:
@@ -405,7 +496,7 @@ class TTSNode(Node):
                     self.get_logger().debug(f'🔧 Pre-synthesizing: "{text[:30]}..."')
                     
                     try:
-                        audio_data, sample_rate = self._synthesize(text, voice)
+                        audio_data, sample_rate = self._synthesize(text, voice, lang)
                         
                         # Resample to target rate (16kHz)
                         if sample_rate != self.target_sample_rate:
@@ -493,9 +584,57 @@ class TTSNode(Node):
         
         return audio_data
     
-    def _synthesize(self, text: str, voice: str):
-        """Synthesize text to audio using Edge TTS."""
+    def _synthesize(self, text: str, voice: str, lang: str = ''):
+        """Synthesize text to audio using the configured provider."""
+        if self.provider == 'elevenlabs':
+            try:
+                return self._synthesize_elevenlabs(text, voice, lang)
+            except Exception as exc:
+                if not self.fallback_to_edge:
+                    raise
+                self.get_logger().warn(f'ElevenLabs TTS failed, falling back to Edge: {exc}')
+                edge_voice = self.voice_ro if str(lang).lower().startswith('ro') else self.voice_en
+                return self._synthesize_edge(text, edge_voice)
         return self._synthesize_edge(text, voice)
+
+    def _synthesize_elevenlabs(self, text: str, voice_id: str, lang: str = ''):
+        """Synthesize with ElevenLabs TTS stream endpoint."""
+        language_code = 'ro' if str(lang).lower().startswith('ro') else 'en'
+        response = requests.post(
+            f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream',
+            headers={
+                'xi-api-key': self.eleven_api_key,
+                'Content-Type': 'application/json',
+            },
+            params={'output_format': self.eleven_output_format},
+            json={
+                'text': text,
+                'model_id': self.eleven_model_id,
+                'language_code': language_code,
+                'voice_settings': {
+                    'stability': max(0.0, min(1.0, self.eleven_stability)),
+                    'similarity_boost': max(0.0, min(1.0, self.eleven_similarity_boost)),
+                    'style': max(0.0, min(1.0, self.eleven_style)),
+                    'use_speaker_boost': self.eleven_use_speaker_boost,
+                },
+            },
+            timeout=max(1.0, self.eleven_timeout_s),
+        )
+        if not response.ok:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = response.text.strip()
+            raise RuntimeError(f'HTTP {response.status_code}: {payload}')
+
+        audio_bytes = response.content
+        if self.eleven_output_format.startswith('pcm_'):
+            sample_rate = int(self.eleven_output_format.split('_', 1)[1])
+            audio_data = np.frombuffer(audio_bytes, dtype=np.int16)
+            return audio_data, sample_rate
+
+        audio_data, sample_rate = sf.read(io.BytesIO(audio_bytes), dtype='int16')
+        return audio_data, sample_rate
     
     def _synthesize_edge(self, text: str, voice: str):
         """Synthesize with Edge TTS (online, entirely in RAM)."""
@@ -507,7 +646,6 @@ class TTSNode(Node):
             loop.close()
         
         # Use io.BytesIO directly in memory
-        import io
         mp3_io = io.BytesIO(audio_bytes)
         
         # Read MP3 directly from in-memory buffer
@@ -547,9 +685,14 @@ class TTSNode(Node):
         """Stop current TTS (for barge-in)."""
         # INCREMENT EPOCH FIRST - all queued chunks become invalid
         self.stop_epoch += 1
+        if self.current_session:
+            self.cancelled_sessions.add(self.current_session)
+            if len(self.cancelled_sessions) > 20:
+                self.cancelled_sessions = set(list(self.cancelled_sessions)[-10:])
         self.stop_requested = True
         self._clear_queues()
         self.is_speaking = False
+        self.current_session = None
         self.get_logger().debug(f'⏹️ TTS stopped (epoch now {self.stop_epoch})')
         self.stop_requested = False
     

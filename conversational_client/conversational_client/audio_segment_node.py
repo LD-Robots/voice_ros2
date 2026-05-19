@@ -50,12 +50,16 @@ class AudioSegmentNode(Node):
         self.declare_parameter('max_segment_seconds', 30.0)  # Maximum segment (protection)
         self.declare_parameter('pre_buffer_seconds', 0.3)    # Audio before voice detection
         self.declare_parameter('capture_during_playback', False)
+        self.declare_parameter('stop_playback_on_voice_start', True)
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.min_segment_seconds = self.get_parameter('min_segment_seconds').value
         self.max_segment_seconds = self.get_parameter('max_segment_seconds').value
         self.pre_buffer_seconds = self.get_parameter('pre_buffer_seconds').value
         self.capture_during_playback = self.get_parameter('capture_during_playback').value
+        self.stop_playback_on_voice_start = bool(
+            self.get_parameter('stop_playback_on_voice_start').value
+        )
         
         # Compute sizes in samples
         self.min_samples = int(self.min_segment_seconds * self.sample_rate)
@@ -122,6 +126,8 @@ class AudioSegmentNode(Node):
         # PUBLISHER - send complete segments to the server
         # ─────────────────────────────────────────────────────────
         self.segment_pub = self.create_publisher(Audio, '/audio_segment', 10)
+        self.stop_playback_pub = self.create_publisher(Bool, '/stop_playback', 10)
+        self.legacy_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
         
         self.get_logger().debug('📦 Audio Segment Node started')
     
@@ -142,11 +148,11 @@ class AudioSegmentNode(Node):
     
     def robot_speaking_callback(self, msg: Bool):
         """Callback for TTS playback state."""
-        if self.capture_during_playback:
-            return  # Allow full duplex listening
-            
         was_speaking = self.is_robot_speaking
         self.is_robot_speaking = msg.data
+
+        if self.capture_during_playback:
+            return  # Allow full duplex listening
         
         if msg.data and not was_speaking:
             self.get_logger().info('🔇 Robot speaking - muting input')
@@ -174,12 +180,13 @@ class AudioSegmentNode(Node):
         if not self.session_active:
             self.get_logger().debug(f'⏸️ VAD ignored - session not active', throttle_duration_sec=5.0)
             return
-        if self.is_robot_speaking:
+        if self.is_robot_speaking and not self.capture_during_playback:
             self.get_logger().debug(f'⏸️ VAD ignored - robot speaking', throttle_duration_sec=5.0)
             return
         
         # When the user starts speaking, add pre-buffer
         if msg.data and not self.was_speaking:
+            self._stop_playback_for_user_speech()
             # Add the pre-buffer at the start of recording
             self.audio_buffer = list(self.pre_buffer)
             self.get_logger().info('🎤 Voice started - capturing...')
@@ -194,8 +201,9 @@ class AudioSegmentNode(Node):
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
-        # Do not buffer audio when the robot is speaking (prevents feedback loop)
-        if self.session_active and not self.is_robot_speaking:
+        # In half-duplex mode, do not buffer robot playback. In full-duplex mode,
+        # keep buffering VAD-confirmed user speech so barge-in captures the turn.
+        if self.session_active and (not self.is_robot_speaking or self.capture_during_playback):
             if self.is_speaking:
                 # User speaking - add to main buffer
                 self.audio_buffer.extend(msg.data)
@@ -205,11 +213,13 @@ class AudioSegmentNode(Node):
                     self.get_logger().warn('⚠️ Max segment length reached, sending...')
                     self._send_segment()
             else:
-                # User not speaking - keep pre-buffer for context
-                self.pre_buffer.extend(msg.data)
-                # Keep only the last pre_buffer_samples
-                if len(self.pre_buffer) > self.pre_buffer_samples:
-                    self.pre_buffer = self.pre_buffer[-self.pre_buffer_samples:]
+                # User not speaking - keep pre-buffer for context, but avoid filling
+                # it with robot echo while playback is active.
+                if not self.is_robot_speaking:
+                    self.pre_buffer.extend(msg.data)
+                    # Keep only the last pre_buffer_samples
+                    if len(self.pre_buffer) > self.pre_buffer_samples:
+                        self.pre_buffer = self.pre_buffer[-self.pre_buffer_samples:]
         elif self.session_active and self.is_robot_speaking:
             if self.is_speaking and len(self.audio_buffer) > 0:
                  self.get_logger().debug(f'DROPPING audio because RobotSpeaking=True (Buffer len: {len(self.audio_buffer)})')
@@ -263,6 +273,17 @@ class AudioSegmentNode(Node):
         # Reset buffer
         self.audio_buffer = []
         self.get_logger().debug('✅ Segment sent to server')
+
+    def _stop_playback_for_user_speech(self):
+        """Stop any previous robot answer as soon as the user starts talking."""
+        if not self.stop_playback_on_voice_start:
+            return
+        msg = Bool()
+        msg.data = True
+        self.stop_playback_pub.publish(msg)
+        self.legacy_stop_pub.publish(msg)
+        if self.is_robot_speaking:
+            self.get_logger().info('⏹️ User started speaking - stopping robot playback')
 
 
 # ═══════════════════════════════════════════════════════════════════

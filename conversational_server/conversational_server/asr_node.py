@@ -24,9 +24,24 @@ import wave
 import os
 import time
 import io
+import json
 import re
 import unicodedata
 import soundfile as sf
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    DOTENV_AVAILABLE = True
+except ImportError:
+    DOTENV_AVAILABLE = False
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    print("⚠️ requests not installed. Run: pip install requests")
 
 # RapidFuzz for textual anti-echo
 try:
@@ -48,8 +63,11 @@ except ImportError:
 class ASRNode(Node):
     def __init__(self):
         super().__init__('asr_node')
+
+        self._load_env()
         
         # Configurable parameters
+        self.declare_parameter('provider', 'whisper')
         self.declare_parameter('model_size', 'small')
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('compute_type', 'int8')
@@ -58,12 +76,22 @@ class ASRNode(Node):
         self.declare_parameter('beam_size', 5)
         self.declare_parameter('vad_min_silence_ms', 300)
         self.declare_parameter('warmup_enabled', True)
+        self.declare_parameter('eleven_api_key_env', 'ELEVEN_API_KEY')
+        self.declare_parameter('eleven_model_id', 'scribe_v2')
+        self.declare_parameter('eleven_language_code', '')
+        self.declare_parameter('eleven_diarize', True)
+        self.declare_parameter('eleven_num_speakers', 0)
+        self.declare_parameter('eleven_diarization_threshold', 0.0)
+        self.declare_parameter('eleven_tag_audio_events', False)
+        self.declare_parameter('eleven_timeout_s', 30.0)
+        self.declare_parameter('eleven_allowed_language_codes', 'en,eng,ro,ron,rum')
         
         # Anti-echo textual parameters
         self.declare_parameter('echo_threshold', 85)  # Similarity % to consider as echo
         self.declare_parameter('echo_min_length', 8)  # Min chars to check for echo
         self.declare_parameter('echo_enabled', True)  # Enable/disable anti-echo
         
+        self.provider = str(self.get_parameter('provider').value or 'whisper').strip().lower()
         model_size = self.get_parameter('model_size').value
         device = self.get_parameter('device').value
         compute_type = self.get_parameter('compute_type').value
@@ -72,28 +100,61 @@ class ASRNode(Node):
         self.beam_size = self.get_parameter('beam_size').value
         self.vad_min_silence_ms = self.get_parameter('vad_min_silence_ms').value
         self.warmup_enabled = self.get_parameter('warmup_enabled').value
+        self.eleven_api_key_env = str(self.get_parameter('eleven_api_key_env').value)
+        self.eleven_model_id = str(self.get_parameter('eleven_model_id').value)
+        self.eleven_language_code = str(self.get_parameter('eleven_language_code').value or '')
+        self.eleven_diarize = bool(self.get_parameter('eleven_diarize').value)
+        self.eleven_num_speakers = int(self.get_parameter('eleven_num_speakers').value or 0)
+        self.eleven_diarization_threshold = float(
+            self.get_parameter('eleven_diarization_threshold').value or 0.0
+        )
+        self.eleven_tag_audio_events = bool(
+            self.get_parameter('eleven_tag_audio_events').value
+        )
+        self.eleven_timeout_s = float(self.get_parameter('eleven_timeout_s').value)
+        self.eleven_allowed_language_codes = {
+            code.strip().lower()
+            for code in str(self.get_parameter('eleven_allowed_language_codes').value or '').split(',')
+            if code.strip()
+        }
         
         # Anti-echo settings
         self.echo_threshold = self.get_parameter('echo_threshold').value
         self.echo_min_length = self.get_parameter('echo_min_length').value
         self.echo_enabled = self.get_parameter('echo_enabled').value and RAPIDFUZZ_AVAILABLE
         
-        if not WHISPER_AVAILABLE:
+        self.model = None
+        if self.provider == 'elevenlabs':
+            if not REQUESTS_AVAILABLE:
+                self.get_logger().error('requests not installed - required for ElevenLabs STT!')
+                raise RuntimeError('requests not available')
+            self.eleven_api_key = os.environ.get(self.eleven_api_key_env, '')
+            if not self.eleven_api_key:
+                self.get_logger().error(
+                    f'{self.eleven_api_key_env} environment variable not set!'
+                )
+                raise RuntimeError(f'{self.eleven_api_key_env} not set')
+            self._warmed_up = True
+            self.get_logger().info(
+                f'✅ ASR initialized with ElevenLabs STT: model={self.eleven_model_id}, '
+                f'diarize={self.eleven_diarize}'
+            )
+        elif not WHISPER_AVAILABLE:
             self.get_logger().error('faster-whisper not installed!')
             raise RuntimeError('faster-whisper not available')
-        
-        # Initialize Whisper model
-        self.get_logger().debug(f'Loading Whisper model: {model_size} on {device}...')
-        self.model = WhisperModel(
-            model_size,
-            device=device,
-            compute_type=compute_type
-        )
-        self.get_logger().debug('✅ Whisper model loaded!')
-        
-        # Warmup on startup
-        self._warmed_up = False
-        self._ensure_warm()
+        else:
+            # Initialize Whisper model
+            self.get_logger().debug(f'Loading Whisper model: {model_size} on {device}...')
+            self.model = WhisperModel(
+                model_size,
+                device=device,
+                compute_type=compute_type
+            )
+            self.get_logger().debug('✅ Whisper model loaded!')
+
+            # Warmup on startup
+            self._warmed_up = False
+            self._ensure_warm()
         
         # Buffer for audio
         self.audio_buffer = []
@@ -142,13 +203,32 @@ class ASRNode(Node):
             '/transcription',
             10
         )
+        self.diarization_pub = self.create_publisher(
+            String,
+            '/elevenlabs_diarization',
+            10,
+        )
         
         if self.echo_enabled:
             self.get_logger().debug(f'🔇 Anti-echo ENABLED (threshold={self.echo_threshold}%, min_len={self.echo_min_length})')
         else:
             self.get_logger().debug('🔇 Anti-echo DISABLED')
         
-        self.get_logger().debug('ASR Node started! Listening on /audio_raw, /voice_activity, /llm_response')
+        self.get_logger().debug(
+            f'ASR Node started with provider={self.provider}! '
+            'Listening on /audio_raw, /voice_activity, /llm_response'
+        )
+
+    def _load_env(self):
+        if not DOTENV_AVAILABLE:
+            return
+        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+            for parent in [base] + list(base.parents):
+                if parent.name == 'voice_ros2':
+                    env_path = parent / '.env'
+                    if env_path.exists():
+                        load_dotenv(dotenv_path=env_path)
+                    return
     
     def audio_callback(self, msg: Audio):
         """Buffers audio during speech."""
@@ -269,8 +349,14 @@ class ASRNode(Node):
             # Reset cursor to the beginning of the buffer
             wav_io.seek(0)
             
+            if self.provider == 'elevenlabs':
+                result = self._run_elevenlabs(wav_io)
+                text = result["text"]
+                lang = result["lang"]
+                confidence = result["language_probability"]
+                self._publish_diarization(result.get("diarization", {}))
             # Use RO/EN detection if set
-            if self.language == 'ro_en':
+            elif self.language == 'ro_en':
                 # For ro_en we need to read twice, so BytesIO is perfect (seek(0))
                 result = self._transcribe_ro_en(wav_io)
                 text = result["text"]
@@ -291,6 +377,13 @@ class ASRNode(Node):
             
             if text:
                 self.get_logger().info(f'🧏 [{lang}] {text}')
+
+                if self.provider == 'elevenlabs' and not self._is_allowed_eleven_language(lang):
+                    self.get_logger().warn(
+                        f'Ignoring ElevenLabs transcription in unsupported language "{lang}": {text}'
+                    )
+                    self.audio_buffer = []
+                    return
                 
                 # Anti-echo: check if it is an echo from TTS
                 if self._is_echo(text):
@@ -370,6 +463,124 @@ class ASRNode(Node):
         out_lang = info.language or (language or "en")
         prob = float(getattr(info, "language_probability", 0.0) or 0.0)
         return text, out_lang, prob, score
+
+    def _run_elevenlabs(self, audio_source):
+        """Transcribe one utterance with ElevenLabs Scribe v2."""
+        if hasattr(audio_source, 'seek'):
+            audio_source.seek(0)
+
+        data = {
+            'model_id': self.eleven_model_id,
+            'diarize': 'true' if self.eleven_diarize else 'false',
+            'tag_audio_events': 'true' if self.eleven_tag_audio_events else 'false',
+            'timestamps_granularity': 'word',
+            'file_format': 'other',
+        }
+        language_code = self.eleven_language_code.strip()
+        if not language_code and self.language and self.language != 'ro_en':
+            language_code = str(self.language)
+        if language_code:
+            data['language_code'] = language_code
+        if self.eleven_num_speakers > 0:
+            data['num_speakers'] = str(max(1, min(32, self.eleven_num_speakers)))
+        elif self.eleven_diarization_threshold > 0.0:
+            data['diarization_threshold'] = str(
+                max(0.1, min(0.4, self.eleven_diarization_threshold))
+            )
+
+        files = {
+            'file': ('speech.wav', audio_source.read(), 'audio/wav'),
+        }
+        response = requests.post(
+            'https://api.elevenlabs.io/v1/speech-to-text',
+            headers={'xi-api-key': self.eleven_api_key},
+            data=data,
+            files=files,
+            timeout=max(1.0, self.eleven_timeout_s),
+        )
+        if not response.ok:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = response.text.strip()
+            raise RuntimeError(f'ElevenLabs STT HTTP {response.status_code}: {payload}')
+
+        payload = response.json()
+        text = str(payload.get('text', '') or '').strip()
+        lang = str(payload.get('language_code', '') or 'en')
+        confidence = float(payload.get('language_probability', 0.0) or 0.0)
+        diarization = self._build_diarization_payload(payload)
+        return {
+            'text': text,
+            'lang': lang,
+            'language_probability': confidence,
+            'diarization': diarization,
+        }
+
+    def _is_allowed_eleven_language(self, language_code: str) -> bool:
+        if not self.eleven_allowed_language_codes:
+            return True
+        code = str(language_code or '').strip().lower()
+        return not code or code in self.eleven_allowed_language_codes
+
+    def _build_diarization_payload(self, payload: dict) -> dict:
+        words = list(payload.get('words', []) or [])
+        spans = []
+        current = None
+        speaker_counts = {}
+        for word in words:
+            if str(word.get('type', 'word') or 'word') != 'word':
+                continue
+            speaker = str(word.get('speaker_id', '') or 'unknown')
+            token = str(word.get('text', '') or '')
+            if speaker:
+                speaker_counts[speaker] = speaker_counts.get(speaker, 0) + 1
+            start = float(word.get('start', 0.0) or 0.0)
+            end = float(word.get('end', start) or start)
+            if current is None or current['speaker_id'] != speaker:
+                if current:
+                    current['text'] = current['text'].strip()
+                    spans.append(current)
+                current = {
+                    'speaker_id': speaker,
+                    'start': start,
+                    'end': end,
+                    'text': token,
+                }
+            else:
+                current['end'] = end
+                if token:
+                    if current['text'] and not token.startswith("'"):
+                        current['text'] += ' '
+                    current['text'] += token
+        if current:
+            current['text'] = current['text'].strip()
+            spans.append(current)
+
+        dominant = ''
+        if speaker_counts:
+            dominant = max(speaker_counts.items(), key=lambda item: item[1])[0]
+        return {
+            'provider': 'elevenlabs',
+            'model_id': self.eleven_model_id,
+            'language_code': str(payload.get('language_code', '') or ''),
+            'language_probability': float(payload.get('language_probability', 0.0) or 0.0),
+            'dominant_speaker_id': dominant,
+            'speaker_word_counts': speaker_counts,
+            'spans': spans,
+        }
+
+    def _publish_diarization(self, payload: dict):
+        if not payload:
+            return
+        msg = String()
+        msg.data = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+        self.diarization_pub.publish(msg)
+        dominant = payload.get('dominant_speaker_id', '') or 'unknown'
+        speaker_count = len(payload.get('speaker_word_counts', {}) or {})
+        self.get_logger().info(
+            f'🗣️ ElevenLabs diarization: dominant={dominant}, speakers={speaker_count}'
+        )
 
     def _transcribe_ro_en(self, audio_source):
         """

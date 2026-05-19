@@ -41,6 +41,7 @@ from .openai_web_search import (
     WEB_SEARCH_FUNCTION_NAME,
     build_brave_web_search_tool_output,
     build_realtime_web_search_tool,
+    build_web_search_reasoning_hint,
     build_web_search_tool_output,
     call_brave_web_search,
     call_openai_web_search,
@@ -386,6 +387,7 @@ class OpenAIRealtimeNode(Node):
         self._paused_transcript_at = 0.0
         self._last_accepted_user_transcript_norm = ''
         self._last_accepted_user_transcript_at = 0.0
+        self._current_turn_web_search_hint = ''
         self._last_robot_speaking_end_ms = 0
         self._playback_guard_was_active = False
         self._playback_frames_blocked = 0
@@ -831,6 +833,9 @@ class OpenAIRealtimeNode(Node):
                     preferred_language=self.person_context.get('preferred_language', ''),
                 )
                 self._assistant_name_question_active = self._is_assistant_name_question(normalized)
+                self._current_turn_web_search_hint = build_web_search_reasoning_hint(transcript)
+                if self._current_turn_web_search_hint:
+                    self.get_logger().info(f'Web search recommended for current turn: "{transcript}"')
                 self._refresh_session()
                 out = Transcription()
                 out.text = transcript
@@ -987,6 +992,7 @@ class OpenAIRealtimeNode(Node):
             self._mark_response_inactive()
         self._last_response_request_item_id = ''
         self._assistant_name_question_active = False
+        self._current_turn_web_search_hint = ''
         if self._pending_resume_text:
             self._clear_pending_resume()
             self._refresh_session()
@@ -1206,8 +1212,13 @@ class OpenAIRealtimeNode(Node):
             extras.append(
                 'When the user asks for current, live, recent, online, or otherwise time-sensitive information, '
                 'or explicitly asks you to search the internet, call the web_search tool before answering. '
+                'Use it for weather, news, sports scores or schedules, prices, stocks, elections, company leaders, '
+                'product availability, and facts that may have changed. '
+                'Do not use it for stable explanations, definitions, math, personal memory, or local robot commands. '
                 'Do not pretend to have browsed if you did not use the tool.'
             )
+        if self._current_turn_web_search_hint:
+            extras.append(self._current_turn_web_search_hint)
         return ' '.join([self.base_instructions, *extras]).strip()
 
     def _voice_correlated_preferred_name(self) -> str:
@@ -1653,6 +1664,7 @@ class OpenAIRealtimeNode(Node):
                 self._handled_tool_call_ids.add(call_id)
 
         self.get_logger().info(f'OpenAI Realtime requested web search via tool call {call_id}')
+        self._current_turn_web_search_hint = ''
         thread = threading.Thread(
             target=self._execute_web_search_tool_call,
             args=(call_id, arguments),

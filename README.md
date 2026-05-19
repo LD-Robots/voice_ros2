@@ -1,16 +1,16 @@
 # Voice ROS2 - Conversational Robot System
 
-A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with optional OpenAI-backed web search.
+A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, ElevenLabs speech, OpenAI text reasoning, Brave Search for fresh web data, and an optional OpenAI Realtime backend for experiments.
 
 ## 🏗️ Architecture
 
 The system uses a **client-server architecture** with ROS2 nodes:
 
 ### Server Nodes (Heavy Processing)
-- **ASR Node** - Automatic Speech Recognition (Faster-Whisper)
-- **LLM Node** - Language Model processing (Groq API with streaming)
-- **TTS Node** - Text-to-Speech (Edge TTS + Audio Cache)
-- **OpenAI Realtime Node** - Speech-to-speech via `gpt-realtime-mini`
+- **ASR Node** - Automatic Speech Recognition via ElevenLabs Scribe v2, with Faster-Whisper fallback
+- **LLM Node** - OpenAI reasoning with explicit Brave Search decisions
+- **TTS Node** - ElevenLabs TTS via Eleven v3, with Edge TTS fallback and audio cache
+- **OpenAI Realtime Node** - Optional speech-to-speech via `gpt-realtime-mini`
 
 ### Client Nodes (Robot Hardware)
 - **Audio Capture Node** - Microphone input
@@ -47,13 +47,13 @@ python3 -m pip install --break-system-packages -r requirements.txt
 
 The runtime code currently depends on these Python modules:
 - Audio and DSP: `numpy`, `scipy`, `sounddevice`, `pyaudio`, `soundfile`, `webrtcvad`
-- ASR and text filtering: `faster-whisper`, `rapidfuzz`
-- LLM and realtime: `groq`, `python-dotenv`, `requests`, `websocket-client`
-- TTS: `edge-tts`, `num2words`
+- ASR and text filtering: `elevenlabs`, `faster-whisper`, `rapidfuzz`
+- LLM, search, and realtime: `python-dotenv`, `requests`, `websocket-client`
+- TTS: `elevenlabs`, `edge-tts`, `num2words`
 - Wake word and stop keyword detection: `openwakeword`, `onnxruntime`
 - Speaker identification: `speechbrain`, `torch`, `torchaudio`, `huggingface_hub`, `torchcodec`
 
-For the current `full_system.launch.py`, install the full list even if you mostly use OpenAI Realtime, because the launch file still starts helper and legacy-side nodes alongside the realtime node.
+For the current `full_system.launch.py`, install the full list. ElevenLabs/OpenAI/Brave is now the default path; OpenAI Realtime remains available only when you launch `conversation_backend:=openai_realtime`.
 
 ## 🔧 Setup
 
@@ -72,8 +72,9 @@ nano .env
 
 Add your API keys:
 ```
-GROQ_API_KEY=your_api_key_here
+ELEVEN_API_KEY=your_elevenlabs_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
+BRAVE_SEARCH_API_KEY=your_brave_search_api_key_here
 ```
 
 > **Note:** The `.env` file is already in `.gitignore` to protect your API key.
@@ -102,21 +103,14 @@ source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py
 ```
 
-### Full System with OpenAI Realtime
+### Full System with ElevenLabs Speech + OpenAI Reasoning
 ```bash
 source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py \
-    conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar \
-    realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
-    realtime_web_search_context_size:=medium \
-    realtime_vad_silence_duration_ms:=550 \
-    realtime_response_create_delay_ms:=100 \
-    realtime_continued_turn_response_delay_ms:=450 \
-    realtime_capture_during_playback:=true
+    conversation_backend:=legacy
 ```
+
+This default path uses ElevenLabs Scribe v2 for STT, OpenAI Responses for reasoning, Brave Search when the local search detector says fresh data is needed, and ElevenLabs Eleven v3 for TTS.
 
 ### Server Only
 ```bash
@@ -188,14 +182,22 @@ Available model sizes: `tiny`, `base`, `small`, `medium`, `large`
 #### LLM Configuration
 ```bash
 ros2 launch conversational_server full_system.launch.py \
-    llm_model:=llama-3.1-8b-instant \
-    llm_provider:=groq
+    llm_model:=gpt-5.5 \
+    llm_provider:=openai
 ```
 
-Available Groq models:
-- `llama-3.1-8b-instant` (default, fast)
-- `compound-beta` (web search enabled)
-- `mixtral-8x7b-32768`
+The default reasoning provider is OpenAI via the Responses API. Brave Search is called locally only when `should_use_web_search()` detects current, live, or explicitly online information. Each decision is published as JSON on `/web_search_status`.
+
+#### ElevenLabs Speech Configuration
+Main YAML parameters:
+- `asr_node.provider: "elevenlabs"`
+- `asr_node.eleven_model_id: "scribe_v2"`
+- `asr_node.eleven_diarize: true`
+- `tts_node.provider: "elevenlabs"`
+- `tts_node.eleven_model_id: "eleven_v3"`
+- `tts_node.eleven_voice_id_en` / `tts_node.eleven_voice_id_ro`
+
+ElevenLabs diarization is published on `/elevenlabs_diarization` with anonymous turn-level speakers like `speaker_0`. Persistent person identity still comes from `/speaker_id` and the enrolled voice profiles.
 
 #### OpenAI Realtime Configuration
 ```bash
@@ -224,7 +226,7 @@ Recommended first test:
 - `realtime_continued_turn_response_delay_ms:=450`
 - `realtime_capture_during_playback:=true`
 
-When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
+When `conversation_backend:=openai_realtime`, the optional Realtime node can still call the local `web_search` function tool. For the default `legacy` backend, `llm_node` calls Brave Search directly and injects the results into the OpenAI reasoning request.
 
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
@@ -237,7 +239,7 @@ Edit `full_system.launch.py` and adjust:
 ### ✅ Implemented
 - ✅ **Bilingual** - Romanian and English automatic detection
 - ✅ **Streaming LLM** - Real-time response generation
-- ✅ **Web Search** - OpenAI Realtime can trigger OpenAI web search for current events and live facts
+- ✅ **Web Search** - Brave Search is triggered explicitly for current events and live facts
 - ✅ **Wake Word** - "Hello robot" / "Hey robot" detection
 - ✅ **Barge-in** - Interrupt TTS when user speaks
 - ✅ **Voice Activity Detection** - Automatic speech end detection
@@ -255,16 +257,22 @@ Edit `full_system.launch.py` and adjust:
 
 ## 🐛 Troubleshooting
 
-### "GROQ_API_KEY not set" Error
-Make sure `.env` file exists and contains your API key:
+### "ELEVEN_API_KEY not set" Error
+Make sure `.env` file exists and contains your ElevenLabs key:
 ```bash
-cat /path/to/ros2_ws/src/voice_ros2/.env
+ELEVEN_API_KEY=your_elevenlabs_api_key_here
 ```
 
 ### "OPENAI_API_KEY not set" Error
 Make sure `.env` contains:
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
+```
+
+### "BRAVE_SEARCH_API_KEY not set" Warning
+The robot can still answer stable questions, but online search will be skipped:
+```bash
+BRAVE_SEARCH_API_KEY=your_brave_search_api_key_here
 ```
 
 ### Microphone Not Working
@@ -333,7 +341,8 @@ TODO: Add license
 
 ## 🙏 Acknowledgments
 
-- Faster-Whisper for ASR
-- Groq for LLM inference
-- Edge-TTS for voice synthesis
+- ElevenLabs for speech-to-text and text-to-speech
+- OpenAI for reasoning
+- Brave Search for online search
+- Faster-Whisper and Edge-TTS for fallback speech paths
 - OpenWakeWord for wake word detection
