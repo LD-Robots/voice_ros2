@@ -155,6 +155,13 @@ attention_manager_node:
   ros__parameters:
     speaker_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
+    llm_address_router_enabled: true
+    llm_address_router_model: "gpt-5-mini"
+    llm_address_router_reasoning_effort: "minimal"
+    llm_address_router_timeout_s: 4.0
+    llm_address_router_fail_closed: true
+    llm_address_router_recent_turns: 8
+    assistant_question_reply_window_s: 25.0
 
 person_memory_store_node:
   ros__parameters:

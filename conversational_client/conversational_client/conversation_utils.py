@@ -225,6 +225,11 @@ def is_explicit_pause_request(normalized_text: str) -> bool:
     if contains_phrase(normalized_text, STRONG_PAUSE_PHRASES):
         return True
 
+    # Avoid turning long side conversations into a global pause just because
+    # they contain words like "moment" or "stai" in ordinary speech.
+    if len(normalized_text.split()) > 12:
+        return False
+
     has_pause_word = contains_word_stem(normalized_text, PAUSE_WORDS)
     has_delay_hint = contains_word_stem(normalized_text, SHORT_DELAY_WORDS)
     has_side_context = (

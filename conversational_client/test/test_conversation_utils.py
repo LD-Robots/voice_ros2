@@ -151,6 +151,19 @@ def test_reengagement_acceptance_requires_paused_state_and_identity_signal():
     ) is True
 
 
+def test_long_side_conversation_with_moment_is_not_pause_command():
+    text = normalize_text(
+        'Eu in momentul asta incerc sa procesez multe lucruri si vorbesc cu altcineva.'
+    )
+
+    assert detect_control_action(text) is None
+
+
+def test_explicit_not_side_conversation_counts_as_reengagement():
+    assert is_reengagement_phrase(normalize_text("No, it's not a side conversation")) is True
+    assert is_reengagement_phrase(normalize_text('Vorbesc cu tine')) is True
+
+
 def test_attention_decision_rejects_unknown_side_conversation_when_focus_exists():
     allow, reason, focused_speaker, _ = decide_attention(
         session_active=True,

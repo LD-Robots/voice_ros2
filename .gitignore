@@ -2,6 +2,7 @@
 build/
 install/
 log/
+.ros/log/
 
 # Environment variables
 .env
@@ -20,6 +21,15 @@ __pycache__/
 *.swp
 *~
 *.mp3
+
+# Runtime logs and debug captures
+*.log
+debug_mic_capture.wav
+aec_*.wav
+
+# Runtime voice memory / speaker enrollment generated while testing
+/voices/
+/conversational_client/voices/enrollment/
 
 # Large models (download separately)
 *.onnx
