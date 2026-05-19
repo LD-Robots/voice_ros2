@@ -210,7 +210,7 @@ class TTSNode(Node):
     
     def _precache(self):
         """Pre-generate audio for common phrases or load static files."""
-        self.get_logger().info('🔄 Initializing TTS cache (prioritizing OpenAI static voices)...')
+        self.get_logger().debug('🔄 Initializing TTS cache (prioritizing OpenAI static voices)...')
         
         workspace_root = _find_workspace_root()
         static_dir = None
@@ -229,7 +229,7 @@ class TTSNode(Node):
                 if static_file and static_file.exists():
                     # Load directly from WAV
                     audio_data, sample_rate = sf.read(str(static_file), dtype='int16')
-                    self.get_logger().info(f'  ✓ Loaded static voice: {key} (OpenAI)')
+                    self.get_logger().debug(f'  ✓ Loaded static voice: {key} (OpenAI)')
                 else:
                     # 2. Fall back to Edge-TTS
                     voice = self._pick_voice(lang)
@@ -247,7 +247,7 @@ class TTSNode(Node):
                     self.get_logger().debug(f'  ✓ Cached (dynamic): {key}')
             except Exception as e:
                 self.get_logger().warn(f'  ✗ Failed to cache {key}: {e}')
-        self.get_logger().info(f'✅ TTS cache complete: {len(self.audio_cache)} phrases ready')
+        self.get_logger().info(f'✅ TTS cache ready ({len(self.audio_cache)} phrases)')
     
     def say_cached(self, key: str) -> bool:
         """Play a cached phrase. Returns True if successful."""

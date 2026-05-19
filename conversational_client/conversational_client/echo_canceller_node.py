@@ -8,6 +8,25 @@ from scipy import signal
 import wave
 import collections
 import time
+import warnings
+import os
+import sys
+import contextlib
+
+@contextlib.contextmanager
+def ignore_stderr():
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(sys.stderr.fileno())
+    os.dup2(devnull, sys.stderr.fileno())
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, sys.stderr.fileno())
+        os.close(devnull)
+        os.close(old_stderr)
+
+# Suppress annoying library warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # Import WebRTC Audio Processing
 try:
@@ -63,13 +82,14 @@ class EchoCancellerNode(Node):
         if self.deep_filter_enabled:
             self.get_logger().info("🧠 [DF] Loading DeepFilterNet model... (this may take a few seconds)")
             start_t = time.time()
-            self.df_model, self.df_state, _ = init_df()
-            self.df_sr = self.df_state.sr() # Usually 48000
-            self.df_hop = self.df_state.hop_size() # Usually 480
-            
-            # Resamplers for DF (16kHz <-> 48kHz)
-            self.resampler_16to48 = torchaudio.transforms.Resample(16000, self.df_sr)
-            self.resampler_48to16 = torchaudio.transforms.Resample(self.df_sr, 16000)
+            with ignore_stderr():
+                self.df_model, self.df_state, _ = init_df()
+                self.df_sr = self.df_state.sr() # Usually 48000
+                self.df_hop = self.df_state.hop_size() # Usually 480
+                
+                # Resamplers for DF (16kHz <-> 48kHz)
+                self.resampler_16to48 = torchaudio.transforms.Resample(16000, self.df_sr)
+                self.resampler_48to16 = torchaudio.transforms.Resample(self.df_sr, 16000)
             
             self.get_logger().info(f"✅ [DF] Model Loaded in {time.time()-start_t:.2f}s. Running at {self.df_sr}Hz.")
         else:

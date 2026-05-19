@@ -17,6 +17,7 @@ If the enrollment database is empty, it always publishes "Unknown".
 
 import json
 import os
+import warnings
 from pathlib import Path
 import shutil
 import numpy as np
@@ -24,6 +25,10 @@ import rclpy
 from conversational_interfaces.msg import Audio
 from rclpy.node import Node
 from std_msgs.msg import String
+
+# Suppress annoying library warnings (Torch, SpeechBrain, etc.)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 from .person_profile_utils import (
     build_unique_speaker_label,

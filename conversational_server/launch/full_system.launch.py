@@ -95,7 +95,7 @@ def generate_launch_description():
             package='conversational_client',
             executable='audio_capture_node',
             name='audio_capture_node',
-            parameters=[config_file_path, {'device_index': LaunchConfiguration('audio_device_index')}]
+            parameters=[config_file_path]
         ),
         
         Node(

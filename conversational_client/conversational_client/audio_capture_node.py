@@ -12,6 +12,19 @@ import numpy as np
 import sys
 import wave
 import os
+import contextlib
+
+@contextlib.contextmanager
+def ignore_stderr():
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(sys.stderr.fileno())
+    os.dup2(devnull, sys.stderr.fileno())
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, sys.stderr.fileno())
+        os.close(devnull)
+        os.close(old_stderr)
 
 # Replace PyAudio with sounddevice
 try:
@@ -127,15 +140,16 @@ class AudioCaptureNode(Node):
             )
 
             # Start Input Stream with Callback
-            self.stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                blocksize=self.block_size,
-                device=device,
-                channels=capture_channels,
-                dtype='float32',  # sounddevice native is float32 usually
-                callback=self.audio_callback
-            )
-            self.stream.start()
+            with ignore_stderr():
+                self.stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    blocksize=self.block_size,
+                    device=device,
+                    channels=capture_channels,
+                    dtype='float32',  # sounddevice native is float32 usually
+                    callback=self.audio_callback
+                )
+                self.stream.start()
             
         except Exception as e:
             self.get_logger().error(f"❌ Failed to start sounddevice stream: {e}")
@@ -188,7 +202,7 @@ class AudioCaptureNode(Node):
             # Periodic logging
             if self.frame_count % 500 == 0:  # Log every ~10 seconds
                 rms = np.sqrt(np.mean(audio_f32**2)) * 32767.0 # Scale RMS to int16 range for readable logs
-                self.get_logger().info(f"📊 Audio Level (RMS): {rms:.2f} (Frames: {self.frame_count})")
+                self.get_logger().debug(f"📊 Audio Level (RMS): {rms:.2f} (Frames: {self.frame_count})")
                 
         except Exception as e:
             if self.running and rclpy.ok():

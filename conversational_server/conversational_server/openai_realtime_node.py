@@ -614,7 +614,7 @@ class OpenAIRealtimeNode(Node):
             rms = float(np.sqrt(np.mean(xf * xf) + 1e-12))
             dbfs = 20.0 * np.log10(rms + 1e-12)
             if getattr(self, '_debug_dbfs_counter', 0) % 5 == 0:  # Printeaza o data la ~300ms
-                self.get_logger().info(f'[Ecou Boxe] Nivel microfon = {dbfs:.2f} dbFS')
+                self.get_logger().debug(f'[Ecou Boxe] Nivel microfon = {dbfs:.2f} dbFS')
             self._debug_dbfs_counter = getattr(self, '_debug_dbfs_counter', 0) + 1
             
             if not self.playback_input_filter.should_forward(
@@ -648,7 +648,7 @@ class OpenAIRealtimeNode(Node):
         })
         self._audio_chunks_sent += 1
         if self._audio_chunks_sent % 50 == 0:
-            self.get_logger().info(
+            self.get_logger().debug(
                 f'Streaming audio to OpenAI Realtime ({self._audio_chunks_sent} chunks sent)'
             )
 

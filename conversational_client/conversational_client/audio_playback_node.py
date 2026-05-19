@@ -11,6 +11,19 @@ import time
 import sys
 import json
 import os
+import contextlib
+
+@contextlib.contextmanager
+def ignore_stderr():
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(sys.stderr.fileno())
+    os.dup2(devnull, sys.stderr.fileno())
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, sys.stderr.fileno())
+        os.close(devnull)
+        os.close(old_stderr)
 
 class AudioPlaybackNode(Node):
     def __init__(self):
@@ -38,7 +51,8 @@ class AudioPlaybackNode(Node):
         self.stop_sub = self.create_subscription(Bool, '/stop_playback', self.stop_callback, 10)
         
         # PyAudio Setup
-        self.audio_p = pyaudio.PyAudio()
+        with ignore_stderr():
+            self.audio_p = pyaudio.PyAudio()
         try:
             self.stream = self.audio_p.open(
                 format=pyaudio.paInt16,
