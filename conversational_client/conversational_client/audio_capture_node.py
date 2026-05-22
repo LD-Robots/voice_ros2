@@ -13,6 +13,8 @@ import sys
 import wave
 import os
 
+os.environ['PA_ALSA_PLUGHW'] = '1'
+
 # Replace PyAudio with sounddevice
 try:
     import sounddevice as sd
@@ -30,6 +32,7 @@ class AudioCaptureNode(Node):
         self.declare_parameter('channels', 1)
         self.declare_parameter('chunk_ms', 20)
         self.declare_parameter('device_index', -1)
+        self.declare_parameter('device_name', '')
         self.declare_parameter('respeaker_mode', False)  # Use ReSpeaker 6-ch special mode
         self.declare_parameter('respeaker_channel', 5)   # Which channel to extract (5 = AEC for this device)
         self.declare_parameter('gain', 1.0)              # Digital gain multiplier
@@ -41,6 +44,7 @@ class AudioCaptureNode(Node):
         self.channels = self.get_parameter('channels').value
         self.chunk_ms = self.get_parameter('chunk_ms').value
         self.device_index = self.get_parameter('device_index').value
+        self.device_name = self.get_parameter('device_name').value
         self.respeaker_mode = self.get_parameter('respeaker_mode').value
         self.respeaker_channel = self.get_parameter('respeaker_channel').value
         self.gain = self.get_parameter('gain').value
@@ -78,6 +82,7 @@ class AudioCaptureNode(Node):
     def start_capture(self):
         try:
             # Device selection
+            # Device selection
             if self.device_index >= 0:
                 device = self.device_index
                 self.get_logger().info(f"🎤 Using explicit device index: {device}")
@@ -99,9 +104,9 @@ class AudioCaptureNode(Node):
                              self.device_index = default_dev['index']
                              self.get_logger().info(f"🎤 ReSpeaker name not found, but default input supports 6+ channels. Using index {self.device_index}")
                 
-                device = self.device_index if self.device_index >= 0 else None
-                if device is None:
-                    self.get_logger().info("🎤 Using OS Default Input Device (Pipewire/Pulse bridge)")
+                device = self.device_index if self.device_index >= 0 else 'pulse'
+                if device == 'pulse':
+                    self.get_logger().info("🎤 Using OS Default Input Device (PulseAudio - Respects Ubuntu Settings)")
                 
                 # Debug: show which device sounddevice considers default
                 try:

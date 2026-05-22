@@ -657,7 +657,6 @@ class OpenAIRealtimeNode(Node):
             url = f'{self.api_base_url}?model={self.model}'
             headers = [
                 f'Authorization: Bearer {self.api_key}',
-                'OpenAI-Beta: realtime=v1',
             ]
             self._ws_app = websocket.WebSocketApp(
                 url,
@@ -988,6 +987,7 @@ class OpenAIRealtimeNode(Node):
         }
 
         session = {
+            'type': 'realtime',
             'modalities': ['text', 'audio'],
             'instructions': instructions,
             'voice': self.voice,
