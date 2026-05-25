@@ -113,6 +113,23 @@ speaker_id_node:
     enrollment_reuse_threshold: 0.58
     enrollment_reuse_margin: 0.16
 
+nemo_diarization_node:
+  ros__parameters:
+    mode: "streaming_sortformer"
+    model_name: "nvidia/diar_streaming_sortformer_4spk-v2.1"
+    offline_model_name: "nvidia/diar_sortformer_4spk-v1"
+    device: "auto"
+    streaming_audio_enabled: false
+    streaming_window_seconds: 12.0
+    streaming_hop_seconds: 1.0
+    streaming_ignore_playback: true
+    streaming_post_playback_ms: 900
+    min_audio_seconds: 1.0
+    selection_window_seconds: 2.0
+    identity_matching_enabled: true
+    similarity_threshold: 0.45
+    similarity_margin: 0.12
+
 attention_manager_node:
   ros__parameters:
     speaker_switch_hits_required: 2

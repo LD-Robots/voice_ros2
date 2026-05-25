@@ -14,7 +14,7 @@
       "facts": [
         "this one can you tell me another one"
       ],
-      "last_seen": "2026-05-15T09:52:41.313231+00:00"
+      "last_seen": "2026-05-25T07:15:56.760538+00:00"
     },
     "speaker_002": {
       "voice_label": "speaker_002",
@@ -66,6 +66,13 @@
       "preferred_language": "",
       "facts": [],
       "last_seen": "2026-05-14T13:12:26.341088+00:00"
+    },
+    "nvidia_spk_0": {
+      "voice_label": "nvidia_spk_0",
+      "preferred_name": "Nvidia Spk",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-05-25T07:25:23.474127+00:00"
     }
   }
 }

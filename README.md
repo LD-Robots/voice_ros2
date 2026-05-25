@@ -226,6 +226,41 @@ Recommended first test:
 
 When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
 
+#### NVIDIA NeMo / Sortformer Diarization
+
+The default speaker backend remains SpeechBrain ECAPA. To try NVIDIA NeMo
+Sortformer diarization instead, install NeMo on a CUDA-capable machine and launch
+with:
+
+```bash
+python3 -m pip install --user --break-system-packages \
+    "git+https://github.com/NVIDIA/NeMo.git@main#egg=nemo_toolkit[asr]"
+```
+
+This uses Ubuntu's `--break-system-packages` escape hatch so ROS nodes running
+under the system Python can see NeMo. It is convenient, but risky: NeMo has a
+large dependency stack and can conflict with ROS/PyTorch packages. Prefer a
+separate GPU machine or container for serious testing.
+
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    speaker_backend:=nemo \
+    nemo_diarization_mode:=streaming_sortformer
+```
+
+By default the NeMo node runs on completed user turns from `/audio_segment` and
+`/realtime_user_audio_segment`, publishes the active speaker to `/speaker_id`,
+and also publishes JSON debug output on `/diarization_result`. For rolling raw
+audio windows, add:
+
+```bash
+nemo_streaming_audio_enabled:=true
+```
+
+The NeMo backend can still use the existing enrolled voices in
+`voices/enrollment` to map Sortformer labels such as `nvidia_spk_0` back to known
+people.
+
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
 ```python

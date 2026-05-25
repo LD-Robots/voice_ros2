@@ -23,6 +23,8 @@ def _find_workspace_root():
 def generate_launch_description():
     # ========== SHARED CONTEXT ==========
     realtime_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"])
+    speechbrain_speaker_backend = PythonExpression(["'", LaunchConfiguration('speaker_backend'), "' == 'speechbrain'"])
+    nemo_speaker_backend = PythonExpression(["'", LaunchConfiguration('speaker_backend'), "' == 'nemo'"])
     
     client_share = get_package_share_directory('conversational_client')
     server_share = get_package_share_directory('conversational_server')
@@ -49,6 +51,9 @@ def generate_launch_description():
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
         DeclareLaunchArgument('audio_device_index', default_value='-1', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
         DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
+        DeclareLaunchArgument('speaker_backend', default_value='speechbrain', description='Speaker backend (speechbrain/nemo)'),
+        DeclareLaunchArgument('nemo_diarization_mode', default_value='streaming_sortformer', description='NeMo diarization mode (streaming_sortformer/sortformer)'),
+        DeclareLaunchArgument('nemo_streaming_audio_enabled', default_value='false', description='Run NeMo on rolling /audio_raw windows instead of only completed user segments'),
         
         # ========== SERVER NODES ==========
         
@@ -135,7 +140,21 @@ def generate_launch_description():
             package='conversational_client',
             executable='speaker_id_node',
             name='speaker_id_node',
+            condition=IfCondition(speechbrain_speaker_backend),
             parameters=[config_file_path, {'enrollment_dir': enrollment_dir}]
+        ),
+
+        Node(
+            package='conversational_client',
+            executable='nemo_diarization_node',
+            name='nemo_diarization_node',
+            condition=IfCondition(nemo_speaker_backend),
+            parameters=[config_file_path, {
+                'mode': LaunchConfiguration('nemo_diarization_mode'),
+                'streaming_audio_enabled': LaunchConfiguration('nemo_streaming_audio_enabled'),
+                'enrollment_dir': enrollment_dir,
+            }],
+            remappings=[('/audio_raw', '/audio_clean')]
         ),
 
         Node(

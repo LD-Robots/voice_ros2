@@ -39,6 +39,7 @@ setup(
             'barge_in_node = conversational_client.barge_in_node:main',
             'stop_keyword_node = conversational_client.stop_keyword_node:main',
             'speaker_id_node = conversational_client.speaker_id_node:main',
+            'nemo_diarization_node = conversational_client.nemo_diarization_node:main',
             'session_manager_node = conversational_client.session_manager_node:main',
             'voice_command_node = conversational_client.voice_command_node:main',
             'robot_command_executor_node = conversational_client.robot_command_executor_node:main',

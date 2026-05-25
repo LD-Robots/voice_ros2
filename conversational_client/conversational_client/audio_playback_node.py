@@ -18,10 +18,17 @@ class AudioPlaybackNode(Node):
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('channels', 1)
         self.declare_parameter('gain', 0.5)
+        self.declare_parameter('output_device_index', -1)
+        self.declare_parameter('pulse_sink', '')
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
         self.gain = self.get_parameter('gain').value
+        self.output_device_index = int(self.get_parameter('output_device_index').value)
+        self.pulse_sink = str(self.get_parameter('pulse_sink').value or '').strip()
+        if self.pulse_sink:
+            os.environ['PULSE_SINK'] = self.pulse_sink
+            self.get_logger().info(f'🔊 PULSE_SINK={self.pulse_sink}')
         
         self.speaking_pub = self.create_publisher(Bool, '/is_speaking', 10)
         self.progress_pub = self.create_publisher(String, '/audio_playback_progress', 10)
@@ -40,11 +47,17 @@ class AudioPlaybackNode(Node):
         # PyAudio Setup
         self.audio_p = pyaudio.PyAudio()
         try:
+            output_device_index = (
+                self.output_device_index
+                if self.output_device_index >= 0
+                else None
+            )
             self.stream = self.audio_p.open(
                 format=pyaudio.paInt16,
                 channels=self.channels,
                 rate=self.sample_rate,
                 output=True,
+                output_device_index=output_device_index,
                 frames_per_buffer=self._playback_chunk_size
             )
             self.get_logger().info(f'🔊 Playback ready: {self.sample_rate}Hz')

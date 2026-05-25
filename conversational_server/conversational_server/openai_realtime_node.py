@@ -681,7 +681,6 @@ class OpenAIRealtimeNode(Node):
             url = f'{self.api_base_url}?model={self.model}'
             headers = [
                 f'Authorization: Bearer {self.api_key}',
-                'OpenAI-Beta: realtime=v1',
             ]
             self._ws_app = websocket.WebSocketApp(
                 url,
@@ -857,6 +856,7 @@ class OpenAIRealtimeNode(Node):
 
         if event_type in (
             'response.audio_transcript.delta',
+            'response.output_text.delta',
             'response.output_audio_transcript.delta',
             'response.text.delta',
         ):
@@ -865,6 +865,7 @@ class OpenAIRealtimeNode(Node):
 
         if event_type in (
             'response.audio_transcript.done',
+            'response.output_text.done',
             'response.output_audio_transcript.done',
             'response.text.done',
         ):
@@ -1012,18 +1013,31 @@ class OpenAIRealtimeNode(Node):
         }
 
         session = {
-            'modalities': ['text', 'audio'],
+            'type': 'realtime',
+            'output_modalities': ['audio'],
             'instructions': instructions,
-            'voice': self.voice,
-            'input_audio_format': 'pcm16',
-            'output_audio_format': 'pcm16',
-            'turn_detection': turn_detection,
+            'audio': {
+                'input': {
+                    'format': {
+                        'type': 'audio/pcm',
+                        'rate': self.api_sample_rate,
+                    },
+                    'turn_detection': turn_detection,
+                },
+                'output': {
+                    'format': {
+                        'type': 'audio/pcm',
+                        'rate': self.api_sample_rate,
+                    },
+                    'voice': self.voice,
+                },
+            },
         }
         if self.web_search_enabled:
             session['tools'] = [build_realtime_web_search_tool()]
             session['tool_choice'] = 'auto'
         if self.input_transcription_enabled:
-            session['input_audio_transcription'] = {
+            session['audio']['input']['transcription'] = {
                 'model': self.input_transcription_model,
             }
 

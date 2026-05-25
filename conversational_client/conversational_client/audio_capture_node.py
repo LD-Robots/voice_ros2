@@ -37,6 +37,7 @@ class AudioCaptureNode(Node):
         self.declare_parameter('stereo_mono_extract', False)
         self.declare_parameter('debug_recording', False) # Save to local WAV file
         self.declare_parameter('debug_wav_path', '')
+        self.declare_parameter('pulse_source', '')
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
@@ -48,6 +49,10 @@ class AudioCaptureNode(Node):
         self.stereo_mono_extract = self.get_parameter('stereo_mono_extract').value
         self.debug_recording = self.get_parameter('debug_recording').value
         self.debug_wav_path = str(self.get_parameter('debug_wav_path').value or '')
+        self.pulse_source = str(self.get_parameter('pulse_source').value or '').strip()
+        if self.pulse_source:
+            os.environ['PULSE_SOURCE'] = self.pulse_source
+            self.get_logger().info(f"🎙️ PULSE_SOURCE={self.pulse_source}")
         if self.debug_recording and not self.debug_wav_path:
             self.debug_wav_path = str(self._find_workspace_root() / 'debug_mic_capture.wav')
         

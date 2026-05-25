@@ -6,7 +6,9 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
+from launch.substitutions import PythonExpression
 from launch_ros.actions import Node
 from pathlib import Path
 
@@ -42,8 +44,25 @@ def generate_launch_description():
     if not os.path.exists(stop_keyword_path):
         stop_keyword_path = os.path.join(models_dir, 'stop_keyword.onnx')
     enrollment_dir = os.path.join(voices_dir, 'enrollment')
+    speechbrain_speaker_backend = PythonExpression(["'", LaunchConfiguration('speaker_backend'), "' == 'speechbrain'"])
+    nemo_speaker_backend = PythonExpression(["'", LaunchConfiguration('speaker_backend'), "' == 'nemo'"])
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'speaker_backend',
+            default_value='speechbrain',
+            description='Speaker backend (speechbrain/nemo)'
+        ),
+        DeclareLaunchArgument(
+            'nemo_diarization_mode',
+            default_value='streaming_sortformer',
+            description='NeMo diarization mode (streaming_sortformer/sortformer)'
+        ),
+        DeclareLaunchArgument(
+            'nemo_streaming_audio_enabled',
+            default_value='false',
+            description='Run NeMo on rolling /audio_raw windows instead of only completed user segments'
+        ),
         DeclareLaunchArgument(
             'speaker_similarity_threshold',
             default_value='0.45',
@@ -215,6 +234,7 @@ def generate_launch_description():
             package='conversational_client',
             executable='speaker_id_node',
             name='speaker_id_node',
+            condition=IfCondition(speechbrain_speaker_backend),
             output='screen',
             parameters=[{
                 'enrollment_dir': enrollment_dir,
@@ -222,6 +242,21 @@ def generate_launch_description():
                 'similarity_margin': LaunchConfiguration('speaker_similarity_margin'),
                 'enrollment_reuse_threshold': LaunchConfiguration('enrollment_reuse_threshold'),
                 'enrollment_reuse_margin': LaunchConfiguration('enrollment_reuse_margin'),
+            }]
+        ),
+
+        Node(
+            package='conversational_client',
+            executable='nemo_diarization_node',
+            name='nemo_diarization_node',
+            condition=IfCondition(nemo_speaker_backend),
+            output='screen',
+            parameters=[{
+                'mode': LaunchConfiguration('nemo_diarization_mode'),
+                'streaming_audio_enabled': LaunchConfiguration('nemo_streaming_audio_enabled'),
+                'enrollment_dir': enrollment_dir,
+                'similarity_threshold': LaunchConfiguration('speaker_similarity_threshold'),
+                'similarity_margin': LaunchConfiguration('speaker_similarity_margin'),
             }]
         ),
 
