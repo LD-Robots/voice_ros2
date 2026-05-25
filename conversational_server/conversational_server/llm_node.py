@@ -464,6 +464,13 @@ class LLMNode(Node):
                 should_search = True
             reason = str(payload.get('reason', '') or '').strip()
             query = str(payload.get('query', '') or '').strip()
+            should_search, reason, query = self._sanitize_search_router_decision(
+                should_search,
+                reason,
+                query,
+                text,
+                force_search=force_search,
+            )
             if should_search and not query:
                 query = text
             if not reason:
@@ -471,10 +478,50 @@ class LLMNode(Node):
             self.get_logger().info(
                 f'🧭 Search router: search={should_search}, reason={reason}, query="{query}"'
             )
-            return should_search, reason, query or text
+            return should_search, reason, query
         except Exception as exc:
             self.get_logger().warn(f'Search router failed; falling back to rules: {exc}')
             return None
+
+    @staticmethod
+    def _sanitize_search_router_decision(
+        should_search: bool,
+        reason: str,
+        query: str,
+        original_text: str,
+        *,
+        force_search: bool = False,
+    ) -> tuple[bool, str, str]:
+        reason_text = str(reason or '').strip()
+        query_text = str(query or '').strip()
+        original = str(original_text or '').strip()
+        reason_norm = reason_text.lower()
+
+        no_search_reason_markers = (
+            'no need for fresh',
+            'does not need web search',
+            'do not search',
+            'not need web search',
+            'no request for fresh',
+            'no current-information',
+            'not time-sensitive',
+            'stable explanation',
+            'social conversation',
+            'conversation feedback',
+        )
+        if should_search and not force_search and any(marker in reason_norm for marker in no_search_reason_markers):
+            return False, reason_text or 'router reason indicates no web search', ''
+
+        if not should_search:
+            return False, reason_text, ''
+
+        if not query_text:
+            query_text = original
+        words = query_text.split()
+        if len(words) > 45:
+            query_text = ' '.join(words[:45])
+            reason_text = (reason_text + '; query truncated for search API').strip('; ')
+        return True, reason_text, query_text
 
     @staticmethod
     def _parse_router_json(raw_text: str) -> dict:

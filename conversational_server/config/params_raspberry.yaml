@@ -154,11 +154,19 @@ attention_manager_node:
     allow_known_speaker_switch_without_address: true
     llm_address_router_enabled: true
     llm_address_router_model: "gpt-5-mini"
-    llm_address_router_reasoning_effort: "minimal"
-    llm_address_router_timeout_s: 4.0
+    llm_address_router_reasoning_effort: "medium"
+    llm_address_router_timeout_s: 8.0
     llm_address_router_fail_closed: true
     llm_address_router_recent_turns: 8
     assistant_question_reply_window_s: 25.0
+    initial_session_reply_grace_s: 30.0
+    attention_learning_enabled: true
+    attention_learning_rate: 0.08
+    attention_learning_threshold: 0.58
+    attention_learning_min_confidence: 0.18
+    attention_learning_path: "voices/attention_policy.json"
+    attention_learning_llm_teacher_scale: 0.25
+    attention_learning_route_enabled: false
 
 person_memory_store_node:
   ros__parameters:
