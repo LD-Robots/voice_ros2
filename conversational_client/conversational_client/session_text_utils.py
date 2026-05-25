@@ -41,6 +41,9 @@ GOODBYE_CONTEXT_WORDS = {
     'gata',
     'acum',
     'deocamdata',
+    'roman',
+    'robert',
+    'robo',
 }
 
 

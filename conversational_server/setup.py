@@ -32,6 +32,7 @@ setup(
             'llm_node = conversational_server.llm_node:main',
             'tts_node = conversational_server.tts_node:main',
             'openai_realtime_node = conversational_server.openai_realtime_node:main',
+            'pipecat_audio_node = conversational_server.pipecat_audio_node:main',
             'backend_manager_node = conversational_server.backend_manager_node:main',
         ],
     },

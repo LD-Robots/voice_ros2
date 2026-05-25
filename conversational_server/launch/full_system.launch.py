@@ -82,11 +82,10 @@ def generate_launch_description():
 
         Node(
             package='conversational_server',
-            executable='openai_realtime_node',
+            executable='pipecat_audio_node',
             name='openai_realtime_node',
             condition=IfCondition(realtime_backend),
-            parameters=[config_file_path],
-            remappings=[('/audio_raw', '/audio_clean')]
+            parameters=[config_file_path]
         ),
         
         # ========== CLIENT NODES ==========

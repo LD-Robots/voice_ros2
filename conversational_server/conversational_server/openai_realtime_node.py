@@ -982,24 +982,33 @@ class OpenAIRealtimeNode(Node):
             'threshold': self.vad_threshold,
             'prefix_padding_ms': self.vad_prefix_padding_ms,
             'silence_duration_ms': self.vad_silence_duration_ms,
-            'create_response': (not self.local_response_gating) and (not self.conversation_paused),
-            'interrupt_response': not self.conversation_paused,
         }
 
         session = {
             'type': 'realtime',
-            'modalities': ['text', 'audio'],
             'instructions': instructions,
-            'voice': self.voice,
-            'input_audio_format': 'pcm16',
-            'output_audio_format': 'pcm16',
-            'turn_detection': turn_detection,
+            'audio': {
+                'input': {
+                    'format': {
+                        'type': 'audio/pcm',
+                        'rate': self.api_sample_rate
+                    },
+                    'turn_detection': turn_detection
+                },
+                'output': {
+                    'voice': self.voice,
+                    'format': {
+                        'type': 'audio/pcm',
+                        'rate': self.api_sample_rate
+                    }
+                }
+            }
         }
         if self.web_search_enabled:
             session['tools'] = [build_realtime_web_search_tool()]
             session['tool_choice'] = 'auto'
         if self.input_transcription_enabled:
-            session['input_audio_transcription'] = {
+            session['audio']['input']['transcription'] = {
                 'model': self.input_transcription_model,
             }
 
