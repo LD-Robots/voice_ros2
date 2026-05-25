@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Any
 
 import requests
 
 
 WEB_SEARCH_FUNCTION_NAME = 'web_search'
-DEFAULT_WEB_SEARCH_MODEL = 'gpt-4.1-mini'
+DEFAULT_WEB_SEARCH_MODEL = 'gpt-5.5'
 DEFAULT_WEB_SEARCH_PROVIDER = 'openai'
 DEFAULT_WEB_SEARCH_CONTEXT_SIZE = 'medium'
 DEFAULT_WEB_SEARCH_MAX_OUTPUT_TOKENS = 400
@@ -77,11 +78,17 @@ def call_openai_web_search(
         },
         json={
             'model': model,
-            'input': query,
+            'input': (
+                'Search the web for the following query. Return a concise, current answer '
+                'grounded in the retrieved sources, and include citations when available.\n\n'
+                f'Query: {query}'
+            ),
             'tools': [{
-                'type': 'web_search_preview',
+                'type': 'web_search',
                 'search_context_size': search_context_size,
+                'external_web_access': True,
             }],
+            'tool_choice': 'required',
             'max_output_tokens': max_output_tokens,
         },
         timeout=max(1.0, float(timeout_s)),
@@ -165,20 +172,31 @@ def extract_response_sources(
     sources: list[dict[str, str]] = []
     seen_urls: set[str] = set()
 
+    def add_source(item: dict[str, Any]) -> bool:
+        url = str(item.get('url', '') or '').strip()
+        if not url or url in seen_urls:
+            return False
+        seen_urls.add(url)
+        sources.append({
+            'title': str(item.get('title', '') or '').strip() or url,
+            'url': url,
+        })
+        return len(sources) >= max(1, int(max_sources))
+
+    for item in payload.get('sources', []) or []:
+        if isinstance(item, dict) and add_source(item):
+            return sources
+
     for item in payload.get('output', []) or []:
+        if str(item.get('type', '') or '') == 'web_search_call':
+            for source in item.get('sources', []) or []:
+                if isinstance(source, dict) and add_source(source):
+                    return sources
         for content in item.get('content', []) or []:
             for annotation in content.get('annotations', []) or []:
                 if str(annotation.get('type', '') or '') != 'url_citation':
                     continue
-                url = str(annotation.get('url', '') or '').strip()
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                sources.append({
-                    'title': str(annotation.get('title', '') or '').strip() or url,
-                    'url': url,
-                })
-                if len(sources) >= max(1, int(max_sources)):
+                if add_source(annotation):
                     return sources
 
     return sources
@@ -250,11 +268,16 @@ def build_brave_web_search_tool_output(
         'ok': not error,
         'provider': 'brave',
         'query': query,
+        'searched_at_utc': datetime.now(timezone.utc).isoformat(),
         'summary': summary,
         'sources': [
             {'title': source['title'], 'url': source['url']}
             for source in sources
         ],
+        'guidance': (
+            'Use only these search results for current facts. If the snippets are insufficient '
+            'or sources disagree, say that clearly instead of guessing.'
+        ),
     }
     if error:
         tool_output['error'] = error
@@ -282,9 +305,15 @@ def build_web_search_tool_output(
 
     tool_output = {
         'ok': not error,
+        'provider': 'openai',
         'query': query,
+        'searched_at_utc': datetime.now(timezone.utc).isoformat(),
         'summary': summary,
         'sources': sources,
+        'guidance': (
+            'Use only this web-search summary and sources for current facts. If the summary is '
+            'missing or ambiguous, say that clearly instead of guessing.'
+        ),
     }
     if error:
         tool_output['error'] = error

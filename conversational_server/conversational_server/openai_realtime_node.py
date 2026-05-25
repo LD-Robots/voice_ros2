@@ -150,8 +150,11 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('focus_timeout_s', 45.0)
         self.declare_parameter('focus_recognition_window_s', 3.0)
         self.declare_parameter('allow_known_speaker_switch_without_address', True)
+        self.declare_parameter('require_direct_address_for_new_focus', False)
+        self.declare_parameter('initial_turn_after_wake_grace_s', 8.0)
         self.declare_parameter('utterance_capture_prefix_ms', 400)
         self.declare_parameter('utterance_capture_min_ms', 800)
+        self.declare_parameter('speaker_context_wait_ms', 1200)
         self.declare_parameter('name_context_wait_ms', 950)
         self.declare_parameter('web_search_enabled', True)
         self.declare_parameter('web_search_provider', DEFAULT_WEB_SEARCH_PROVIDER)
@@ -272,6 +275,10 @@ class OpenAIRealtimeNode(Node):
             0,
             int(self.get_parameter('name_context_wait_ms').value),
         )
+        self.speaker_context_wait_ms = max(
+            0,
+            int(self.get_parameter('speaker_context_wait_ms').value),
+        )
         self.web_search_enabled = bool(self.get_parameter('web_search_enabled').value)
         self.web_search_provider = str(
             self.get_parameter('web_search_provider').value or DEFAULT_WEB_SEARCH_PROVIDER
@@ -311,6 +318,13 @@ class OpenAIRealtimeNode(Node):
         self.allow_known_speaker_switch_without_address = bool(
             self.get_parameter('allow_known_speaker_switch_without_address').value
         )
+        self.require_direct_address_for_new_focus = bool(
+            self.get_parameter('require_direct_address_for_new_focus').value
+        )
+        self.initial_turn_after_wake_grace_s = max(
+            0.0,
+            float(self.get_parameter('initial_turn_after_wake_grace_s').value),
+        )
         self.language_tracker = ConversationLanguageTracker(
             int(self.get_parameter('language_switch_hits_required').value)
         )
@@ -335,6 +349,8 @@ class OpenAIRealtimeNode(Node):
         self.last_focus_time = 0.0
         self.pending_focus_speaker = 'Unknown'
         self.pending_focus_at = 0.0
+        self.session_started_at = 0.0
+        self.accepted_turns_since_session = 0
         self.person_context = {
             'speaker': 'Unknown',
             'preferred_name': '',
@@ -486,8 +502,12 @@ class OpenAIRealtimeNode(Node):
         return super().destroy_node()
 
     def session_callback(self, msg: Bool):
+        was_active = self.session_active
         self.session_active = bool(msg.data)
         if self.session_active:
+            if not was_active:
+                self.session_started_at = time.monotonic()
+                self.accepted_turns_since_session = 0
             self.get_logger().info('OpenAI conversation session is ACTIVE')
             self._refresh_session()
         else:
@@ -500,6 +520,8 @@ class OpenAIRealtimeNode(Node):
             self.last_focus_time = 0.0
             self.pending_focus_speaker = 'Unknown'
             self.pending_focus_at = 0.0
+            self.session_started_at = 0.0
+            self.accepted_turns_since_session = 0
             self._cancel_and_clear()
 
     def speaking_callback(self, msg: Bool):
@@ -590,6 +612,13 @@ class OpenAIRealtimeNode(Node):
             'preferred_language': str(payload.get('preferred_language', '') or ''),
             'facts': list(payload.get('facts', []) or []),
         }
+        speaker = self.person_context.get('speaker', 'Unknown')
+        preferred_name = self.person_context.get('preferred_name', '')
+        if getattr(self, '_last_logged_person_context', None) != (speaker, preferred_name):
+            self._last_logged_person_context = (speaker, preferred_name)
+            self.get_logger().info(
+                f'Person context: speaker={speaker}, preferred_name={preferred_name or "none"}'
+            )
         self.language_tracker.seed(self.person_context.get('preferred_language', ''))
         self._refresh_session()
 
@@ -782,6 +811,12 @@ class OpenAIRealtimeNode(Node):
                     self._delete_conversation_item(item_id, 'pause_command')
                     self._apply_pause_state(True, publish=True)
                     return
+                initial_turn_grace = (
+                    self.accepted_turns_since_session == 0
+                    and self.session_started_at > 0.0
+                    and (time.monotonic() - self.session_started_at)
+                    <= self.initial_turn_after_wake_grace_s
+                )
                 allow, reason, effective_focus, effective_focus_time = decide_attention(
                     session_active=self.session_active,
                     conversation_paused=self.conversation_paused,
@@ -792,6 +827,10 @@ class OpenAIRealtimeNode(Node):
                     allow_known_speaker_switch_without_address=(
                         self.allow_known_speaker_switch_without_address
                     ),
+                    require_direct_address_for_new_focus=(
+                        self.require_direct_address_for_new_focus
+                    ),
+                    initial_turn_grace=initial_turn_grace,
                     direct_address=direct_address,
                     reengagement=reengagement,
                     robot_directive=False,
@@ -836,15 +875,20 @@ class OpenAIRealtimeNode(Node):
                 out.language = active_language
                 out.confidence = 1.0
                 self.transcription_pub.publish(out)
-                if (
-                    self._is_name_identity_question(normalized)
-                    and not self._voice_correlated_preferred_name()
-                ):
+                self.accepted_turns_since_session += 1
+                missing_voice_name = not self._voice_correlated_preferred_name()
+                if self._is_name_identity_question(normalized) and missing_voice_name:
                     wait_delay_ms = max(self.response_create_delay_ms, self.name_context_wait_ms)
                     self._schedule_response_create_with_delay(
                         item_id,
                         reason='await_voice_name_context',
                         delay_ms=wait_delay_ms,
+                    )
+                elif missing_voice_name and self.speaker_context_wait_ms > self.response_create_delay_ms:
+                    self._schedule_response_create_with_delay(
+                        item_id,
+                        reason='await_speaker_context',
+                        delay_ms=self.speaker_context_wait_ms,
                     )
                 else:
                     self._schedule_response_create(item_id, reason='accepted_transcript')
@@ -1687,6 +1731,9 @@ class OpenAIRealtimeNode(Node):
             if not query:
                 raise ValueError('Missing required "query" argument.')
 
+            self.get_logger().info(
+                f'Web search requested: provider={self.web_search_provider}, query="{query}"'
+            )
             if self.web_search_provider == 'brave':
                 if not self.brave_search_api_key:
                     raise RuntimeError('BRAVE_SEARCH_API_KEY environment variable not set.')
@@ -1719,6 +1766,15 @@ class OpenAIRealtimeNode(Node):
                     max_sources=self.web_search_sources_limit,
                 )
                 self.get_logger().info(f'OpenAI Responses web search completed for: {query}')
+            try:
+                output_payload = json.loads(output)
+                source_count = len(output_payload.get('sources', []) or [])
+                self.get_logger().info(
+                    f'Web search result: ok={bool(output_payload.get("ok"))}, '
+                    f'sources={source_count}'
+                )
+            except Exception:
+                pass
         except Exception as exc:
             message = str(exc).strip() or 'Unknown web search failure.'
             self.get_logger().error(f'{self.web_search_provider} web search tool failed: {message}')

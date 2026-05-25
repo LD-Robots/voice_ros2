@@ -80,6 +80,7 @@ class LLMNode(Node):
         self.declare_parameter('websearch_enabled', True)
         self.declare_parameter('websearch_model', 'compound-beta')  # Groq compound model
         self.declare_parameter('websearch_max_tokens', 300)
+        self.declare_parameter('speaker_context_wait_ms', 1200)
         
         self.provider = str(self.get_parameter('provider').value).lower()
         self.model = self.get_parameter('model').value
@@ -98,6 +99,10 @@ class LLMNode(Node):
         self.websearch_enabled = self.get_parameter('websearch_enabled').value
         self.websearch_model = self.get_parameter('websearch_model').value
         self.websearch_max_tokens = self.get_parameter('websearch_max_tokens').value
+        self.speaker_context_wait_ms = max(
+            0,
+            int(self.get_parameter('speaker_context_wait_ms').value),
+        )
         
         # Stream shaper parameters
         self.declare_parameter('prebuffer_chars', 120)
@@ -287,7 +292,7 @@ class LLMNode(Node):
         
         for keyword in current_info_keywords:
             if keyword in text_lower:
-                self.get_logger().debug(f'🔍 Web search triggered by keyword: "{keyword}"')
+                self.get_logger().info(f'🔍 Legacy web search triggered by keyword: "{keyword}"')
                 return True
         
         return False
@@ -318,6 +323,13 @@ class LLMNode(Node):
             'preferred_language': str(payload.get('preferred_language', '') or ''),
             'facts': list(payload.get('facts', []) or []),
         }
+        speaker = self.person_context.get('speaker', 'Unknown')
+        preferred_name = self.person_context.get('preferred_name', '')
+        if getattr(self, '_last_logged_person_context', None) != (speaker, preferred_name):
+            self._last_logged_person_context = (speaker, preferred_name)
+            self.get_logger().info(
+                f'👤 Person context: speaker={speaker}, preferred_name={preferred_name or "none"}'
+            )
 
     def _backend_callback(self, msg: String):
         backend = msg.data.strip() or 'legacy'
@@ -443,16 +455,48 @@ class LLMNode(Node):
             extras.append('Known personal facts: ' + '; '.join(str(fact) for fact in facts[:8]) + '.')
         return ' '.join(extras)
 
+    def _voice_correlated_preferred_name(self) -> str:
+        if self.current_speaker == 'Unknown':
+            return ''
+        context_speaker = str(self.person_context.get('speaker', 'Unknown') or 'Unknown')
+        if context_speaker != self.current_speaker:
+            return ''
+        return str(self.person_context.get('preferred_name', '') or '').strip()
+
+    def _wait_for_person_context(self):
+        wait_s = self.speaker_context_wait_ms / 1000.0
+        if wait_s <= 0.0 or self._voice_correlated_preferred_name():
+            return
+
+        start = time.monotonic()
+        deadline = start + wait_s
+        while time.monotonic() < deadline:
+            if self._voice_correlated_preferred_name():
+                waited_ms = int((time.monotonic() - start) * 1000)
+                self.get_logger().info(f'👤 Speaker name context arrived after {waited_ms}ms')
+                return
+            time.sleep(0.05)
+
+        if self.current_speaker == 'Unknown':
+            self.get_logger().info('👤 Proceeding without speaker name: speaker still Unknown')
+        else:
+            self.get_logger().info(
+                '👤 Proceeding without matching speaker name context: '
+                f'speaker={self.current_speaker}, context={self.person_context.get("speaker", "Unknown")}'
+            )
+
     def _process_streaming(self, user_text: str, user_lang: str):
         """Process the LLM response with streaming."""
         session_id = str(uuid.uuid4())[:8]
         
         try:
+            self._wait_for_person_context()
+
             # Add the user's message to history (with language instruction)
             # This forces the model to respond in the correct language
             lang_instruction = "[RESPOND IN ENGLISH]" if not user_lang.startswith('ro') else "[RĂSPUNDE ÎN ROMÂNĂ]"
             
-            preferred_name = self.person_context.get('preferred_name', '').strip()
+            preferred_name = self._voice_correlated_preferred_name()
             display_speaker = preferred_name or self.current_speaker
 
             # Add speaker name if known
@@ -486,7 +530,7 @@ class LLMNode(Node):
             if needs_websearch:
                 model_to_use = self.websearch_model
                 max_tokens_to_use = self.websearch_max_tokens
-                self.get_logger().debug(f'🌐 Using web search model: {model_to_use}')
+                self.get_logger().info(f'🌐 Legacy web search model: {model_to_use}')
             else:
                 model_to_use = self.model
                 max_tokens_to_use = self.max_tokens

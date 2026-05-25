@@ -309,6 +309,8 @@ def decide_attention(
     last_focus_time: float,
     focus_timeout_s: float,
     allow_known_speaker_switch_without_address: bool = False,
+    require_direct_address_for_new_focus: bool = False,
+    initial_turn_grace: bool = False,
     direct_address: bool,
     reengagement: bool,
     robot_directive: bool,
@@ -349,6 +351,22 @@ def decide_attention(
         return False, 'paused_side_conversation', focus, focus_time
 
     if focus == 'Unknown':
+        if require_direct_address_for_new_focus:
+            if direct_address or robot_directive:
+                return True, 'no_focus_directed', focus, focus_time
+            if initial_turn_grace:
+                return True, 'initial_turn_after_wake', focus, focus_time
+            if control_action is not None and can_accept_control_action(
+                control_action,
+                current_speaker=current_speaker,
+                focused_speaker=focus,
+                session_active=session_active,
+                conversation_paused=conversation_paused,
+                direct_address=direct_address,
+                normalized_text=normalized_text,
+            ):
+                return True, f'no_focus_control_{control_action}', focus, focus_time
+            return False, 'no_focus_without_direct_address', focus, focus_time
         return True, 'no_focus_yet', focus, focus_time
 
     if current_speaker == 'Unknown':

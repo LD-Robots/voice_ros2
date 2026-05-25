@@ -53,6 +53,25 @@ def test_extract_response_sources_returns_distinct_citations():
     ]
 
 
+def test_extract_response_sources_reads_top_level_sources_first():
+    payload = {
+        'sources': [
+            {'title': 'Top Source', 'url': 'https://top.example'},
+        ],
+        'output': [{
+            'content': [{
+                'annotations': [
+                    {'type': 'url_citation', 'title': 'Citation', 'url': 'https://citation.example'},
+                ],
+            }],
+        }],
+    }
+
+    assert extract_response_sources(payload, max_sources=1) == [
+        {'title': 'Top Source', 'url': 'https://top.example'},
+    ]
+
+
 def test_build_web_search_tool_output_serializes_summary_and_sources():
     payload = {
         'output_text': 'Latest result summary.',
@@ -67,12 +86,13 @@ def test_build_web_search_tool_output_serializes_summary_and_sources():
 
     output = json.loads(build_web_search_tool_output('latest weather', payload=payload))
 
-    assert output == {
-        'ok': True,
-        'query': 'latest weather',
-        'summary': 'Latest result summary.',
-        'sources': [{'title': 'Source A', 'url': 'https://a.example'}],
-    }
+    assert output['ok'] is True
+    assert output['provider'] == 'openai'
+    assert output['query'] == 'latest weather'
+    assert output['summary'] == 'Latest result summary.'
+    assert output['sources'] == [{'title': 'Source A', 'url': 'https://a.example'}]
+    assert output['searched_at_utc']
+    assert 'guessing' in output['guidance']
 
 
 def test_extract_brave_results_returns_distinct_web_results():
@@ -123,6 +143,8 @@ def test_build_brave_web_search_tool_output_serializes_results():
     assert output['provider'] == 'brave'
     assert output['query'] == 'weather tomorrow'
     assert 'Tomorrow forecast.' in output['summary']
+    assert output['searched_at_utc']
+    assert 'guessing' in output['guidance']
     assert output['sources'] == [
         {'title': 'Weather source', 'url': 'https://weather.example'},
     ]
@@ -148,3 +170,28 @@ def test_call_brave_web_search_normalizes_invalid_country_and_uppercase_lang(mon
 
     assert captured['params']['country'] == 'ALL'
     assert captured['params']['search_lang'] == 'en'
+
+
+def test_call_openai_web_search_uses_current_web_search_tool(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        ok = True
+
+        @staticmethod
+        def json():
+            return {'output_text': 'ok'}
+
+    def fake_post(url, *, headers, json, timeout):
+        captured['json'] = json
+        return FakeResponse()
+
+    monkeypatch.setattr('conversational_server.openai_web_search.requests.post', fake_post)
+
+    from conversational_server.openai_web_search import call_openai_web_search
+
+    call_openai_web_search('key', 'latest weather')
+
+    assert captured['json']['tools'][0]['type'] == 'web_search'
+    assert captured['json']['tools'][0]['external_web_access'] is True
+    assert captured['json']['tool_choice'] == 'required'

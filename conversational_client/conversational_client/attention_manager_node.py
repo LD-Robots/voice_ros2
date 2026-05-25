@@ -35,6 +35,8 @@ class AttentionManagerNode(Node):
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
         self.declare_parameter('allow_known_speaker_switch_without_address', True)
+        self.declare_parameter('require_direct_address_for_new_focus', False)
+        self.declare_parameter('initial_turn_after_wake_grace_s', 8.0)
 
         self.focus_timeout_s = float(self.get_parameter('focus_timeout_s').value)
         self.focus_recognition_window_s = float(
@@ -43,6 +45,13 @@ class AttentionManagerNode(Node):
         self.unknown_speaker_grace_s = float(self.get_parameter('unknown_speaker_grace_s').value)
         self.allow_known_speaker_switch_without_address = bool(
             self.get_parameter('allow_known_speaker_switch_without_address').value
+        )
+        self.require_direct_address_for_new_focus = bool(
+            self.get_parameter('require_direct_address_for_new_focus').value
+        )
+        self.initial_turn_after_wake_grace_s = max(
+            0.0,
+            float(self.get_parameter('initial_turn_after_wake_grace_s').value),
         )
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter('sticky_speaker_timeout_s').value),
@@ -57,6 +66,8 @@ class AttentionManagerNode(Node):
         self.last_focus_time = 0.0
         self.pending_focus_speaker = 'Unknown'
         self.pending_focus_at = 0.0
+        self.session_started_at = 0.0
+        self.accepted_turns_since_session = 0
 
         self.session_sub = self.create_subscription(Bool, '/session_active', self._session_callback, 10)
         self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self._pause_callback, 10)
@@ -74,7 +85,11 @@ class AttentionManagerNode(Node):
         self.get_logger().info('Attention Manager started')
 
     def _session_callback(self, msg: Bool):
+        was_active = self.session_active
         self.session_active = bool(msg.data)
+        if self.session_active and not was_active:
+            self.session_started_at = time.monotonic()
+            self.accepted_turns_since_session = 0
         if not self.session_active:
             self.speaker_tracker.reset()
             self.current_speaker = 'Unknown'
@@ -83,6 +98,8 @@ class AttentionManagerNode(Node):
             self.last_focus_time = 0.0
             self.pending_focus_speaker = 'Unknown'
             self.pending_focus_at = 0.0
+            self.session_started_at = 0.0
+            self.accepted_turns_since_session = 0
             self._publish_status(False, False, 'session_inactive')
 
     def _pause_callback(self, msg: Bool):
@@ -138,6 +155,7 @@ class AttentionManagerNode(Node):
         )
 
         self.attended_pub.publish(msg)
+        self.accepted_turns_since_session += 1
 
     def _should_allow(
         self,
@@ -147,6 +165,11 @@ class AttentionManagerNode(Node):
         control_action: str | None,
         normalized_text: str,
     ):
+        initial_turn_grace = (
+            self.accepted_turns_since_session == 0
+            and self.session_started_at > 0.0
+            and (time.monotonic() - self.session_started_at) <= self.initial_turn_after_wake_grace_s
+        )
         allow, reason, effective_focus, effective_focus_time = decide_attention(
             session_active=self.session_active,
             conversation_paused=self.conversation_paused,
@@ -157,6 +180,8 @@ class AttentionManagerNode(Node):
             allow_known_speaker_switch_without_address=(
                 self.allow_known_speaker_switch_without_address
             ),
+            require_direct_address_for_new_focus=self.require_direct_address_for_new_focus,
+            initial_turn_grace=initial_turn_grace,
             direct_address=direct_address,
             reengagement=reengagement,
             robot_directive=robot_directive,

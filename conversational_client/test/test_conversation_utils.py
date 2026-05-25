@@ -194,6 +194,72 @@ def test_attention_decision_allows_known_speaker_switch_without_direct_address_w
     assert focus_time == 12.0
 
 
+def test_attention_decision_can_require_direct_address_for_initial_focus():
+    allow, reason, focused_speaker, _ = decide_attention(
+        session_active=True,
+        conversation_paused=False,
+        current_speaker='Unknown',
+        focused_speaker='Unknown',
+        last_focus_time=0.0,
+        focus_timeout_s=45.0,
+        require_direct_address_for_new_focus=True,
+        initial_turn_grace=False,
+        allow_known_speaker_switch_without_address=False,
+        direct_address=False,
+        reengagement=False,
+        robot_directive=False,
+        control_action=None,
+        normalized_text=normalize_text('Did you finish the homework?'),
+        now=12.0,
+    )
+    assert allow is False
+    assert reason == 'no_focus_without_direct_address'
+    assert focused_speaker == 'Unknown'
+
+    allow, reason, focused_speaker, _ = decide_attention(
+        session_active=True,
+        conversation_paused=False,
+        current_speaker='Unknown',
+        focused_speaker='Unknown',
+        last_focus_time=0.0,
+        focus_timeout_s=45.0,
+        require_direct_address_for_new_focus=True,
+        initial_turn_grace=False,
+        allow_known_speaker_switch_without_address=False,
+        direct_address=True,
+        reengagement=False,
+        robot_directive=False,
+        control_action=None,
+        normalized_text=normalize_text('Robot, did you finish the homework?'),
+        now=12.0,
+    )
+    assert allow is True
+    assert reason == 'no_focus_directed'
+
+
+def test_attention_decision_allows_first_turn_after_wake_grace():
+    allow, reason, focused_speaker, _ = decide_attention(
+        session_active=True,
+        conversation_paused=False,
+        current_speaker='Unknown',
+        focused_speaker='Unknown',
+        last_focus_time=0.0,
+        focus_timeout_s=45.0,
+        require_direct_address_for_new_focus=True,
+        initial_turn_grace=True,
+        allow_known_speaker_switch_without_address=False,
+        direct_address=False,
+        reengagement=False,
+        robot_directive=False,
+        control_action=None,
+        normalized_text=normalize_text('Tell me a story.'),
+        now=12.0,
+    )
+    assert allow is True
+    assert reason == 'initial_turn_after_wake'
+    assert focused_speaker == 'Unknown'
+
+
 def test_attention_decision_can_keep_strict_speaker_switch_policy_when_disabled():
     allow, reason, focused_speaker, _ = decide_attention(
         session_active=True,
