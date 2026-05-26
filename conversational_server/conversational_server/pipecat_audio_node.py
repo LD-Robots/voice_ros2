@@ -8,7 +8,7 @@ import soxr
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Int32
 from conversational_interfaces.msg import Audio, Transcription
 
 # --- Pipecat Imports ---
@@ -146,17 +146,7 @@ class LanguageTrackerProcessor(FrameProcessor):
                 self.ros_node.transcription_pub.publish(transcription_msg)
                 
                 # Append a system message to guide the LLM's language
-                msg = ""
-                if active_lang == 'ro':
-                    msg = " Current conversation language is Romanian. Keep speaking Romanian unless the user clearly asks to switch language."
-                elif active_lang == 'en':
-                    msg = " Current conversation language is English. Keep speaking English unless the user clearly asks to switch language."
-                    
-                if msg and self.ros_node.llm_service:
-                    new_instructions = self.ros_node.instructions + msg
-                    self.ros_node.llm_service._settings.session_properties.instructions = new_instructions
-                    await self.ros_node.llm_service._send_session_update()
-                    self.ros_node.get_logger().info(f'Updated LLM instructions for language: {active_lang}')
+                await self.ros_node._update_llm_instructions_async(active_lang=active_lang)
 
 class PipecatAudioNode(Node):
     def __init__(self, loop):
@@ -212,11 +202,57 @@ class PipecatAudioNode(Node):
         # Pipecat Setup
         self.transport = ROSPipecatTransport(self)
         
+        self.doa_sub = self.create_subscription(Int32, '/doa_angle', self.doa_callback, 10)
+        
         # LLM service will be created per-session
         
         self.runner = PipelineRunner()
         self.task = None
         self.is_speaking = False
+        self.current_lang = None
+        self.current_doa = None
+
+    def doa_callback(self, msg: Int32):
+        # Only update if the session is active
+        if hasattr(self, 'task') and self.task and self.llm_service:
+            import asyncio
+            asyncio.run_coroutine_threadsafe(
+                self._update_llm_instructions_async(doa=msg.data),
+                self.loop
+            )
+        else:
+            self.current_doa = msg.data
+
+
+
+    def _get_current_instructions(self):
+        # Base instructions
+        new_instructions = self.instructions
+        
+        # Language context
+        if self.current_lang == 'ro':
+            new_instructions += " Current conversation language is Romanian. Keep speaking Romanian unless the user clearly asks to switch language."
+        elif self.current_lang == 'en':
+            new_instructions += " Current conversation language is English. Keep speaking English unless the user clearly asks to switch language."
+            
+        # DOA context
+        if self.current_doa is not None:
+            new_instructions += f"\n[SYSTEM CONTEXT]: The user is speaking from an angle of {self.current_doa} degrees."
+            
+        return new_instructions
+
+    async def _update_llm_instructions_async(self, active_lang=None, doa=None):
+        if active_lang is not None:
+            self.current_lang = active_lang
+        if doa is not None:
+            self.current_doa = doa
+
+        new_instructions = self._get_current_instructions()
+            
+        if self.llm_service:
+            self.llm_service._settings.session_properties.instructions = new_instructions
+            await self.llm_service._send_session_update()
+            self.get_logger().info(f'Updated LLM instructions (Lang: {self.current_lang}, DOA: {self.current_doa})')
 
     def audio_callback(self, msg: Audio):
         if self.is_speaking:
@@ -253,7 +289,7 @@ class PipecatAudioNode(Node):
             session_properties = SessionProperties(
                 type='realtime',
                 output_modalities=['audio'],
-                instructions=self.instructions,
+                instructions=self._get_current_instructions(),
                 audio=AudioConfiguration(
                     input=AudioInput(
                         format=PCMAudioFormat(type='audio/pcm', rate=self.api_sample_rate),
