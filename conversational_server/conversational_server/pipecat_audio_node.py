@@ -228,6 +228,7 @@ class PipecatAudioNode(Node):
     def _get_current_instructions(self):
         # Base instructions
         new_instructions = self.instructions
+        new_instructions += "\n[MULTI-PARTY RULES]: You are a robotic assistant in a crowded room. You constantly receive updates about the DOA (Direction of Arrival) angle of the sound. If the angle jumps back and forth rapidly, or if you realize from the context that two people at different angles are talking to EACH OTHER instead of to you, you MUST immediately call the ignore_background_chatter() function and stay completely silent. Only reply verbally if someone addresses you directly."
         
         # Language context
         if self.current_lang == 'ro':
@@ -253,6 +254,11 @@ class PipecatAudioNode(Node):
             self.llm_service._settings.session_properties.instructions = new_instructions
             await self.llm_service._send_session_update()
             self.get_logger().info(f'Updated LLM instructions (Lang: {self.current_lang}, DOA: {self.current_doa})')
+
+    async def ignore_background_chatter_callback(self, function_name, tool_call_id, args, llm, context, result_callback):
+        self.get_logger().info("🤫 LLM triggered ignore_background_chatter! Silencing response.")
+        if result_callback:
+            await result_callback({"status": "ignored_successfully"})
 
     def audio_callback(self, msg: Audio):
         if self.is_speaking:
@@ -290,6 +296,18 @@ class PipecatAudioNode(Node):
                 type='realtime',
                 output_modalities=['audio'],
                 instructions=self._get_current_instructions(),
+                tools=[
+                    {
+                        "type": "function",
+                        "name": "ignore_background_chatter",
+                        "description": "Call this function IMMEDIATELY when you detect that the users are talking to each other instead of talking to you, OR if the DOA angle is jumping back and forth indicating background chatter. When you call this, you MUST NOT generate any verbal response.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+                    }
+                ],
                 audio=AudioConfiguration(
                     input=AudioInput(
                         format=PCMAudioFormat(type='audio/pcm', rate=self.api_sample_rate),
@@ -309,6 +327,11 @@ class PipecatAudioNode(Node):
                     model=self.model,
                     session_properties=session_properties
                 )
+            )
+            
+            self.llm_service.register_function(
+                "ignore_background_chatter",
+                self.ignore_background_chatter_callback
             )
             
             self.lang_processor = LanguageTrackerProcessor(self)
