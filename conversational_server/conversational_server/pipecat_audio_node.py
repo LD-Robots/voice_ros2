@@ -12,7 +12,7 @@ from std_msgs.msg import Bool, Int32
 from conversational_interfaces.msg import Audio, Transcription
 
 # --- Pipecat Imports ---
-from pipecat.frames.frames import InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, CancelFrame, InterruptionFrame, TTSStartedFrame, TTSStoppedFrame
+from pipecat.frames.frames import InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, CancelFrame, InterruptionFrame, TTSStartedFrame, TTSStoppedFrame, UserStartedSpeakingFrame
 from pipecat.transports.base_input import BaseInputTransport
 from pipecat.transports.base_output import BaseOutputTransport
 from pipecat.transports.base_transport import BaseTransport, TransportParams
@@ -64,6 +64,11 @@ class ROSAudioOutputTransport(BaseOutputTransport):
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
+        
+        if self.ros_node.conversation_paused:
+            from pipecat.frames.frames import LLMTextFrame, TTSTextFrame
+            if isinstance(frame, (OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, LLMTextFrame, TTSTextFrame)):
+                return
         
         if isinstance(frame, OutputAudioRawFrame):
             # Resample from 24kHz to 16kHz for ROS playback
@@ -135,7 +140,7 @@ class LanguageTrackerProcessor(FrameProcessor):
         if isinstance(frame, TranscriptionFrame): 
             text = frame.text.strip()
             if text:
-                active_lang = self.language_tracker.observe(text, preferred_language='')
+                active_lang = self.language_tracker.observe(text, preferred_language='en')
                 self.ros_node.get_logger().info(f'User said: "{text}" (Detected lang: {active_lang})')
                 
                 # Publish the transcription to ROS2 so other nodes (like backend_manager) can hear it
@@ -209,8 +214,12 @@ class PipecatAudioNode(Node):
         self.runner = PipelineRunner()
         self.task = None
         self.is_speaking = False
-        self.current_lang = None
+        self.current_lang = 'en'
         self.current_doa = None
+        self.conversation_paused = False
+        self.session_active = False
+
+        self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self.pause_callback, 10)
 
     def doa_callback(self, msg: Int32):
         # Only update if the session is active
@@ -240,6 +249,9 @@ class PipecatAudioNode(Node):
         if self.current_doa is not None:
             new_instructions += f"\n[SYSTEM CONTEXT]: The user is speaking from an angle of {self.current_doa} degrees."
             
+        if self.conversation_paused:
+            new_instructions += "\n[CRITICAL INSTRUCTION]: THE CONVERSATION IS CURRENTLY PAUSED (HOLD ON MODE). YOU MUST BE COMPLETELY SILENT. DO NOT GENERATE ANY VERBAL RESPONSES WHATSOEVER. WHATEVER THE USER SAYS, YOU MUST CALL THE function 'ignore_background_chatter' IMMEDIATELY."
+            
         return new_instructions
 
     async def _update_llm_instructions_async(self, active_lang=None, doa=None):
@@ -255,10 +267,10 @@ class PipecatAudioNode(Node):
             await self.llm_service._send_session_update()
             self.get_logger().info(f'Updated LLM instructions (Lang: {self.current_lang}, DOA: {self.current_doa})')
 
-    async def ignore_background_chatter_callback(self, function_name, tool_call_id, args, llm, context, result_callback):
+    async def ignore_background_chatter_callback(self, params):
         self.get_logger().info("🤫 LLM triggered ignore_background_chatter! Silencing response.")
-        if result_callback:
-            await result_callback({"status": "ignored_successfully"})
+        if params.result_callback:
+            await params.result_callback({"status": "ignored_successfully"})
 
     def audio_callback(self, msg: Audio):
         if self.is_speaking:
@@ -275,14 +287,32 @@ class PipecatAudioNode(Node):
 
     def barge_in_callback(self, msg: Bool):
         if msg.data and hasattr(self, 'task') and self.task:
-            self.get_logger().info('Barge-in signal received! Forcing Pipecat CancelFrame...')
+            self.get_logger().info('Barge-in signal received! Forcing Pipecat UserStartedSpeakingFrame...')
             asyncio.run_coroutine_threadsafe(
-                self.task.queue_frame(CancelFrame()),
+                self.task.queue_frame(UserStartedSpeakingFrame()),
                 self.loop
             )
 
+    def pause_callback(self, msg: Bool):
+        if self.conversation_paused != msg.data:
+            self.conversation_paused = msg.data
+            # Force update instructions immediately
+            if self.task is not None and self.llm_service:
+                import asyncio
+                asyncio.run_coroutine_threadsafe(
+                    self._update_llm_instructions_async(),
+                    self.loop
+                )
+        self._evaluate_pipeline_state()
+
     def session_callback(self, msg: Bool):
-        if msg.data and self.task is None:
+        self.session_active = msg.data
+        self._evaluate_pipeline_state()
+
+    def _evaluate_pipeline_state(self):
+        should_run = self.session_active
+        
+        if should_run and self.task is None:
             self.get_logger().info("Starting Pipecat pipeline...")
             
             turn_detection = TurnDetection(
@@ -344,7 +374,7 @@ class PipecatAudioNode(Node):
             ])
             self.task = PipelineTask(pipeline)
             asyncio.run_coroutine_threadsafe(self.runner.run(self.task), self.loop)
-        elif not msg.data and self.task is not None:
+        elif not should_run and self.task is not None:
             self.get_logger().info("Stopping Pipecat pipeline...")
             asyncio.run_coroutine_threadsafe(
                 self.task.queue_frame(EndFrame()),
