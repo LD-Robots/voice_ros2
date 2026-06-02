@@ -88,6 +88,15 @@ def generate_launch_description():
             parameters=[config_file_path],
             remappings=[('/audio_raw', '/audio_clean')]
         ),
+
+        Node(
+            package='conversational_server',
+            executable='gemini_live_node',
+            name='gemini_live_node',
+            condition=IfCondition(PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'gemini_live'"])),
+            parameters=[config_file_path],
+            remappings=[('/audio_raw', '/audio_clean')]
+        ),
         
         # ========== CLIENT NODES ==========
         

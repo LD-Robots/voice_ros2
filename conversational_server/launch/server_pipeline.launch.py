@@ -164,4 +164,18 @@ def generate_launch_description():
                 'short_transcript_dedupe_window_s': 4.0,
             }]
         ),
+
+        Node(
+            package='conversational_server',
+            executable='gemini_live_node',
+            name='gemini_live_node',
+            output='screen',
+            condition=IfCondition(PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'gemini_live'"])),
+            parameters=[{
+                'model': 'gemini-2.5-flash-native-audio-latest',
+                'voice': 'Kore',
+                'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
+                'vad_threshold': LaunchConfiguration('realtime_vad_threshold'),
+            }]
+        ),
     ])

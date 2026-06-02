@@ -30,12 +30,18 @@ class BackendManagerNode(Node):
 
         self.active_backend = self.preferred_backend
         self.realtime_status = 'unknown'
-        self.last_realtime_status_time = time.monotonic() if self.preferred_backend == 'openai_realtime' else 0.0
+        self.last_realtime_status_time = time.monotonic() if self.preferred_backend in ('openai_realtime', 'gemini_live') else 0.0
 
         self.realtime_status_sub = self.create_subscription(
             String,
             '/openai_realtime_status',
-            self._realtime_status_callback,
+            self._openai_status_callback,
+            10,
+        )
+        self.gemini_status_sub = self.create_subscription(
+            String,
+            '/gemini_live_status',
+            self._gemini_status_callback,
             10,
         )
         self.backend_pub = self.create_publisher(String, '/conversation_backend', 10)
@@ -47,26 +53,33 @@ class BackendManagerNode(Node):
             f'Backend Manager started: preferred={self.preferred_backend}, fallback={self.fallback_backend}'
         )
 
-    def _realtime_status_callback(self, msg: String):
-        self.realtime_status = msg.data.strip() or 'unknown'
-        self.last_realtime_status_time = time.monotonic()
-
+    def _openai_status_callback(self, msg: String):
         if self.preferred_backend != 'openai_realtime':
             return
+        self._handle_realtime_status(msg.data.strip() or 'unknown', 'openai_realtime')
 
-        if self.realtime_status == 'online':
-            if self.auto_return_to_preferred and self.active_backend != 'openai_realtime':
-                self._publish_backend('openai_realtime', 'realtime_recovered')
+    def _gemini_status_callback(self, msg: String):
+        if self.preferred_backend != 'gemini_live':
+            return
+        self._handle_realtime_status(msg.data.strip() or 'unknown', 'gemini_live')
+
+    def _handle_realtime_status(self, status: str, backend_name: str):
+        self.realtime_status = status
+        self.last_realtime_status_time = time.monotonic()
+
+        if status == 'online':
+            if self.auto_return_to_preferred and self.active_backend != backend_name:
+                self._publish_backend(backend_name, 'realtime_recovered')
             return
 
-        if self.realtime_status in ('offline', 'error', 'auth_error'):
+        if status in ('offline', 'error', 'auth_error'):
             if self.active_backend != self.fallback_backend:
-                self._publish_backend(self.fallback_backend, f'realtime_{self.realtime_status}')
+                self._publish_backend(self.fallback_backend, f'realtime_{status}')
 
     def _timer_callback(self):
         self._publish_backend_topic()
 
-        if self.preferred_backend != 'openai_realtime':
+        if self.preferred_backend not in ('openai_realtime', 'gemini_live'):
             if self.active_backend != self.preferred_backend:
                 self._publish_backend(self.preferred_backend, 'preferred_backend')
             else:
@@ -74,7 +87,7 @@ class BackendManagerNode(Node):
             return
 
         now = time.monotonic()
-        if self.active_backend == 'openai_realtime':
+        if self.active_backend in ('openai_realtime', 'gemini_live'):
             stale = (
                 self.last_realtime_status_time > 0.0
                 and (now - self.last_realtime_status_time) > self.offline_timeout_s
