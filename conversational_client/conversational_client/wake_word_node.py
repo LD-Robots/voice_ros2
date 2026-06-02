@@ -150,7 +150,7 @@ class WakeWordNode(Node):
         self.wake_word_pub = self.create_publisher(WakeWord, '/wake_word', 10)
         self.session_pub = self.create_publisher(Bool, '/session_active', 10)
         self.end_session_pub = self.create_publisher(Bool, '/end_session', 10)
-        self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.tts_stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
         
         # Publisher for TTS commands (cache playback)
         self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)

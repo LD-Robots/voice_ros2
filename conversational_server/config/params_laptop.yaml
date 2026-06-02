@@ -12,12 +12,10 @@ backend_manager_node:
 
 asr_node:
   ros__parameters:
-    model_size: "small"
-    device: "cpu"
-    compute_type: "int8"
-    language: "ro_en"
-    beam_size: 5
-    initial_prompt: "A bilingual conversation in Romanian and English."
+    model: "nova-3"
+    language: "en"
+    echo_enabled: true
+    echo_threshold: 85
 
 llm_node:
   ros__parameters:
@@ -101,7 +99,7 @@ barge_in_node:
     stop_hits_required: 2
     voice_enabled: true
     min_voice_ms: 600
-    min_rms_dbfs: -7.0
+    min_rms_dbfs: -40.0
     highpass_hz: 300.0
     zcr_min: 0.05
     zcr_max: 0.35

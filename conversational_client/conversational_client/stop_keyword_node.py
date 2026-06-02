@@ -134,7 +134,7 @@ class StopKeywordNode(Node):
         )
         
         # Publishers
-        self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.tts_stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
         self.end_session_pub = self.create_publisher(Bool, '/end_session', 10)
         
         self.get_logger().info(

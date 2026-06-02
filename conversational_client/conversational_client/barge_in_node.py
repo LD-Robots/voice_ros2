@@ -218,7 +218,7 @@ class BargeInNode(Node):
         # PUBLISHERS
         # ─────────────────────────────────────────────────────────
         self.barge_pub = self.create_publisher(Bool, '/barge_in', 10)
-        self.stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
         
         self.get_logger().info(
             f'🎯 Intelligent Barge-in started: min_voice={self.min_voice_ms}ms, '
@@ -289,8 +289,9 @@ class BargeInNode(Node):
         # ══════════════════════════════════════════════════════════
         # HUMAN VOICE (standard barge-in)
         # ══════════════════════════════════════════════════════════
+        frame_ms = int(len(msg.data) / self.sr * 1000)
         if self.voice_enabled and self._is_human_voice(pcm, now_ms):
-            self.voiced_ms += 20
+            self.voiced_ms += frame_ms
             self.last_voice_ms = now_ms
         else:
             self.voiced_ms = max(0, self.voiced_ms - self.voice_drop_ms)
@@ -324,12 +325,16 @@ class BargeInNode(Node):
         if rms < rms_threshold:
             self._update_leak_baseline(rms, now_ms, fast=False)
             return False
-        
+            
         # 2) High-pass filtering (low-frequency noise removal)
         pcm_filtered = _highpass_filter(pcm_i16, self.highpass_hz, self.sr)
         
         # 3) Zero-crossing rate (impulsive noise filter)
         zcr = _zero_crossing_rate(pcm_filtered)
+        
+        # DEBUG: Print RMS and ZCR if it passes the threshold
+        self.get_logger().info(f'🎤 DEBUG BARGE-IN: RMS={rms:.2f} (thresh={rms_threshold:.2f}), ZCR={zcr:.3f} (needs [{self.zcr_min},{self.zcr_max}])')
+        
         if not (self.zcr_min <= zcr <= self.zcr_max):
             self._update_leak_baseline(rms, now_ms, fast=False)
             return False

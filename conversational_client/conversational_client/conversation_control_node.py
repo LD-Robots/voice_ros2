@@ -58,7 +58,7 @@ class ConversationControlNode(Node):
             10,
         )
 
-        self.stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
         self.control_pub = self.create_publisher(String, '/conversation_control', 10)
         self.pause_pub = self.create_publisher(Bool, '/conversation_pause', 10)
 

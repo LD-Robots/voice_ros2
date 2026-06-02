@@ -155,6 +155,7 @@ class AudioSegmentNode(Node):
             self.ignore_segment = True  # Ignore any pending segment as it might be echo
         elif not msg.data and was_speaking:
             self.get_logger().info('🔊 Robot stopped - listening again')
+            self.ignore_segment = False # RESET the flag so the user can speak again!
 
     def barge_in_callback(self, msg: Bool):
         """Callback pentru evenimentul de barge-in."""
@@ -229,7 +230,7 @@ class AudioSegmentNode(Node):
             return
             
         if getattr(self, 'ignore_segment', False):
-            self.get_logger().warn('🚫 Segment BLOCKED - ignore flag set (barge-in)')
+            self.get_logger().warn('🚫 Segment BLOCKED - ignore flag set')
             self.audio_buffer = []
             self.ignore_segment = False
             return

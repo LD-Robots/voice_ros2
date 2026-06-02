@@ -12,12 +12,10 @@ backend_manager_node:
 
 asr_node:
   ros__parameters:
-    model_size: "medium"
-    device: "cpu"
-    compute_type: "int8"
-    language: "ro_en"
-    beam_size: 8
-    initial_prompt: "A bilingual conversation in Romanian and English."
+    model: "nova-3"
+    language: "en"
+    echo_enabled: true
+    echo_threshold: 85
 
 llm_node:
   ros__parameters:

@@ -63,7 +63,8 @@ def generate_launch_description():
             package='conversational_server',
             executable='asr_node',
             name='asr_node',
-            parameters=[config_file_path, {'model_size': LaunchConfiguration('asr_model_size')}]
+            parameters=[config_file_path, {'model_size': LaunchConfiguration('asr_model_size')}],
+            remappings=[('/audio_raw', '/audio_clean')]
         ),
         
         Node(
@@ -128,14 +129,16 @@ def generate_launch_description():
             parameters=[config_file_path, {
                 'stop_model_path': stop_model_path,
                 'stop_enabled': LaunchConfiguration('stop_enabled')
-            }]
+            }],
+            remappings=[('/audio_raw', '/audio_clean')]
         ),
 
         Node(
             package='conversational_client',
             executable='speaker_id_node',
             name='speaker_id_node',
-            parameters=[config_file_path, {'enrollment_dir': enrollment_dir}]
+            parameters=[config_file_path, {'enrollment_dir': enrollment_dir}],
+            remappings=[('/audio_raw', '/audio_clean')]
         ),
 
         Node(

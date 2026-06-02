@@ -14,7 +14,7 @@ Publishes to:
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 import json
 import os
 import re
@@ -197,6 +197,15 @@ class LLMNode(Node):
             10
         )
         
+        self._stop_requested = False
+        
+        self.stop_sub = self.create_subscription(
+            Bool,
+            '/stop_playback',
+            self.stop_callback,
+            10
+        )
+        
         # Subscriber for transcription
         self.transcription_sub = self.create_subscription(
             Transcription,
@@ -227,6 +236,11 @@ class LLMNode(Node):
         )
         
         self.get_logger().debug(f'LLM Node started with STREAMING + BACKCHANNEL! websearch={self.websearch_enabled}')
+    
+    def stop_callback(self, msg: Bool):
+        if msg.data:
+            self._stop_requested = True
+            self.get_logger().info('🛑 LLM generation stopped (barge-in)')
     
     def _get_system_prompt_with_date(self) -> str:
         """Return system prompt with the current date injected."""
@@ -512,6 +526,9 @@ class LLMNode(Node):
             def token_generator():
                 nonlocal first_token_time, backchannel_sent
                 for chunk in stream:
+                    if self._stop_requested:
+                        break
+                    
                     if chunk.choices[0].delta.content:
                         token = chunk.choices[0].delta.content
                         
@@ -550,6 +567,9 @@ class LLMNode(Node):
             
             # Send final marker
             self._publish_chunk("", user_lang, True, session_id)
+            
+            # Reset stop flag
+            self._stop_requested = False
             
             # Update history
             if full_response:
