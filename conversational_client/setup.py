@@ -35,6 +35,7 @@ setup(
             'audio_playback_node = conversational_client.audio_playback_node:main',
             'audio_segment_node = conversational_client.audio_segment_node:main',
             'wake_word_node = conversational_client.wake_word_node:main',
+            'respeaker_doa_node = conversational_client.respeaker_doa_node:main',
             'vad_node = conversational_client.vad_node:main',
             'barge_in_node = conversational_client.barge_in_node:main',
             'stop_keyword_node = conversational_client.stop_keyword_node:main',

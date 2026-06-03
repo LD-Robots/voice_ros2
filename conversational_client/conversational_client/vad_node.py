@@ -92,7 +92,7 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('aggressiveness', 2)  # 0-3, 3 = more aggressive
-        self.declare_parameter('energy_threshold', 500)  # RMS energy threshold
+        self.declare_parameter('energy_threshold', 200)  # RMS energy threshold (lowered for AEC)
         self.declare_parameter('wake_word_enabled', True)
         self.declare_parameter('session_timeout', 8.0)
         self.declare_parameter('min_speech_frames', 5)
@@ -379,15 +379,26 @@ class VADNode(Node):
                 # WebRTC VAD requires exactly 10, 20, or 30ms of audio
                 # At 16kHz: 160, 320, or 480 samples
                 audio_bytes = audio.tobytes()
-                
-                # Adjust length if needed
                 frame_len = len(audio)
-                if frame_len == 320:  # 20ms la 16kHz
-                    return self.vad.is_speech(audio_bytes, self.sample_rate)
+                
+                # WebRTC VAD requires exactly 10, 20, or 30ms of audio (160, 320, 480 samples)
+                chunk_size = 480  # 30ms chunks
+                
+                if frame_len % chunk_size == 0 or frame_len % 320 == 0:
+                    # Choose correct chunk size
+                    c_size = chunk_size if frame_len % chunk_size == 0 else 320
+                    
+                    # Check each sub-chunk. If any contains speech, the frame has speech.
+                    for i in range(0, frame_len, c_size):
+                        sub_audio = audio[i:i+c_size].tobytes()
+                        if self.vad.is_speech(sub_audio, self.sample_rate):
+                            return True
+                    return False
                 else:
                     # Energy fallback for non-standard lengths
                     return self._energy_based_detection(audio)
-            except Exception:
+            except Exception as e:
+                self.get_logger().error(f"WebRTC Error: {e}")
                 return self._energy_based_detection(audio)
         else:
             # ─────────────────────────────────────────────────────

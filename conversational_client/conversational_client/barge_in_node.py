@@ -290,7 +290,7 @@ class BargeInNode(Node):
         # HUMAN VOICE (standard barge-in)
         # ══════════════════════════════════════════════════════════
         frame_ms = int(len(msg.data) / self.sr * 1000)
-        if self.voice_enabled and self._is_human_voice(pcm, now_ms):
+        if self.voice_enabled and has_voice_signature:
             self.voiced_ms += frame_ms
             self.last_voice_ms = now_ms
         else:

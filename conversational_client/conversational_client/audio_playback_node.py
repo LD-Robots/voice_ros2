@@ -71,6 +71,10 @@ class AudioPlaybackNode(Node):
         self.playback_thread.start()
 
     def audio_callback(self, msg):
+        # Drop lingering audio packets that arrive just after a stop command
+        if getattr(self, '_stop_time', 0) > 0 and time.time() - self._stop_time < 0.5:
+            return
+
         # Audio is now always 16kHz from the server
         audio_data = np.array(msg.data, dtype=np.int16)
         if audio_data.size == 0: return
@@ -83,6 +87,7 @@ class AudioPlaybackNode(Node):
     def stop_callback(self, msg):
         if msg.data:
             self._stop_requested = True
+            self._stop_time = time.time()
             self.audio_buffer.clear()
             self.is_playing = False
             self.speaking_pub.publish(Bool(data=False))

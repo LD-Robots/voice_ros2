@@ -149,8 +149,8 @@ class AudioSegmentNode(Node):
         self.is_robot_speaking = msg.data
         
         if msg.data and not was_speaking:
-            self.get_logger().info('🔇 Robot speaking - muting input')
-            # Clear buffer immediately when robot starts speaking to remove any leak
+            self.get_logger().info('🔇 Robot speaking - muting main input (pre_buffer still rolling)')
+            # Clear main buffer immediately when robot starts speaking to remove any leak
             self.audio_buffer = []
             self.ignore_segment = True  # Ignore any pending segment as it might be echo
         elif not msg.data and was_speaking:
@@ -160,9 +160,7 @@ class AudioSegmentNode(Node):
     def barge_in_callback(self, msg: Bool):
         """Callback pentru evenimentul de barge-in."""
         if msg.data:
-            self.get_logger().warn('🚫 Barge-in detected - clearing audio buffer to prevent transcription')
-            self.audio_buffer = []
-            self.pre_buffer = []
+            self.get_logger().warn('🚫 Barge-in detected - keeping pre_buffer to save the initial interruption audio!')
             self.is_speaking = False  # Reset VAD state locally
             self.ignore_segment = True # Flag to ignore sending segment if VAD triggers later
 
@@ -195,7 +193,15 @@ class AudioSegmentNode(Node):
         self.sample_rate = msg.sample_rate
         self.channels = msg.channels
         
-        # Do not buffer audio when the robot is speaking (prevents feedback loop)
+        # ALWAYS keep a rolling pre-buffer of the last N samples, even during TTS!
+        # This allows us to recover the beginning of a barge-in sentence (e.g. "Ok let's")
+        # because the AEC ensures this audio is clean.
+        if not self.is_speaking or self.is_robot_speaking:
+            self.pre_buffer.extend(msg.data)
+            if len(self.pre_buffer) > self.pre_buffer_samples:
+                self.pre_buffer = self.pre_buffer[-self.pre_buffer_samples:]
+        
+        # Do not buffer main audio when the robot is speaking (prevents feedback loop)
         if self.session_active and not self.is_robot_speaking:
             if self.is_speaking:
                 # User speaking - add to main buffer
@@ -205,15 +211,8 @@ class AudioSegmentNode(Node):
                 if len(self.audio_buffer) >= self.max_samples:
                     self.get_logger().warn('⚠️ Max segment length reached, sending...')
                     self._send_segment()
-            else:
-                # User not speaking - keep pre-buffer for context
-                self.pre_buffer.extend(msg.data)
-                # Keep only the last pre_buffer_samples
-                if len(self.pre_buffer) > self.pre_buffer_samples:
-                    self.pre_buffer = self.pre_buffer[-self.pre_buffer_samples:]
         elif self.session_active and self.is_robot_speaking:
             if self.is_speaking and len(self.audio_buffer) > 0:
-                 self.get_logger().debug(f'DROPPING audio because RobotSpeaking=True (Buffer len: {len(self.audio_buffer)})')
                  self.audio_buffer = [] # Enforce empty buffer
     
     # ═══════════════════════════════════════════════════════════════════

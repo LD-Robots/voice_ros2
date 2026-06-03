@@ -405,7 +405,16 @@ class TTSNode(Node):
                     self.get_logger().debug(f'🔧 Pre-synthesizing: "{text[:30]}..."')
                     
                     try:
+                        # Capture epoch BEFORE synthesis (which is a blocking call)
+                        started_epoch = self.stop_epoch
+                        
                         audio_data, sample_rate = self._synthesize(text, voice)
+                        
+                        # If the epoch changed while we were synthesizing, it means a STOP was requested.
+                        # Drop the audio immediately to prevent "ghost" sentences playing later.
+                        if started_epoch != self.stop_epoch or self.stop_requested:
+                            self.get_logger().debug(f'🚫 Dropping synthesized audio (epoch changed {started_epoch} -> {self.stop_epoch})')
+                            continue
                         
                         # Resample to target rate (16kHz)
                         if sample_rate != self.target_sample_rate:
@@ -417,10 +426,8 @@ class TTSNode(Node):
                             audio_data = audio_data[:, 0]
                         
                         # Put in audio_queue WITH EPOCH (will block if full = double buffer full)
-                        current_epoch = self.stop_epoch
-                        if not self.stop_requested:
-                            self.audio_queue.put((audio_data, sample_rate, is_final, session_id, current_epoch), timeout=5.0)
-                            self.get_logger().debug(f'📦 Buffered audio ({len(audio_data)} samples, epoch={current_epoch})')
+                        self.audio_queue.put((audio_data, sample_rate, is_final, session_id, started_epoch), timeout=5.0)
+                        self.get_logger().debug(f'📦 Buffered audio ({len(audio_data)} samples, epoch={started_epoch})')
                     
                     except Exception as e:
                         self.get_logger().error(f'Synthesis error: {e}')

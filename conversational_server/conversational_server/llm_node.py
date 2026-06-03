@@ -459,6 +459,7 @@ class LLMNode(Node):
 
     def _process_streaming(self, user_text: str, user_lang: str):
         """Process the LLM response with streaming."""
+        self._stop_requested = False  # CRITICAL: Always reset at the start of a new generation!
         session_id = str(uuid.uuid4())[:8]
         
         try:
