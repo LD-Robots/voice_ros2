@@ -49,6 +49,16 @@ def generate_launch_description():
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
         DeclareLaunchArgument('audio_device_index', default_value='-1', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
         DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
+        DeclareLaunchArgument('realtime_model', default_value='gpt-realtime-2', description='OpenAI Realtime model name'),
+        DeclareLaunchArgument('realtime_voice', default_value='cedar', description='OpenAI Realtime voice'),
+        DeclareLaunchArgument('realtime_reasoning_effort', default_value='medium', description='OpenAI Realtime reasoning effort'),
+        DeclareLaunchArgument('realtime_capture_during_playback', default_value='true', description='Stream microphone audio to OpenAI while robot playback is active'),
+        DeclareLaunchArgument('realtime_web_search_enabled', default_value='true', description='Allow OpenAI Realtime to call web_search'),
+        DeclareLaunchArgument('realtime_web_search_model', default_value='gpt-4.1-mini', description='Responses API model used for web_search'),
+        DeclareLaunchArgument('realtime_web_search_context_size', default_value='medium', description='OpenAI web-search context size'),
+        DeclareLaunchArgument('realtime_vad_silence_duration_ms', default_value='550', description='Silence duration before OpenAI Realtime finalizes a user turn'),
+        DeclareLaunchArgument('realtime_response_create_delay_ms', default_value='100', description='Delay before creating a Realtime response'),
+        DeclareLaunchArgument('realtime_continued_turn_response_delay_ms', default_value='450', description='Delay before answering after the user resumes speaking'),
         
         # ========== SERVER NODES ==========
         
@@ -82,10 +92,35 @@ def generate_launch_description():
 
         Node(
             package='conversational_server',
-            executable='pipecat_audio_node',
+            executable='openai_realtime_node',
             name='openai_realtime_node',
             condition=IfCondition(realtime_backend),
-            parameters=[config_file_path]
+            parameters=[config_file_path, {
+                'model': LaunchConfiguration('realtime_model'),
+                'voice': LaunchConfiguration('realtime_voice'),
+                'reasoning_enabled': PythonExpression([
+                    "'", LaunchConfiguration('realtime_model'), "'.startswith('gpt-realtime-2')"
+                ]),
+                'reasoning_effort': LaunchConfiguration('realtime_reasoning_effort'),
+                'wait_for_user_tool_enabled': True,
+                'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
+                'web_search_enabled': LaunchConfiguration('realtime_web_search_enabled'),
+                'web_search_model': LaunchConfiguration('realtime_web_search_model'),
+                'web_search_context_size': LaunchConfiguration('realtime_web_search_context_size'),
+                'vad_silence_duration_ms': LaunchConfiguration('realtime_vad_silence_duration_ms'),
+                'response_create_delay_ms': LaunchConfiguration('realtime_response_create_delay_ms'),
+                'continued_turn_response_delay_ms': LaunchConfiguration(
+                    'realtime_continued_turn_response_delay_ms'
+                ),
+            }]
+        ),
+
+        Node(
+            package='conversational_server',
+            executable='diarization_assist_node',
+            name='diarization_assist_node',
+            condition=IfCondition(realtime_backend),
+            parameters=[config_file_path, {'enrollment_dir': enrollment_dir}]
         ),
         
         # ========== CLIENT NODES ==========

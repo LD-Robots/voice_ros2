@@ -1,6 +1,7 @@
 import re
 import time
 import unicodedata
+from dataclasses import dataclass
 
 from .conversation_config import load_conversation_rules
 
@@ -24,6 +25,14 @@ SHORT_PAUSE_WORDS = tuple(_RULES['short_pause_words'])
 MULTIWORD_CONTINUE_PHRASES = tuple(phrase for phrase in CONTINUE_PHRASES if ' ' in phrase)
 MULTIWORD_REPEAT_PHRASES = tuple(phrase for phrase in REPEAT_PHRASES if ' ' in phrase)
 MULTIWORD_STOP_PHRASES = tuple(phrase for phrase in STOP_PHRASES if ' ' in phrase)
+
+
+@dataclass(frozen=True)
+class AddressingIntent:
+    score: float
+    side_score: float
+    label: str
+    features: tuple[str, ...]
 
 
 class StickySpeakerTracker:
@@ -143,6 +152,151 @@ def strip_robot_prefixes(normalized_text: str) -> str:
                 changed = True
                 break
     return text
+
+
+def infer_addressing_intent(normalized_text: str, raw_text: str = '') -> AddressingIntent:
+    """Estimate whether an utterance is meant for the robot without requiring its name."""
+    text = (normalized_text or '').strip()
+    raw = raw_text or ''
+    if not text:
+        return AddressingIntent(0.0, 0.0, 'empty', ())
+
+    words = text.split()
+    word_count = len(words)
+    features: list[str] = []
+    score = 0.0
+    side_score = 0.0
+
+    direct_address = has_direct_robot_address(text)
+    if direct_address:
+        score = max(score, 1.0)
+        features.append('direct_robot_address')
+
+    request_openers = (
+        'can you', 'could you', 'would you', 'will you', 'do you know',
+        'tell me', 'explain', 'help me', 'give me', 'show me', 'find',
+        'search', 'translate', 'summarize', 'remind me', 'calculate',
+        'poti', 'poti sa', 'ai putea', 'spune mi', 'zi mi', 'explica',
+        'ajuta ma', 'cauta', 'gaseste', 'tradu', 'rezuma', 'aminteste mi',
+        'calculeaza', 'imi poti', 'ma poti',
+    )
+    wh_openers = (
+        'what', 'who', 'where', 'when', 'why', 'how',
+        'what is', 'who is', 'where is', 'when is', 'why is',
+        'how do', 'how can', 'how should', 'how much', 'how many',
+        'ce', 'cine', 'unde', 'cand', 'de ce', 'cum',
+        'ce este', 'cine este', 'unde este', 'cat', 'cati', 'cate',
+    )
+    advice_openers = (
+        'should i', 'can i', 'i need', 'i want', 'i want to know',
+        'i would like', 'i have a question', 'am nevoie', 'vreau sa',
+        'vreau sa stiu', 'as vrea', 'as vrea sa stiu', 'am o intrebare',
+        'ar trebui sa', 'pot sa', 'te rog',
+    )
+    followup_openers = (
+        'what did you mean', 'what do you mean', 'why did you', 'you said',
+        'repeat that', 'say that again', 'continue', 'go on',
+        'ce ai vrut sa spui', 'de ce ai', 'ai spus', 'repeta', 'continua',
+    )
+
+    if text.startswith(tuple(f'{phrase} ' for phrase in request_openers)) or text in request_openers:
+        score = max(score, 0.82)
+        features.append('assistant_request_opening')
+    if text.startswith(tuple(f'{phrase} ' for phrase in wh_openers)) or text in wh_openers:
+        score = max(score, 0.70)
+        features.append('open_question')
+    if text.startswith(tuple(f'{phrase} ' for phrase in advice_openers)) or text in advice_openers:
+        score = max(score, 0.66)
+        features.append('personal_help_or_advice')
+    if text.startswith(tuple(f'{phrase} ' for phrase in followup_openers)) or text in followup_openers:
+        score = max(score, 0.74)
+        features.append('conversation_followup')
+
+    has_question_mark = '?' in raw
+    if has_question_mark:
+        score = min(1.0, score + 0.12)
+        features.append('question_mark')
+
+    second_person = contains_any_word(text, ('you', 'your', 'yours', 'tu', 'tine', 'te', 'iti', 'ți', 'tau'))
+    if second_person and word_count >= 3:
+        score = max(score, 0.48)
+        features.append('second_person_reference')
+
+    embedded_request_phrases = (
+        'can you', 'could you', 'would you', 'help me', 'i need',
+        'i want you', 'need you to', 'please', 'poti sa', 'ma poti',
+        'imi poti', 'ai putea', 'ajuta ma', 'te rog', 'am nevoie',
+    )
+    if contains_phrase(text, embedded_request_phrases):
+        score = max(score, 0.76)
+        features.append('embedded_assistant_request')
+
+    problem_statement_phrases = (
+        'does not work', 'doesnt work', 'failed', 'is broken',
+        'i cannot hear', 'i do not hear', 'i dont hear', 'i can not hear',
+        'latency is high',
+        'it is slow', 'could be faster', 'nu merge', 'nu aud',
+        'nu reuseste', 'raspunde greu', 'latenta este mare',
+        'merge greu', 'e prea lent',
+    )
+    if contains_phrase(text, problem_statement_phrases) and word_count >= 3:
+        score = max(score, 0.74)
+        features.append('implicit_help_problem_statement')
+
+    if contains_phrase(text, SIDE_CONVERSATION_PHRASES):
+        side_score = max(side_score, 0.76)
+        features.append('explicit_side_conversation')
+
+    side_openers = (
+        'hai sa', 'lets', 'let us', 'we should', 'we need to', 'noi trebuie',
+        'vorbeam cu', 'vorbesc cu', 'talk to him', 'talk to her',
+        'spune i lui', 'spune i ei', 'tell him', 'tell her',
+        'ask him', 'ask her', 'intreaba l', 'intreab o',
+    )
+    if text.startswith(tuple(f'{phrase} ' for phrase in side_openers)) or text in side_openers:
+        side_score = max(side_score, 0.68)
+        features.append('side_conversation_opening')
+
+    third_person_markers = (
+        'he said', 'she said', 'they said', 'his', 'her', 'them',
+        'el a zis', 'ea a zis', 'ei au zis', 'lui', 'ei', 'lor',
+    )
+    if contains_phrase(text, third_person_markers):
+        side_score = max(side_score, 0.48)
+        features.append('third_person_context')
+
+    social_fillers = (
+        'yeah', 'yes', 'no', 'ok', 'okay', 'sure', 'mhm',
+        'da', 'nu', 'bine', 'okey',
+    )
+    if word_count <= 2 and contains_phrase(text, social_fillers):
+        side_score = max(side_score, 0.62)
+        score = min(score, 0.30)
+        features.append('short_acknowledgement')
+
+    if side_score >= 0.65 and score < 0.82:
+        score = max(0.0, score - 0.22)
+
+    if word_count <= 2 and not direct_address and score < 0.70:
+        score = min(score, 0.34)
+
+    if score >= 0.82:
+        label = 'direct_or_request'
+    elif score >= 0.66:
+        label = 'likely_for_robot'
+    elif side_score >= 0.65:
+        label = 'likely_side_conversation'
+    elif score >= 0.45:
+        label = 'ambiguous'
+    else:
+        label = 'not_addressed'
+
+    return AddressingIntent(
+        score=round(max(0.0, min(1.0, score)), 3),
+        side_score=round(max(0.0, min(1.0, side_score)), 3),
+        label=label,
+        features=tuple(features),
+    )
 
 
 def has_direct_robot_address(normalized_text: str) -> bool:
@@ -314,6 +468,12 @@ def decide_attention(
     robot_directive: bool,
     control_action: str | None,
     normalized_text: str,
+    semantic_addressing_score: float = 0.0,
+    semantic_side_score: float = 0.0,
+    multi_speaker_context: bool = False,
+    loud_environment_mode: bool = False,
+    indirect_address_score_threshold: float = 0.62,
+    loud_indirect_address_score_threshold: float = 0.74,
     now: float | None = None,
 ) -> tuple[bool, str, str, float]:
     now_value = time.monotonic() if now is None else float(now)
@@ -326,6 +486,19 @@ def decide_attention(
 
     if not session_active:
         return False, 'session_inactive', focus, focus_time
+
+    semantic_threshold = (
+        float(loud_indirect_address_score_threshold)
+        if (multi_speaker_context or loud_environment_mode)
+        else float(indirect_address_score_threshold)
+    )
+    clear_indirect_address = float(semantic_addressing_score) >= semantic_threshold
+    likely_side_semantic = (
+        float(semantic_side_score) >= 0.65
+        and not direct_address
+        and not robot_directive
+        and not clear_indirect_address
+    )
 
     if conversation_paused:
         if control_action in ('continue', 'repeat', 'hold_on', 'stop') and can_accept_control_action(
@@ -349,11 +522,31 @@ def decide_attention(
         return False, 'paused_side_conversation', focus, focus_time
 
     if focus == 'Unknown':
+        if control_action is not None and can_accept_control_action(
+            control_action,
+            current_speaker=current_speaker,
+            focused_speaker=focus,
+            session_active=session_active,
+            conversation_paused=conversation_paused,
+            direct_address=direct_address,
+            normalized_text=normalized_text,
+        ):
+            return True, f'no_focus_control_{control_action}', focus, focus_time
+        if direct_address or robot_directive:
+            return True, 'no_focus_directed', focus, focus_time
+        if clear_indirect_address:
+            return True, 'semantic_indirect_address', focus, focus_time
+        if likely_side_semantic:
+            return False, 'semantic_side_conversation', focus, focus_time
+        if multi_speaker_context or loud_environment_mode:
+            return False, 'loud_no_clear_address', focus, focus_time
         return True, 'no_focus_yet', focus, focus_time
 
     if current_speaker == 'Unknown':
         if direct_address or robot_directive:
             return True, 'unknown_but_directed', focus, focus_time
+        if clear_indirect_address:
+            return True, 'unknown_semantic_address', focus, focus_time
         if control_action is not None and can_accept_control_action(
             control_action,
             current_speaker=current_speaker,
@@ -364,13 +557,26 @@ def decide_attention(
             normalized_text=normalized_text,
         ):
             return True, f'unknown_control_{control_action}', focus, focus_time
+        if likely_side_semantic:
+            return False, 'semantic_side_conversation', focus, focus_time
         return False, 'unknown_side_conversation', focus, focus_time
 
     if current_speaker == focus:
+        if likely_side_semantic:
+            return False, 'focused_speaker_side_conversation', focus, focus_time
         return True, 'focused_speaker', focus, focus_time
 
     if direct_address or robot_directive:
         return True, 'speaker_switch_with_direct_address', focus, focus_time
+
+    if clear_indirect_address:
+        return True, 'speaker_switch_semantic_address', current_speaker, now_value
+
+    if likely_side_semantic:
+        return False, 'semantic_side_conversation', focus, focus_time
+
+    if multi_speaker_context or loud_environment_mode:
+        return False, 'speaker_switch_without_clear_address', focus, focus_time
 
     if allow_known_speaker_switch_without_address:
         return True, 'speaker_switch_without_address', current_speaker, now_value

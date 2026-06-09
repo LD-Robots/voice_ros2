@@ -8,6 +8,8 @@ from scipy import signal
 import wave
 import collections
 import time
+import sys
+import types
 
 # Import WebRTC Audio Processing
 try:
@@ -20,10 +22,20 @@ except ImportError:
 try:
     import torch
     import torchaudio
+    try:
+        from torchaudio.backend.common import AudioMetaData  # noqa: F401
+    except ImportError:
+        backend_module = types.ModuleType('torchaudio.backend')
+        common_module = types.ModuleType('torchaudio.backend.common')
+        common_module.AudioMetaData = type('AudioMetaData', (), {})
+        sys.modules.setdefault('torchaudio.backend', backend_module)
+        sys.modules.setdefault('torchaudio.backend.common', common_module)
     from df.enhance import init_df, enhance
     DF_AVAILABLE = True
-except ImportError:
+    DF_IMPORT_ERROR = None
+except ImportError as exc:
     DF_AVAILABLE = False
+    DF_IMPORT_ERROR = exc
 
 class EchoCancellerNode(Node):
     def __init__(self):
@@ -63,18 +75,29 @@ class EchoCancellerNode(Node):
         if self.deep_filter_enabled:
             self.get_logger().info("🧠 [DF] Loading DeepFilterNet model... (this may take a few seconds)")
             start_t = time.time()
-            self.df_model, self.df_state, _ = init_df()
-            self.df_sr = self.df_state.sr() # Usually 48000
-            self.df_hop = self.df_state.hop_size() # Usually 480
-            
-            # Resamplers for DF (16kHz <-> 48kHz)
-            self.resampler_16to48 = torchaudio.transforms.Resample(16000, self.df_sr)
-            self.resampler_48to16 = torchaudio.transforms.Resample(self.df_sr, 16000)
-            
-            self.get_logger().info(f"✅ [DF] Model Loaded in {time.time()-start_t:.2f}s. Running at {self.df_sr}Hz.")
+            try:
+                self.df_model, self.df_state, _ = init_df()
+                self.df_sr = self.df_state.sr() # Usually 48000
+                self.df_hop = self.df_state.hop_size() # Usually 480
+                
+                # Resamplers for DF (16kHz <-> 48kHz)
+                self.resampler_16to48 = torchaudio.transforms.Resample(16000, self.df_sr)
+                self.resampler_48to16 = torchaudio.transforms.Resample(self.df_sr, 16000)
+                
+                self.get_logger().info(f"✅ [DF] Model Loaded in {time.time()-start_t:.2f}s. Running at {self.df_sr}Hz.")
+            except Exception as exc:
+                self.get_logger().error(
+                    f"❌ [DF] Failed to load DeepFilterNet model ({exc}). "
+                    "Continuing with WebRTC AEC only."
+                )
+                self.deep_filter_enabled = False
+                self.df_model = None
         else:
             if not DF_AVAILABLE:
-                self.get_logger().warn("⚠️ [DF] DeepFilterNet NOT INSTALLED. Skipping AI enhancement.")
+                self.get_logger().warn(
+                    f"⚠️ [DF] DeepFilterNet unavailable ({DF_IMPORT_ERROR}). "
+                    "Skipping AI enhancement."
+                )
             self.df_model = None
 
         self.buffer_size = self.max_delay_samples + self.sample_rate * 5

@@ -18,6 +18,7 @@ from .conversation_utils import (
     decide_attention,
     StickySpeakerTracker,
     has_direct_robot_address,
+    infer_addressing_intent,
     is_reengagement_phrase,
     normalize_text,
     detect_control_action,
@@ -35,6 +36,12 @@ class AttentionManagerNode(Node):
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
         self.declare_parameter('allow_known_speaker_switch_without_address', True)
+        self.declare_parameter('semantic_addressing_enabled', True)
+        self.declare_parameter('loud_environment_mode', True)
+        self.declare_parameter('multi_speaker_window_s', 8.0)
+        self.declare_parameter('multi_speaker_switch_threshold', 2)
+        self.declare_parameter('indirect_address_score_threshold', 0.62)
+        self.declare_parameter('loud_indirect_address_score_threshold', 0.74)
 
         self.focus_timeout_s = float(self.get_parameter('focus_timeout_s').value)
         self.focus_recognition_window_s = float(
@@ -43,6 +50,20 @@ class AttentionManagerNode(Node):
         self.unknown_speaker_grace_s = float(self.get_parameter('unknown_speaker_grace_s').value)
         self.allow_known_speaker_switch_without_address = bool(
             self.get_parameter('allow_known_speaker_switch_without_address').value
+        )
+        self.semantic_addressing_enabled = bool(
+            self.get_parameter('semantic_addressing_enabled').value
+        )
+        self.loud_environment_mode = bool(self.get_parameter('loud_environment_mode').value)
+        self.multi_speaker_window_s = float(self.get_parameter('multi_speaker_window_s').value)
+        self.multi_speaker_switch_threshold = int(
+            self.get_parameter('multi_speaker_switch_threshold').value
+        )
+        self.indirect_address_score_threshold = float(
+            self.get_parameter('indirect_address_score_threshold').value
+        )
+        self.loud_indirect_address_score_threshold = float(
+            self.get_parameter('loud_indirect_address_score_threshold').value
         )
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter('sticky_speaker_timeout_s').value),
@@ -57,6 +78,9 @@ class AttentionManagerNode(Node):
         self.last_focus_time = 0.0
         self.pending_focus_speaker = 'Unknown'
         self.pending_focus_at = 0.0
+        self.recent_speaker_events: list[tuple[float, str]] = []
+        self.last_addressing_intent = None
+        self.last_multi_speaker_context = False
 
         self.session_sub = self.create_subscription(Bool, '/session_active', self._session_callback, 10)
         self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self._pause_callback, 10)
@@ -83,7 +107,8 @@ class AttentionManagerNode(Node):
             self.last_focus_time = 0.0
             self.pending_focus_speaker = 'Unknown'
             self.pending_focus_at = 0.0
-            self._publish_status(False, False, 'session_inactive')
+            self.recent_speaker_events.clear()
+            self._publish_status(False, False, 'session_inactive', None, False)
 
     def _pause_callback(self, msg: Bool):
         self.conversation_paused = bool(msg.data)
@@ -92,6 +117,7 @@ class AttentionManagerNode(Node):
         raw_speaker = msg.data.strip() or 'Unknown'
         self.last_raw_speaker = raw_speaker
         self.current_speaker = self.speaker_tracker.update(raw_speaker)
+        self._record_speaker_event(self.current_speaker)
         if raw_speaker != 'Unknown' and self.current_speaker == raw_speaker:
             self.pending_focus_speaker = raw_speaker
             self.pending_focus_at = time.monotonic()
@@ -110,18 +136,29 @@ class AttentionManagerNode(Node):
         reengagement = is_reengagement_phrase(normalized)
         robot_directive = looks_like_robot_command(text, require_direct_robot_address=True)
         control_action = detect_control_action(normalized)
+        addressing_intent = (
+            infer_addressing_intent(normalized, text)
+            if self.semantic_addressing_enabled
+            else None
+        )
+        multi_speaker_context = self._has_multi_speaker_context()
         allow, reason = self._should_allow(
             direct_address,
             reengagement,
             robot_directive,
             control_action,
             normalized,
+            addressing_intent,
+            multi_speaker_context,
         )
-        self._publish_status(allow, direct_address, reason)
+        self.last_addressing_intent = addressing_intent
+        self.last_multi_speaker_context = multi_speaker_context
+        self._publish_status(allow, direct_address, reason, addressing_intent, multi_speaker_context)
 
         if not allow:
             self.get_logger().info(
-                f'Ignoring likely side conversation from speaker={self.current_speaker}: "{text}"'
+                f'Ignoring likely side conversation from speaker={self.current_speaker}: '
+                f'"{text}" ({reason})'
             )
             return
 
@@ -146,6 +183,8 @@ class AttentionManagerNode(Node):
         robot_directive: bool,
         control_action: str | None,
         normalized_text: str,
+        addressing_intent,
+        multi_speaker_context: bool,
     ):
         allow, reason, effective_focus, effective_focus_time = decide_attention(
             session_active=self.session_active,
@@ -162,12 +201,29 @@ class AttentionManagerNode(Node):
             robot_directive=robot_directive,
             control_action=control_action,
             normalized_text=normalized_text,
+            semantic_addressing_score=(
+                addressing_intent.score if addressing_intent is not None else 0.0
+            ),
+            semantic_side_score=(
+                addressing_intent.side_score if addressing_intent is not None else 0.0
+            ),
+            multi_speaker_context=multi_speaker_context,
+            loud_environment_mode=self.loud_environment_mode,
+            indirect_address_score_threshold=self.indirect_address_score_threshold,
+            loud_indirect_address_score_threshold=self.loud_indirect_address_score_threshold,
         )
         self.focused_speaker = effective_focus
         self.last_focus_time = effective_focus_time
         return allow, reason
 
-    def _publish_status(self, allow: bool, direct_address: bool, reason: str):
+    def _publish_status(
+        self,
+        allow: bool,
+        direct_address: bool,
+        reason: str,
+        addressing_intent,
+        multi_speaker_context: bool,
+    ):
         payload = {
             'allow_response': bool(allow),
             'direct_address': bool(direct_address),
@@ -176,10 +232,52 @@ class AttentionManagerNode(Node):
             'current_speaker': self.current_speaker,
             'session_active': self.session_active,
             'conversation_paused': self.conversation_paused,
+            'loud_environment_mode': self.loud_environment_mode,
+            'multi_speaker_context': bool(multi_speaker_context),
         }
+        if addressing_intent is not None:
+            payload['semantic_addressing'] = {
+                'score': addressing_intent.score,
+                'side_score': addressing_intent.side_score,
+                'label': addressing_intent.label,
+                'features': list(addressing_intent.features),
+            }
         msg = String()
         msg.data = json.dumps(payload, separators=(',', ':'))
         self.status_pub.publish(msg)
+
+    def _record_speaker_event(self, speaker: str):
+        now = time.monotonic()
+        speaker = (speaker or '').strip() or 'Unknown'
+        if speaker == 'Unknown':
+            return
+        self.recent_speaker_events.append((now, speaker))
+        cutoff = now - max(0.5, self.multi_speaker_window_s)
+        self.recent_speaker_events = [
+            (event_time, event_speaker)
+            for event_time, event_speaker in self.recent_speaker_events
+            if event_time >= cutoff
+        ]
+
+    def _has_multi_speaker_context(self) -> bool:
+        now = time.monotonic()
+        cutoff = now - max(0.5, self.multi_speaker_window_s)
+        events = [
+            (event_time, speaker)
+            for event_time, speaker in self.recent_speaker_events
+            if event_time >= cutoff and speaker != 'Unknown'
+        ]
+        self.recent_speaker_events = events
+        if len({speaker for _, speaker in events}) >= 2:
+            return True
+
+        switches = 0
+        previous = None
+        for _, speaker in events:
+            if previous is not None and speaker != previous:
+                switches += 1
+            previous = speaker
+        return switches >= self.multi_speaker_switch_threshold
 
     def _consume_focus_candidate(self) -> str:
         now = time.monotonic()

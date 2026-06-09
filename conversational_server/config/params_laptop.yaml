@@ -37,11 +37,14 @@ tts_node:
 
 openai_realtime_node:
   ros__parameters:
-    model: "gpt-realtime-mini"
+    model: "gpt-realtime-2"
     voice: "cedar"
     api_base_url: "wss://api.openai.com/v1/realtime"
     input_sample_rate: 16000
     api_sample_rate: 24000
+    reasoning_enabled: true
+    reasoning_effort: "medium"
+    wait_for_user_tool_enabled: true
     vad_threshold: 0.80
     vad_prefix_padding_ms: 400
     vad_silence_duration_ms: 600
@@ -62,6 +65,35 @@ openai_realtime_node:
     speaker_switch_hits_required: 2
     language_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
+    semantic_addressing_enabled: true
+    loud_environment_mode: true
+    multi_speaker_window_s: 8.0
+    multi_speaker_switch_threshold: 2
+    indirect_address_score_threshold: 0.62
+    loud_indirect_address_score_threshold: 0.74
+    diarization_candidate_timeout_s: 12.0
+    diarization_candidate_confidence_threshold: 0.55
+    diarization_response_wait_ms: 1200
+
+diarization_assist_node:
+  ros__parameters:
+    enabled: true
+    model: "gpt-4o-transcribe-diarize"
+    min_segment_seconds: 1.0
+    max_segment_seconds: 24.0
+    only_when_unknown: true
+    local_speaker_grace_s: 0.35
+    cooldown_s: 1.5
+    timeout_s: 12.0
+    max_reference_speakers: 4
+    min_reference_seconds: 1.5
+    reference_seconds: 8.0
+    min_dominant_share: 0.55
+
+pipecat_audio_node:
+  ros__parameters:
+    pipecat_log_level: "ERROR"
+    verbose_pipeline_logs: false
 
 # ========== CLIENT NODES ==========
 
@@ -117,6 +149,12 @@ attention_manager_node:
   ros__parameters:
     speaker_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
+    semantic_addressing_enabled: true
+    loud_environment_mode: true
+    multi_speaker_window_s: 8.0
+    multi_speaker_switch_threshold: 2
+    indirect_address_score_threshold: 0.62
+    loud_indirect_address_score_threshold: 0.74
 
 person_memory_store_node:
   ros__parameters:

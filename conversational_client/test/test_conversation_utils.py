@@ -5,6 +5,7 @@ from conversational_client.conversation_utils import (
     can_accept_control_action,
     can_accept_reengagement,
     detect_control_action,
+    infer_addressing_intent,
     is_reengagement_phrase,
     normalize_text,
 )
@@ -79,6 +80,47 @@ def test_control_detection_avoids_false_pause_and_stop_triggers():
     assert detect_control_action(normalize_text('We should stop climate change.')) is None
     assert detect_control_action(normalize_text('To continue this plan we need more data.')) is None
     assert is_reengagement_phrase(normalize_text('Hello robot')) is False
+
+
+def test_infer_addressing_intent_detects_indirect_robot_questions():
+    intent = infer_addressing_intent(
+        normalize_text('Can you explain how speaker diarization works?'),
+        'Can you explain how speaker diarization works?',
+    )
+    assert intent.score >= 0.74
+    assert intent.label in ('direct_or_request', 'likely_for_robot')
+    assert 'assistant_request_opening' in intent.features
+
+    ro_intent = infer_addressing_intent(
+        normalize_text('Cum pot sa fac robotul sa raspunda mai bine?'),
+        'Cum pot sa fac robotul sa raspunda mai bine?',
+    )
+    assert ro_intent.score >= 0.70
+    assert 'open_question' in ro_intent.features
+
+
+def test_infer_addressing_intent_marks_side_conversation():
+    intent = infer_addressing_intent(
+        normalize_text('Hai sa vorbim cu Delia despre planul de maine.'),
+        'Hai sa vorbim cu Delia despre planul de maine.',
+    )
+    assert intent.side_score >= 0.65
+    assert intent.label == 'likely_side_conversation'
+
+
+def test_infer_addressing_intent_detects_implicit_help_requests():
+    intent = infer_addressing_intent(
+        normalize_text('I do not hear anything in my speakers.'),
+        'I do not hear anything in my speakers.',
+    )
+    assert intent.score >= 0.74
+    assert 'implicit_help_problem_statement' in intent.features
+
+    ro_intent = infer_addressing_intent(
+        normalize_text('Nu reuseste sa raspunda bine cand sunt mai multi oameni.'),
+        'Nu reuseste sa raspunda bine cand sunt mai multi oameni.',
+    )
+    assert ro_intent.score >= 0.74
 
 
 def test_reengagement_requires_clear_return_signal():
@@ -169,6 +211,77 @@ def test_attention_decision_rejects_unknown_side_conversation_when_focus_exists(
     )
     assert allow is False
     assert reason == 'unknown_side_conversation'
+    assert focused_speaker == 'Vasile'
+
+
+def test_attention_decision_in_loud_room_requires_semantic_address_without_focus():
+    allow, reason, _, _ = decide_attention(
+        session_active=True,
+        conversation_paused=False,
+        current_speaker='Unknown',
+        focused_speaker='Unknown',
+        last_focus_time=10.0,
+        focus_timeout_s=45.0,
+        allow_known_speaker_switch_without_address=True,
+        direct_address=False,
+        reengagement=False,
+        robot_directive=False,
+        control_action=None,
+        normalized_text=normalize_text('We should discuss the exam later.'),
+        semantic_addressing_score=0.0,
+        semantic_side_score=0.7,
+        multi_speaker_context=True,
+        loud_environment_mode=True,
+        now=12.0,
+    )
+    assert allow is False
+    assert reason == 'semantic_side_conversation'
+
+    allow, reason, _, _ = decide_attention(
+        session_active=True,
+        conversation_paused=False,
+        current_speaker='Unknown',
+        focused_speaker='Unknown',
+        last_focus_time=10.0,
+        focus_timeout_s=45.0,
+        allow_known_speaker_switch_without_address=True,
+        direct_address=False,
+        reengagement=False,
+        robot_directive=False,
+        control_action=None,
+        normalized_text=normalize_text('Can you explain diarization?'),
+        semantic_addressing_score=0.82,
+        semantic_side_score=0.0,
+        multi_speaker_context=True,
+        loud_environment_mode=True,
+        now=12.0,
+    )
+    assert allow is True
+    assert reason == 'semantic_indirect_address'
+
+
+def test_attention_decision_rejects_speaker_switch_without_clear_address_in_loud_room():
+    allow, reason, focused_speaker, _ = decide_attention(
+        session_active=True,
+        conversation_paused=False,
+        current_speaker='Delia',
+        focused_speaker='Vasile',
+        last_focus_time=10.0,
+        focus_timeout_s=45.0,
+        allow_known_speaker_switch_without_address=True,
+        direct_address=False,
+        reengagement=False,
+        robot_directive=False,
+        control_action=None,
+        normalized_text=normalize_text('We should discuss the exam later.'),
+        semantic_addressing_score=0.0,
+        semantic_side_score=0.7,
+        multi_speaker_context=True,
+        loud_environment_mode=True,
+        now=12.0,
+    )
+    assert allow is False
+    assert reason == 'semantic_side_conversation'
     assert focused_speaker == 'Vasile'
 
 

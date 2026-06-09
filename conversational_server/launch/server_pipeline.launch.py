@@ -39,8 +39,13 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_model',
-            default_value='gpt-realtime-mini',
+            default_value='gpt-realtime-2',
             description='OpenAI Realtime model name'
+        ),
+        DeclareLaunchArgument(
+            'realtime_reasoning_effort',
+            default_value='medium',
+            description='OpenAI Realtime reasoning effort (minimal/low/medium/high/xhigh)'
         ),
         DeclareLaunchArgument(
             'realtime_voice',
@@ -150,6 +155,11 @@ def generate_launch_description():
             parameters=[{
                 'model': LaunchConfiguration('realtime_model'),
                 'voice': LaunchConfiguration('realtime_voice'),
+                'reasoning_enabled': PythonExpression([
+                    "'", LaunchConfiguration('realtime_model'), "'.startswith('gpt-realtime-2')"
+                ]),
+                'reasoning_effort': LaunchConfiguration('realtime_reasoning_effort'),
+                'wait_for_user_tool_enabled': True,
                 'capture_during_playback': LaunchConfiguration('realtime_capture_during_playback'),
                 'web_search_enabled': LaunchConfiguration('realtime_web_search_enabled'),
                 'web_search_model': LaunchConfiguration('realtime_web_search_model'),

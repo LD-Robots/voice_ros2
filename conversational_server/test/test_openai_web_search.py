@@ -1,8 +1,10 @@
 import json
 
 from conversational_server.openai_web_search import (
+    WAIT_FOR_USER_FUNCTION_NAME,
     WEB_SEARCH_FUNCTION_NAME,
     build_realtime_web_search_tool,
+    build_realtime_wait_for_user_tool,
     build_web_search_tool_output,
     extract_response_sources,
     extract_response_text,
@@ -15,6 +17,15 @@ def test_build_realtime_web_search_tool_has_query_schema():
     assert tool['type'] == 'function'
     assert tool['name'] == WEB_SEARCH_FUNCTION_NAME
     assert tool['parameters']['required'] == ['query']
+
+
+def test_build_realtime_wait_for_user_tool_has_empty_schema():
+    tool = build_realtime_wait_for_user_tool()
+
+    assert tool['type'] == 'function'
+    assert tool['name'] == WAIT_FOR_USER_FUNCTION_NAME
+    assert tool['parameters']['required'] == []
+    assert tool['parameters']['additionalProperties'] is False
 
 
 def test_extract_response_text_prefers_output_text():

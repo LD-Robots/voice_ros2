@@ -10,7 +10,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - **ASR Node** - Automatic Speech Recognition (Faster-Whisper)
 - **LLM Node** - Language Model processing (Groq API with streaming)
 - **TTS Node** - Text-to-Speech (Edge TTS + Audio Cache)
-- **OpenAI Realtime Node** - Speech-to-speech via `gpt-realtime-mini`
+- **OpenAI Realtime Node** - Speech-to-speech via `gpt-realtime-2`
 
 ### Client Nodes (Robot Hardware)
 - **Audio Capture Node** - Microphone input
@@ -107,7 +107,8 @@ ros2 launch conversational_server full_system.launch.py
 source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
+    realtime_model:=gpt-realtime-2 \
+    realtime_reasoning_effort:=medium \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
     realtime_web_search_model:=gpt-4.1-mini \
@@ -131,7 +132,8 @@ Pentru OpenAI Realtime:
 source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_server server_pipeline.launch.py \
     conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
+    realtime_model:=gpt-realtime-2 \
+    realtime_reasoning_effort:=medium \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
     realtime_web_search_model:=gpt-4.1-mini \
@@ -201,7 +203,8 @@ Available Groq models:
 ```bash
 ros2 launch conversational_server full_system.launch.py \
     conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
+    realtime_model:=gpt-realtime-2 \
+    realtime_reasoning_effort:=medium \
     realtime_voice:=cedar \
     realtime_web_search_enabled:=true \
     realtime_web_search_model:=gpt-4.1-mini \
@@ -214,7 +217,8 @@ ros2 launch conversational_server full_system.launch.py \
 
 Recommended first test:
 - `conversation_backend:=openai_realtime`
-- `realtime_model:=gpt-realtime-mini`
+- `realtime_model:=gpt-realtime-2`
+- `realtime_reasoning_effort:=medium`
 - `realtime_voice:=cedar`
 - `realtime_web_search_enabled:=true`
 - `realtime_web_search_model:=gpt-4.1-mini`

@@ -9,6 +9,7 @@ import requests
 
 
 WEB_SEARCH_FUNCTION_NAME = 'web_search'
+WAIT_FOR_USER_FUNCTION_NAME = 'wait_for_user'
 DEFAULT_WEB_SEARCH_MODEL = 'gpt-4.1-mini'
 DEFAULT_WEB_SEARCH_CONTEXT_SIZE = 'medium'
 DEFAULT_WEB_SEARCH_MAX_OUTPUT_TOKENS = 400
@@ -37,9 +38,31 @@ _REALTIME_WEB_SEARCH_TOOL = {
 }
 
 
+_REALTIME_WAIT_FOR_USER_TOOL = {
+    'type': 'function',
+    'name': WAIT_FOR_USER_FUNCTION_NAME,
+    'description': (
+        'Call this when the latest audio does not need a spoken response, such as silence, '
+        'background noise, TV audio, side conversation, or speech not addressed to the robot. '
+        'This ends the turn without assistant speech.'
+    ),
+    'parameters': {
+        'type': 'object',
+        'properties': {},
+        'required': [],
+        'additionalProperties': False,
+    },
+}
+
+
 def build_realtime_web_search_tool() -> dict[str, Any]:
     """Return a fresh function-tool schema for Realtime sessions."""
     return deepcopy(_REALTIME_WEB_SEARCH_TOOL)
+
+
+def build_realtime_wait_for_user_tool() -> dict[str, Any]:
+    """Return a fresh no-op tool schema for turns that should stay silent."""
+    return deepcopy(_REALTIME_WAIT_FOR_USER_TOOL)
 
 
 def call_openai_web_search(

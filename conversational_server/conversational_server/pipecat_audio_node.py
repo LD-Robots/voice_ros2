@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import logging
 import os
 import sys
 import threading
@@ -29,6 +30,28 @@ from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 
 from .prompt_config import load_prompt_defaults
 from .language_utils import ConversationLanguageTracker
+
+
+def _configure_pipecat_logging(level_name: str = 'ERROR'):
+    level = getattr(logging, str(level_name or 'ERROR').upper(), logging.ERROR)
+    for logger_name in (
+        'pipecat',
+        'pipecat.pipeline',
+        'pipecat.processors',
+        'pipecat.services',
+        'pipecat.services.openai',
+        'websocket',
+    ):
+        logging.getLogger(logger_name).setLevel(level)
+    try:
+        from loguru import logger as loguru_logger
+        loguru_logger.disable('pipecat')
+    except Exception:
+        pass
+
+
+_configure_pipecat_logging(os.environ.get('PIPECAT_LOG_LEVEL', 'ERROR'))
+
 
 class ROSAudioInputTransport(BaseInputTransport):
     def __init__(self, params: TransportParams):
@@ -141,7 +164,14 @@ class LanguageTrackerProcessor(FrameProcessor):
             text = frame.text.strip()
             if text:
                 active_lang = self.language_tracker.observe(text, preferred_language='en')
-                self.ros_node.get_logger().info(f'User said: "{text}" (Detected lang: {active_lang})')
+                if self.ros_node.verbose_pipeline_logs:
+                    self.ros_node.get_logger().info(
+                        f'User said: "{text}" (Detected lang: {active_lang})'
+                    )
+                else:
+                    self.ros_node.get_logger().debug(
+                        f'User said: "{text}" (Detected lang: {active_lang})'
+                    )
                 
                 # Publish the transcription to ROS2 so other nodes (like backend_manager) can hear it
                 transcription_msg = Transcription()
@@ -177,6 +207,8 @@ class PipecatAudioNode(Node):
         self.declare_parameter('vad_threshold', 0.90)
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 550)
+        self.declare_parameter('pipecat_log_level', 'ERROR')
+        self.declare_parameter('verbose_pipeline_logs', False)
         self.declare_parameter(
             'instructions',
             str(load_prompt_defaults().get('realtime_instructions', "Ești un asistent util."))
@@ -190,7 +222,10 @@ class PipecatAudioNode(Node):
         self.vad_threshold = float(self.get_parameter('vad_threshold').value)
         self.vad_prefix_padding_ms = int(self.get_parameter('vad_prefix_padding_ms').value)
         self.vad_silence_duration_ms = int(self.get_parameter('vad_silence_duration_ms').value)
+        self.pipecat_log_level = str(self.get_parameter('pipecat_log_level').value)
+        self.verbose_pipeline_logs = bool(self.get_parameter('verbose_pipeline_logs').value)
         self.instructions = str(self.get_parameter('instructions').value)
+        _configure_pipecat_logging(self.pipecat_log_level)
 
         # ROS2 Setup
         self.audio_sub = self.create_subscription(Audio, '/audio_clean', self.audio_callback, 10)
@@ -265,10 +300,20 @@ class PipecatAudioNode(Node):
         if self.llm_service:
             self.llm_service._settings.session_properties.instructions = new_instructions
             await self.llm_service._send_session_update()
-            self.get_logger().info(f'Updated LLM instructions (Lang: {self.current_lang}, DOA: {self.current_doa})')
+            if self.verbose_pipeline_logs:
+                self.get_logger().info(
+                    f'Updated LLM instructions (Lang: {self.current_lang}, DOA: {self.current_doa})'
+                )
+            else:
+                self.get_logger().debug(
+                    f'Updated LLM instructions (Lang: {self.current_lang}, DOA: {self.current_doa})'
+                )
 
     async def ignore_background_chatter_callback(self, params):
-        self.get_logger().info("🤫 LLM triggered ignore_background_chatter! Silencing response.")
+        if self.verbose_pipeline_logs:
+            self.get_logger().info("🤫 LLM triggered ignore_background_chatter! Silencing response.")
+        else:
+            self.get_logger().debug("LLM triggered ignore_background_chatter; silencing response.")
         if params.result_callback:
             await params.result_callback({"status": "ignored_successfully"})
 
@@ -287,7 +332,12 @@ class PipecatAudioNode(Node):
 
     def barge_in_callback(self, msg: Bool):
         if msg.data and hasattr(self, 'task') and self.task:
-            self.get_logger().info('Barge-in signal received! Forcing Pipecat UserStartedSpeakingFrame...')
+            if self.verbose_pipeline_logs:
+                self.get_logger().info(
+                    'Barge-in signal received! Forcing Pipecat UserStartedSpeakingFrame...'
+                )
+            else:
+                self.get_logger().debug('Barge-in signal received for Pipecat pipeline.')
             asyncio.run_coroutine_threadsafe(
                 self.task.queue_frame(UserStartedSpeakingFrame()),
                 self.loop

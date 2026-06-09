@@ -24,6 +24,7 @@ from conversational_client.conversation_utils import (
     decide_attention,
     detect_control_action,
     has_direct_robot_address,
+    infer_addressing_intent,
     is_reengagement_phrase,
 )
 from std_msgs.msg import Bool, String
@@ -34,8 +35,10 @@ from .openai_web_search import (
     DEFAULT_WEB_SEARCH_MODEL,
     DEFAULT_WEB_SEARCH_SOURCES_LIMIT,
     DEFAULT_WEB_SEARCH_TIMEOUT_S,
+    WAIT_FOR_USER_FUNCTION_NAME,
     WEB_SEARCH_FUNCTION_NAME,
     build_realtime_web_search_tool,
+    build_realtime_wait_for_user_tool,
     build_web_search_tool_output,
     call_openai_web_search,
 )
@@ -108,7 +111,7 @@ class OpenAIRealtimeNode(Node):
             if env_path and env_path.exists():
                 load_dotenv(dotenv_path=env_path)
 
-        self.declare_parameter('model', 'gpt-realtime-mini')
+        self.declare_parameter('model', 'gpt-realtime-2')
         self.declare_parameter('voice', 'cedar')
         self.declare_parameter('api_base_url', 'wss://api.openai.com/v1/realtime')
         self.declare_parameter('input_sample_rate', 16000)
@@ -144,9 +147,21 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('focus_timeout_s', 45.0)
         self.declare_parameter('focus_recognition_window_s', 3.0)
         self.declare_parameter('allow_known_speaker_switch_without_address', True)
+        self.declare_parameter('semantic_addressing_enabled', True)
+        self.declare_parameter('loud_environment_mode', True)
+        self.declare_parameter('multi_speaker_window_s', 8.0)
+        self.declare_parameter('multi_speaker_switch_threshold', 2)
+        self.declare_parameter('indirect_address_score_threshold', 0.62)
+        self.declare_parameter('loud_indirect_address_score_threshold', 0.74)
+        self.declare_parameter('diarization_candidate_timeout_s', 12.0)
+        self.declare_parameter('diarization_candidate_confidence_threshold', 0.55)
+        self.declare_parameter('diarization_response_wait_ms', 1200)
         self.declare_parameter('utterance_capture_prefix_ms', 400)
         self.declare_parameter('utterance_capture_min_ms', 800)
         self.declare_parameter('name_context_wait_ms', 950)
+        self.declare_parameter('wait_for_user_tool_enabled', True)
+        self.declare_parameter('reasoning_enabled', True)
+        self.declare_parameter('reasoning_effort', 'medium')
         self.declare_parameter('web_search_enabled', True)
         self.declare_parameter('web_search_model', DEFAULT_WEB_SEARCH_MODEL)
         self.declare_parameter('web_search_context_size', DEFAULT_WEB_SEARCH_CONTEXT_SIZE)
@@ -262,6 +277,11 @@ class OpenAIRealtimeNode(Node):
             0,
             int(self.get_parameter('name_context_wait_ms').value),
         )
+        self.wait_for_user_tool_enabled = bool(
+            self.get_parameter('wait_for_user_tool_enabled').value
+        )
+        self.reasoning_enabled = bool(self.get_parameter('reasoning_enabled').value)
+        self.reasoning_effort = str(self.get_parameter('reasoning_effort').value).strip()
         self.web_search_enabled = bool(self.get_parameter('web_search_enabled').value)
         self.web_search_model = str(self.get_parameter('web_search_model').value)
         self.web_search_context_size = str(
@@ -288,6 +308,35 @@ class OpenAIRealtimeNode(Node):
         self.allow_known_speaker_switch_without_address = bool(
             self.get_parameter('allow_known_speaker_switch_without_address').value
         )
+        self.semantic_addressing_enabled = bool(
+            self.get_parameter('semantic_addressing_enabled').value
+        )
+        self.loud_environment_mode = bool(self.get_parameter('loud_environment_mode').value)
+        self.multi_speaker_window_s = float(self.get_parameter('multi_speaker_window_s').value)
+        self.multi_speaker_switch_threshold = int(
+            self.get_parameter('multi_speaker_switch_threshold').value
+        )
+        self.indirect_address_score_threshold = float(
+            self.get_parameter('indirect_address_score_threshold').value
+        )
+        self.loud_indirect_address_score_threshold = float(
+            self.get_parameter('loud_indirect_address_score_threshold').value
+        )
+        self.diarization_candidate_timeout_s = max(
+            0.0,
+            float(self.get_parameter('diarization_candidate_timeout_s').value),
+        )
+        self.diarization_candidate_confidence_threshold = max(
+            0.0,
+            min(
+                1.0,
+                float(self.get_parameter('diarization_candidate_confidence_threshold').value),
+            ),
+        )
+        self.diarization_response_wait_ms = max(
+            0,
+            int(self.get_parameter('diarization_response_wait_ms').value),
+        )
         self.language_tracker = ConversationLanguageTracker(
             int(self.get_parameter('language_switch_hits_required').value)
         )
@@ -311,6 +360,13 @@ class OpenAIRealtimeNode(Node):
         self.last_focus_time = 0.0
         self.pending_focus_speaker = 'Unknown'
         self.pending_focus_at = 0.0
+        self.recent_speaker_events = []
+        self.diarization_candidate = {
+            'speaker': 'Unknown',
+            'confidence': 0.0,
+            'source': '',
+            'expires_at': 0.0,
+        }
         self.person_context = {
             'speaker': 'Unknown',
             'preferred_name': '',
@@ -374,6 +430,8 @@ class OpenAIRealtimeNode(Node):
         self._current_input_channels = 1
         self._handled_tool_call_ids = set()
         self._tool_call_lock = threading.Lock()
+        self._pending_diarization_policy = None
+        self._pending_diarization_policy_timer = None
         
         # State pentru Resampling fara drift (24kHz -> 16kHz)
         self._resample_accumulator = 0.0
@@ -386,6 +444,7 @@ class OpenAIRealtimeNode(Node):
         self.pause_state_pub = self.create_publisher(Bool, '/conversation_pause', 10)
         self.tts_stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
         self.status_pub = self.create_publisher(String, '/openai_realtime_status', 10)
+        self.response_policy_pub = self.create_publisher(String, '/realtime_response_policy', 10)
 
         self.audio_sub = self.create_subscription(Audio, '/audio_raw', self.audio_callback, 10)
         self.session_sub = self.create_subscription(
@@ -411,6 +470,12 @@ class OpenAIRealtimeNode(Node):
             String,
             '/speaker_id',
             self.speaker_callback,
+            10,
+        )
+        self.speaker_candidate_sub = self.create_subscription(
+            String,
+            '/speaker_id_candidate',
+            self.speaker_candidate_callback,
             10,
         )
         self.robot_command_sub = self.create_subscription(
@@ -454,6 +519,7 @@ class OpenAIRealtimeNode(Node):
         self._running = False
         self._connected.clear()
         self._cancel_pending_response_create()
+        self._cancel_pending_diarization_policy()
         try:
             if self._ws_app is not None:
                 self._ws_app.close()
@@ -476,6 +542,9 @@ class OpenAIRealtimeNode(Node):
             self.last_focus_time = 0.0
             self.pending_focus_speaker = 'Unknown'
             self.pending_focus_at = 0.0
+            self.recent_speaker_events.clear()
+            self._clear_diarization_candidate()
+            self._cancel_pending_diarization_policy()
             self._cancel_and_clear()
 
     def speaking_callback(self, msg: Bool):
@@ -551,9 +620,51 @@ class OpenAIRealtimeNode(Node):
         if raw_speaker != 'Unknown' and speaker == raw_speaker:
             self.pending_focus_speaker = raw_speaker
             self.pending_focus_at = time.monotonic()
+        self._record_speaker_event(speaker)
         if speaker != self.current_speaker:
             self.current_speaker = speaker
             self._refresh_session()
+
+    def speaker_candidate_callback(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except Exception as exc:
+            self.get_logger().warn(f'Invalid speaker candidate payload: {exc}')
+            return
+
+        speaker = str(payload.get('speaker', 'Unknown') or 'Unknown').strip() or 'Unknown'
+        confidence = float(payload.get('confidence', 0.0) or 0.0)
+        if speaker == 'Unknown' or confidence < self.diarization_candidate_confidence_threshold:
+            return
+
+        now = time.monotonic()
+        self.diarization_candidate = {
+            'speaker': speaker,
+            'confidence': confidence,
+            'source': str(payload.get('source', 'speaker_candidate') or 'speaker_candidate'),
+            'expires_at': now + self.diarization_candidate_timeout_s,
+        }
+
+        previous = self.current_speaker
+        self.current_speaker = speaker
+        self.last_raw_speaker = speaker
+        self.pending_focus_speaker = speaker
+        self.pending_focus_at = now
+        self.speaker_tracker.current_speaker = speaker
+        self.speaker_tracker.last_known_at = now
+        self.speaker_tracker.pending_speaker = 'Unknown'
+        self.speaker_tracker.pending_hits = 0
+        self._record_speaker_event(speaker)
+
+        if previous != speaker:
+            self.get_logger().info(
+                f'Diarization assist selected speaker={speaker} '
+                f'(confidence={confidence:.2f}, previous={previous})'
+            )
+            self._refresh_session()
+
+        if self._pending_diarization_policy is not None:
+            self._fire_pending_diarization_policy()
 
     def person_context_callback(self, msg: String):
         try:
@@ -738,92 +849,7 @@ class OpenAIRealtimeNode(Node):
                     self._delete_conversation_item(item_id, ignore_reason)
                     return
                 self.get_logger().info(f'OpenAI transcript: {transcript}')
-                focus_candidate = self._consume_focus_candidate()
-                normalized = self._normalize_text(transcript)
-                direct_address = has_direct_robot_address(normalized)
-                control_action = detect_control_action(normalized)
-                reengagement = is_reengagement_phrase(normalized)
-                if normalized:
-                    self._last_accepted_user_transcript_norm = normalized
-                    self._last_accepted_user_transcript_at = time.monotonic()
-                if control_action == 'hold_on' and can_accept_control_action(
-                    control_action,
-                    current_speaker=self.current_speaker,
-                    focused_speaker=self.focused_speaker,
-                    session_active=self.session_active,
-                    conversation_paused=self.conversation_paused,
-                    direct_address=direct_address,
-                    normalized_text=normalized,
-                ):
-                    self._delete_conversation_item(item_id, 'pause_command')
-                    self._apply_pause_state(True, publish=True)
-                    return
-                allow, reason, effective_focus, effective_focus_time = decide_attention(
-                    session_active=self.session_active,
-                    conversation_paused=self.conversation_paused,
-                    current_speaker=self.current_speaker,
-                    focused_speaker=self.focused_speaker,
-                    last_focus_time=self.last_focus_time,
-                    focus_timeout_s=self.focus_timeout_s,
-                    allow_known_speaker_switch_without_address=(
-                        self.allow_known_speaker_switch_without_address
-                    ),
-                    direct_address=direct_address,
-                    reengagement=reengagement,
-                    robot_directive=False,
-                    control_action=control_action,
-                    normalized_text=normalized,
-                )
-                self.focused_speaker = effective_focus
-                self.last_focus_time = effective_focus_time
-                if not allow:
-                    self._delete_conversation_item(item_id, reason)
-                    self.get_logger().info(
-                        f'Ignored realtime side conversation from speaker={self.current_speaker}: "{transcript}" ({reason})'
-                    )
-                    return
-                if self.conversation_paused:
-                    if control_action in ('continue', 'repeat') or reengagement:
-                        self._paused_transcript_pending = transcript
-                        self._paused_transcript_at = time.monotonic()
-                        self._apply_pause_state(False, publish=True)
-                        return
-                    self._delete_conversation_item(item_id, reason)
-                    return
-                self.focused_speaker, self.last_focus_time = advance_attention_focus(
-                    current_speaker=self.current_speaker,
-                    focused_speaker=self.focused_speaker,
-                    last_focus_time=self.last_focus_time,
-                    allow=True,
-                    recognized_speaker=focus_candidate,
-                )
-                if self._pending_resume_text:
-                    self._resume_requested = self._is_resume_request(transcript)
-                    if self._resume_requested:
-                        self.get_logger().info('Resume request detected for interrupted reply')
-                active_language = self.language_tracker.observe(
-                    transcript,
-                    preferred_language=self.person_context.get('preferred_language', ''),
-                )
-                self._assistant_name_question_active = self._is_assistant_name_question(normalized)
-                self._refresh_session()
-                out = Transcription()
-                out.text = transcript
-                out.language = active_language
-                out.confidence = 1.0
-                self.transcription_pub.publish(out)
-                if (
-                    self._is_name_identity_question(normalized)
-                    and not self._voice_correlated_preferred_name()
-                ):
-                    wait_delay_ms = max(self.response_create_delay_ms, self.name_context_wait_ms)
-                    self._schedule_response_create_with_delay(
-                        item_id,
-                        reason='await_voice_name_context',
-                        delay_ms=wait_delay_ms,
-                    )
-                else:
-                    self._schedule_response_create(item_id, reason='accepted_transcript')
+                self._handle_user_transcript_completed(item_id, transcript)
             return
 
         if event_type in ('response.audio.delta', 'response.output_audio.delta'):
@@ -1004,9 +1030,16 @@ class OpenAIRealtimeNode(Node):
                 }
             }
         }
+        tools = []
+        if self.wait_for_user_tool_enabled:
+            tools.append(build_realtime_wait_for_user_tool())
         if self.web_search_enabled:
-            session['tools'] = [build_realtime_web_search_tool()]
+            tools.append(build_realtime_web_search_tool())
+        if tools:
+            session['tools'] = tools
             session['tool_choice'] = 'auto'
+        if self._reasoning_config_enabled():
+            session['reasoning'] = {'effort': self.reasoning_effort}
         if self.input_transcription_enabled:
             session['audio']['input']['transcription'] = {
                 'model': self.input_transcription_model,
@@ -1016,6 +1049,11 @@ class OpenAIRealtimeNode(Node):
             'type': 'session.update',
             'session': session,
         })
+
+    def _reasoning_config_enabled(self) -> bool:
+        if not self.reasoning_enabled or not self.reasoning_effort:
+            return False
+        return self.model.startswith('gpt-realtime-2')
 
     def _should_filter_playback_input(self, now_ms: int) -> bool:
         if not self.playback_input_filter_enabled:
@@ -1134,6 +1172,14 @@ class OpenAIRealtimeNode(Node):
                 f'Current internal speaker label: {self.current_speaker}. '
                 'This is a technical identifier, not a spoken name.'
             )
+        diarization_candidate = self._active_diarization_candidate()
+        if diarization_candidate:
+            extras.append(
+                'Diarization assist recently matched the current voice to '
+                f'{diarization_candidate.get("speaker", "Unknown")} '
+                f'with confidence {float(diarization_candidate.get("confidence", 0.0) or 0.0):.2f}. '
+                'Use this only as speaker context; still follow the turn policy for whether to answer.'
+            )
         preferred_name = self._voice_correlated_preferred_name()
         if preferred_name and not assistant_name_question:
             extras.append(
@@ -1169,6 +1215,22 @@ class OpenAIRealtimeNode(Node):
                 'The user told you to wait because they are talking with someone else. '
                 'Stay silent until the local controller resumes the conversation.'
             )
+        if self.wait_for_user_tool_enabled or self.web_search_enabled:
+            extras.append(
+                'Turn policy: before each response, silently classify the latest user audio as one of: '
+                'no_response, direct_answer, needs_search, or clarification_needed. '
+                'Do not reveal this classification or your private reasoning.'
+            )
+        if self.wait_for_user_tool_enabled:
+            extras.append(
+                'If the latest audio is silence, background noise, TV audio, assistant echo, a side conversation, '
+                'or speech not addressed to Robot, call wait_for_user and do not speak afterward. '
+                'Do not say "I am here", "I did not catch that", "take your time", or similar filler for no-response audio. '
+                'Resume normal replies only when the user clearly addresses Robot, asks for help, or continues the active conversation.'
+            )
+            extras.append(
+                'If the user is clearly addressing Robot but the audio is unclear, ask one short clarification question instead of calling tools or guessing.'
+            )
         if self._pending_resume_text:
             extras.append(
                 'There is an interrupted assistant reply pending. '
@@ -1191,6 +1253,10 @@ class OpenAIRealtimeNode(Node):
             extras.append(
                 'When the user asks for current, live, recent, online, or otherwise time-sensitive information, '
                 'or explicitly asks you to search the internet, call the web_search tool before answering. '
+                'Use web_search for news, weather, prices, sports scores, laws or rules that may have changed, '
+                'company or product updates, public figures, schedules, recommendations involving spending time or money, '
+                'or any request to look something up. '
+                'Do not use web_search for stable facts, casual chat, local robot commands, or personal-memory questions. '
                 'Do not pretend to have browsed if you did not use the tool.'
             )
         return ' '.join([self.base_instructions, *extras]).strip()
@@ -1241,6 +1307,7 @@ class OpenAIRealtimeNode(Node):
 
     def _cancel_and_clear(self):
         self._cancel_pending_response_create()
+        self._cancel_pending_diarization_policy()
         if not self._connected.is_set():
             return
         if self._response_active or self._response_create_pending:
@@ -1489,6 +1556,34 @@ class OpenAIRealtimeNode(Node):
             return 'Unknown'
         return candidate
 
+    def _record_speaker_event(self, speaker: str):
+        now = time.monotonic()
+        speaker = (speaker or '').strip() or 'Unknown'
+        if speaker == 'Unknown':
+            return
+        self.recent_speaker_events.append((now, speaker))
+        cutoff = now - max(0.5, self.multi_speaker_window_s)
+        self.recent_speaker_events = [
+            (event_time, event_speaker)
+            for event_time, event_speaker in self.recent_speaker_events
+            if event_time >= cutoff
+        ]
+
+    def _has_multi_speaker_context(self) -> bool:
+        now = time.monotonic()
+        cutoff = now - max(0.5, self.multi_speaker_window_s)
+        self.recent_speaker_events = [
+            (event_time, event_speaker)
+            for event_time, event_speaker in self.recent_speaker_events
+            if event_time >= cutoff
+        ]
+        speakers = {
+            speaker
+            for _, speaker in self.recent_speaker_events
+            if speaker and speaker != 'Unknown'
+        }
+        return len(speakers) >= max(2, self.multi_speaker_switch_threshold)
+
     @staticmethod
     def _is_benign_realtime_error(message: str) -> bool:
         normalized = (message or '').strip().lower()
@@ -1617,6 +1712,270 @@ class OpenAIRealtimeNode(Node):
             delay_ms=self.response_create_delay_ms,
         )
 
+    def _handle_user_transcript_completed(self, item_id: str, transcript: str):
+        normalized = self._normalize_text(transcript)
+        direct_address = has_direct_robot_address(normalized)
+        control_action = detect_control_action(normalized)
+        reengagement = is_reengagement_phrase(normalized)
+        addressing_intent = (
+            infer_addressing_intent(normalized, transcript)
+            if self.semantic_addressing_enabled
+            else None
+        )
+        focus_candidate = self._consume_focus_candidate()
+
+        context = {
+            'item_id': item_id,
+            'transcript': transcript,
+            'normalized': normalized,
+            'direct_address': direct_address,
+            'control_action': control_action,
+            'reengagement': reengagement,
+            'addressing_intent': addressing_intent,
+            'focus_candidate': focus_candidate,
+        }
+
+        if control_action == 'hold_on' and can_accept_control_action(
+            control_action,
+            current_speaker=self.current_speaker,
+            focused_speaker=self.focused_speaker,
+            session_active=self.session_active,
+            conversation_paused=self.conversation_paused,
+            direct_address=direct_address,
+            normalized_text=normalized,
+        ):
+            self._publish_response_policy(
+                allow_response=False,
+                reason='pause_command',
+                context=context,
+                action='local_pause',
+            )
+            self._delete_conversation_item(item_id, 'pause_command')
+            self._apply_pause_state(True, publish=True)
+            return
+
+        self._decide_and_apply_transcript_policy(context, allow_diarization_wait=True)
+
+    def _decide_and_apply_transcript_policy(
+        self,
+        context: dict,
+        *,
+        allow_diarization_wait: bool,
+    ):
+        item_id = str(context.get('item_id', '') or '')
+        transcript = str(context.get('transcript', '') or '')
+        normalized = str(context.get('normalized', '') or '')
+        direct_address = bool(context.get('direct_address', False))
+        control_action = context.get('control_action')
+        reengagement = bool(context.get('reengagement', False))
+        addressing_intent = context.get('addressing_intent')
+        focus_candidate = str(context.get('focus_candidate', 'Unknown') or 'Unknown')
+        multi_speaker_context = self._has_multi_speaker_context()
+
+        allow, reason, effective_focus, effective_focus_time = decide_attention(
+            session_active=self.session_active,
+            conversation_paused=self.conversation_paused,
+            current_speaker=self.current_speaker,
+            focused_speaker=self.focused_speaker,
+            last_focus_time=self.last_focus_time,
+            focus_timeout_s=self.focus_timeout_s,
+            allow_known_speaker_switch_without_address=(
+                self.allow_known_speaker_switch_without_address
+            ),
+            direct_address=direct_address,
+            reengagement=reengagement,
+            robot_directive=False,
+            control_action=control_action,
+            normalized_text=normalized,
+            semantic_addressing_score=(
+                addressing_intent.score if addressing_intent is not None else 0.0
+            ),
+            semantic_side_score=(
+                addressing_intent.side_score if addressing_intent is not None else 0.0
+            ),
+            multi_speaker_context=multi_speaker_context,
+            loud_environment_mode=self.loud_environment_mode,
+            indirect_address_score_threshold=self.indirect_address_score_threshold,
+            loud_indirect_address_score_threshold=(
+                self.loud_indirect_address_score_threshold
+            ),
+        )
+        self.focused_speaker = effective_focus
+        self.last_focus_time = effective_focus_time
+
+        self._publish_response_policy(
+            allow_response=allow,
+            reason=reason,
+            context=context,
+            multi_speaker_context=multi_speaker_context,
+        )
+
+        if not allow:
+            if allow_diarization_wait and self._should_wait_for_diarization_policy(reason):
+                self._defer_for_diarization_policy(context, reason)
+                return
+            self._delete_conversation_item(item_id, reason)
+            self.get_logger().info(
+                f'Ignored realtime side conversation from speaker={self.current_speaker}: '
+                f'"{transcript}" ({reason})'
+            )
+            return
+
+        if self.conversation_paused:
+            if control_action in ('continue', 'repeat') or reengagement:
+                self._paused_transcript_pending = transcript
+                self._paused_transcript_at = time.monotonic()
+                self._apply_pause_state(False, publish=True)
+                return
+            self._delete_conversation_item(item_id, reason)
+            return
+
+        if normalized:
+            self._last_accepted_user_transcript_norm = normalized
+            self._last_accepted_user_transcript_at = time.monotonic()
+
+        self.focused_speaker, self.last_focus_time = advance_attention_focus(
+            current_speaker=self.current_speaker,
+            focused_speaker=self.focused_speaker,
+            last_focus_time=self.last_focus_time,
+            allow=True,
+            recognized_speaker=focus_candidate,
+        )
+        if self._pending_resume_text:
+            self._resume_requested = self._is_resume_request(transcript)
+            if self._resume_requested:
+                self.get_logger().info('Resume request detected for interrupted reply')
+        active_language = self.language_tracker.observe(
+            transcript,
+            preferred_language=self.person_context.get('preferred_language', ''),
+        )
+        self._assistant_name_question_active = self._is_assistant_name_question(normalized)
+        self._refresh_session()
+        out = Transcription()
+        out.text = transcript
+        out.language = active_language
+        out.confidence = 1.0
+        self.transcription_pub.publish(out)
+        if (
+            self._is_name_identity_question(normalized)
+            and not self._voice_correlated_preferred_name()
+        ):
+            wait_delay_ms = max(self.response_create_delay_ms, self.name_context_wait_ms)
+            self._schedule_response_create_with_delay(
+                item_id,
+                reason='await_voice_name_context',
+                delay_ms=wait_delay_ms,
+            )
+        else:
+            self._schedule_response_create(item_id, reason='accepted_transcript')
+
+    def _should_wait_for_diarization_policy(self, reason: str) -> bool:
+        if self.diarization_response_wait_ms <= 0:
+            return False
+        if self.current_speaker != 'Unknown':
+            return False
+        if self.focused_speaker == 'Unknown':
+            return False
+        if self._active_diarization_candidate().get('speaker', 'Unknown') != 'Unknown':
+            return False
+        return reason == 'unknown_side_conversation'
+
+    def _defer_for_diarization_policy(self, context: dict, reason: str):
+        self._cancel_pending_diarization_policy()
+        self._pending_diarization_policy = dict(context)
+        delay_s = self.diarization_response_wait_ms / 1000.0
+        self._pending_diarization_policy_timer = self.create_timer(
+            delay_s,
+            self._fire_pending_diarization_policy,
+        )
+        self.get_logger().debug(
+            f'Deferred response policy for diarization assist in {delay_s:.2f}s ({reason})'
+        )
+
+    def _fire_pending_diarization_policy(self):
+        context = self._pending_diarization_policy
+        self._cancel_pending_diarization_policy()
+        if context is None:
+            return
+        self._decide_and_apply_transcript_policy(context, allow_diarization_wait=False)
+
+    def _cancel_pending_diarization_policy(self):
+        timer = self._pending_diarization_policy_timer
+        self._pending_diarization_policy_timer = None
+        self._pending_diarization_policy = None
+        if timer is None:
+            return
+        try:
+            timer.cancel()
+        except Exception:
+            pass
+
+    def _clear_diarization_candidate(self):
+        self.diarization_candidate = {
+            'speaker': 'Unknown',
+            'confidence': 0.0,
+            'source': '',
+            'expires_at': 0.0,
+        }
+
+    def _active_diarization_candidate(self) -> dict:
+        candidate = self.diarization_candidate
+        if not candidate or candidate.get('speaker', 'Unknown') == 'Unknown':
+            return {}
+        if float(candidate.get('expires_at', 0.0) or 0.0) < time.monotonic():
+            self._clear_diarization_candidate()
+            return {}
+        return candidate
+
+    def _publish_response_policy(
+        self,
+        *,
+        allow_response: bool,
+        reason: str,
+        context: dict,
+        action: str = 'policy_decision',
+        multi_speaker_context: bool | None = None,
+    ):
+        addressing_intent = context.get('addressing_intent')
+        candidate = self._active_diarization_candidate()
+        payload = {
+            'action': action,
+            'allow_response': bool(allow_response),
+            'reason': reason,
+            'speaker': self.current_speaker,
+            'focused_speaker': self.focused_speaker,
+            'direct_address': bool(context.get('direct_address', False)),
+            'control_action': context.get('control_action'),
+            'reengagement': bool(context.get('reengagement', False)),
+            'semantic_addressing_score': (
+                addressing_intent.score if addressing_intent is not None else 0.0
+            ),
+            'semantic_side_score': (
+                addressing_intent.side_score if addressing_intent is not None else 0.0
+            ),
+            'semantic_label': (
+                addressing_intent.label if addressing_intent is not None else ''
+            ),
+            'semantic_features': (
+                list(addressing_intent.features) if addressing_intent is not None else []
+            ),
+            'multi_speaker_context': (
+                self._has_multi_speaker_context()
+                if multi_speaker_context is None
+                else bool(multi_speaker_context)
+            ),
+            'diarization_candidate': {
+                'speaker': candidate.get('speaker', 'Unknown'),
+                'confidence': round(float(candidate.get('confidence', 0.0) or 0.0), 3),
+                'source': candidate.get('source', ''),
+            },
+            'transcript_preview': str(context.get('transcript', '') or '')[:160],
+            'created_at': time.time(),
+        }
+        msg = String()
+        msg.data = json.dumps(payload, separators=(',', ':'))
+        self.response_policy_pub.publish(msg)
+
     def _handle_function_call_event(self, event: dict):
         item = event.get('item', {}) or {}
         item_type = str(item.get('type', '') or '').strip()
@@ -1626,7 +1985,7 @@ class OpenAIRealtimeNode(Node):
 
         if item_type and item_type != 'function_call':
             return
-        if name != WEB_SEARCH_FUNCTION_NAME or not call_id:
+        if name not in (WEB_SEARCH_FUNCTION_NAME, WAIT_FOR_USER_FUNCTION_NAME) or not call_id:
             return
 
         with self._tool_call_lock:
@@ -1637,6 +1996,10 @@ class OpenAIRealtimeNode(Node):
                 self._handled_tool_call_ids.clear()
                 self._handled_tool_call_ids.add(call_id)
 
+        if name == WAIT_FOR_USER_FUNCTION_NAME:
+            self._execute_wait_for_user_tool_call(call_id)
+            return
+
         self.get_logger().info(f'OpenAI Realtime requested web search via tool call {call_id}')
         thread = threading.Thread(
             target=self._execute_web_search_tool_call,
@@ -1645,6 +2008,19 @@ class OpenAIRealtimeNode(Node):
             name=f'web-search-{call_id[:8]}',
         )
         thread.start()
+
+    def _execute_wait_for_user_tool_call(self, call_id: str):
+        output = json.dumps({'ok': True, 'action': 'wait_for_user'}, separators=(',', ':'))
+        self._send_event({
+            'type': 'conversation.item.create',
+            'item': {
+                'type': 'function_call_output',
+                'call_id': call_id,
+                'output': output,
+            },
+        })
+        self._clear_deferred_response()
+        self.get_logger().debug(f'OpenAI Realtime chose to wait without response ({call_id})')
 
     def _execute_web_search_tool_call(self, call_id: str, arguments: str):
         query = ''
