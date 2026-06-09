@@ -7,11 +7,12 @@ and ignores likely side conversations unless the robot is directly addressed.
 """
 import json
 import time
+import math
 
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Transcription
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, Int32
 
 from .conversation_utils import (
     advance_attention_focus,
@@ -25,6 +26,21 @@ from .conversation_utils import (
 from .robot_command_utils import looks_like_robot_command
 
 
+def get_circular_average(angles):
+    if not angles:
+        return -1
+    x_sum = sum(math.cos(math.radians(a)) for a in angles)
+    y_sum = sum(math.sin(math.radians(a)) for a in angles)
+    avg_rad = math.atan2(y_sum, x_sum)
+    avg_deg = math.degrees(avg_rad)
+    return int(round(avg_deg)) % 360
+
+
+def angular_distance(a, b):
+    diff = (a - b + 180) % 360 - 180
+    return abs(diff)
+
+
 class AttentionManagerNode(Node):
     def __init__(self):
         super().__init__('attention_manager_node')
@@ -35,6 +51,8 @@ class AttentionManagerNode(Node):
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
         self.declare_parameter('allow_known_speaker_switch_without_address', True)
+        self.declare_parameter('doa_enabled', True)
+        self.declare_parameter('doa_focus_margin', 45.0)
 
         self.focus_timeout_s = float(self.get_parameter('focus_timeout_s').value)
         self.focus_recognition_window_s = float(
@@ -44,6 +62,9 @@ class AttentionManagerNode(Node):
         self.allow_known_speaker_switch_without_address = bool(
             self.get_parameter('allow_known_speaker_switch_without_address').value
         )
+        self.doa_enabled = bool(self.get_parameter('doa_enabled').value)
+        self.doa_focus_margin = float(self.get_parameter('doa_focus_margin').value)
+
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter('sticky_speaker_timeout_s').value),
             int(self.get_parameter('speaker_switch_hits_required').value),
@@ -58,6 +79,13 @@ class AttentionManagerNode(Node):
         self.pending_focus_speaker = 'Unknown'
         self.pending_focus_at = 0.0
 
+        self.latest_doa_angle = -1
+        self.last_segment_doa_angle = -1
+        self.focused_doa_angle = -1
+        self.is_speaking = False
+        self.was_speaking = False
+        self.current_segment_doa_angles = []
+
         self.session_sub = self.create_subscription(Bool, '/session_active', self._session_callback, 10)
         self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self._pause_callback, 10)
         self.speaker_sub = self.create_subscription(String, '/speaker_id', self._speaker_callback, 10)
@@ -67,6 +95,18 @@ class AttentionManagerNode(Node):
             self._transcription_callback,
             10,
         )
+        self.doa_sub = self.create_subscription(
+            Int32,
+            '/doa_angle',
+            self._doa_callback,
+            10
+        )
+        self.vad_state_sub = self.create_subscription(
+            Bool,
+            '/voice_activity',
+            self._vad_callback,
+            10
+        )
 
         self.attended_pub = self.create_publisher(Transcription, '/attended_transcription', 10)
         self.status_pub = self.create_publisher(String, '/attention_status', 10)
@@ -74,6 +114,7 @@ class AttentionManagerNode(Node):
         self.get_logger().info('Attention Manager started')
 
     def _session_callback(self, msg: Bool):
+        was_active = self.session_active
         self.session_active = bool(msg.data)
         if not self.session_active:
             self.speaker_tracker.reset()
@@ -83,7 +124,12 @@ class AttentionManagerNode(Node):
             self.last_focus_time = 0.0
             self.pending_focus_speaker = 'Unknown'
             self.pending_focus_at = 0.0
+            self.focused_doa_angle = -1
             self._publish_status(False, False, 'session_inactive')
+        elif self.session_active and not was_active:
+            if self.latest_doa_angle != -1:
+                self.focused_doa_angle = self.latest_doa_angle
+                self.get_logger().info(f'Locking initial focus angle to {self.focused_doa_angle}°')
 
     def _pause_callback(self, msg: Bool):
         self.conversation_paused = bool(msg.data)
@@ -95,6 +141,23 @@ class AttentionManagerNode(Node):
         if raw_speaker != 'Unknown' and self.current_speaker == raw_speaker:
             self.pending_focus_speaker = raw_speaker
             self.pending_focus_at = time.monotonic()
+
+    def _doa_callback(self, msg: Int32):
+        self.latest_doa_angle = msg.data
+        if self.is_speaking:
+            self.current_segment_doa_angles.append(msg.data)
+
+    def _vad_callback(self, msg: Bool):
+        was_speaking = self.is_speaking
+        self.is_speaking = bool(msg.data)
+        if self.is_speaking and not was_speaking:
+            self.current_segment_doa_angles = []
+        elif not self.is_speaking and was_speaking:
+            if self.current_segment_doa_angles:
+                self.last_segment_doa_angle = get_circular_average(self.current_segment_doa_angles)
+                self.get_logger().debug(f'Computed segment DOA average: {self.last_segment_doa_angle}° (from {len(self.current_segment_doa_angles)} samples)')
+            else:
+                self.last_segment_doa_angle = self.latest_doa_angle
 
     def _transcription_callback(self, msg: Transcription):
         text = (msg.text or '').strip()
@@ -165,6 +228,29 @@ class AttentionManagerNode(Node):
         )
         self.focused_speaker = effective_focus
         self.last_focus_time = effective_focus_time
+
+        # Spatial DOA filtering: Check if the voice came from a different direction than focused speaker
+        if allow and self.doa_enabled and self.focused_doa_angle != -1 and self.last_segment_doa_angle != -1:
+            dist = angular_distance(self.last_segment_doa_angle, self.focused_doa_angle)
+            if dist > self.doa_focus_margin:
+                # Bypassed if directly addressed or re-engaged
+                if not (direct_address or reengagement or robot_directive):
+                    self.get_logger().info(
+                        f'🚫 Blocking transcription: segment DOA = {self.last_segment_doa_angle}°, '
+                        f'focused DOA = {self.focused_doa_angle}° (diff = {dist:.1f}° > margin = {self.doa_focus_margin}°)'
+                    )
+                    return False, 'doa_side_conversation'
+                else:
+                    self.get_logger().info(
+                        f'🗣️ DOA switch via direct address: focus angle moving from '
+                        f'{self.focused_doa_angle}° to {self.last_segment_doa_angle}°'
+                    )
+
+        if allow:
+            # Update focused angle to keep tracking the current speaker
+            if self.last_segment_doa_angle != -1:
+                self.focused_doa_angle = self.last_segment_doa_angle
+
         return allow, reason
 
     def _publish_status(self, allow: bool, direct_address: bool, reason: str):
@@ -176,6 +262,8 @@ class AttentionManagerNode(Node):
             'current_speaker': self.current_speaker,
             'session_active': self.session_active,
             'conversation_paused': self.conversation_paused,
+            'focused_doa_angle': int(self.focused_doa_angle),
+            'last_segment_doa_angle': int(self.last_segment_doa_angle),
         }
         msg = String()
         msg.data = json.dumps(payload, separators=(',', ':'))

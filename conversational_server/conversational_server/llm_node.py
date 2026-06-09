@@ -78,7 +78,7 @@ class LLMNode(Node):
         
         # Web search parameters
         self.declare_parameter('websearch_enabled', True)
-        self.declare_parameter('websearch_model', 'compound-beta')  # Groq compound model
+        self.declare_parameter('websearch_model', 'groq/compound-mini')  # Groq compound model
         self.declare_parameter('websearch_max_tokens', 300)
         
         self.provider = str(self.get_parameter('provider').value).lower()

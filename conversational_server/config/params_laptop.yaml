@@ -98,8 +98,8 @@ barge_in_node:
     stop_logit_margin: 0.5
     stop_hits_required: 2
     voice_enabled: true
-    min_voice_ms: 250
-    min_rms_dbfs: -40.0
+    min_voice_ms: 350
+    min_rms_dbfs: -32.0
     highpass_hz: 300.0
     zcr_min: 0.02
     zcr_max: 0.35
