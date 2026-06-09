@@ -72,7 +72,7 @@ nano .env
 
 Add your API keys:
 ```
-ELEVEN_API_KEY=your_elevenlabs_api_key_here
+ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 OPENAI_API_KEY=your_openai_api_key_here
 BRAVE_SEARCH_API_KEY=your_brave_search_api_key_here
 ```
@@ -193,11 +193,16 @@ Main YAML parameters:
 - `asr_node.provider: "elevenlabs"`
 - `asr_node.eleven_model_id: "scribe_v2"`
 - `asr_node.eleven_diarize: true`
+- `asr_node.eleven_prefer_raw_pcm: true` sends mono 16 kHz audio as raw PCM for lower STT latency
+- `asr_node.eleven_diarization_threshold: 0.18` favors separating overlapping/noisy speakers
 - `tts_node.provider: "elevenlabs"`
 - `tts_node.eleven_model_id: "eleven_v3"`
-- `tts_node.eleven_voice_id_en` / `tts_node.eleven_voice_id_ro`
+- `tts_node.eleven_voice_id_en: "vBKc2FfBKJfcZNyEt1n6"`
+- `tts_node.eleven_voice_id_ro: "vBKc2FfBKJfcZNyEt1n6"`
+- `tts_node.eleven_stream_pcm_chunks: true` starts playback while ElevenLabs is still streaming
+- `tts_node.eleven_latency_optimization: -1` disables the legacy latency query for `eleven_v3`
 
-ElevenLabs diarization is published on `/elevenlabs_diarization` with anonymous turn-level speakers like `speaker_0`. Persistent person identity still comes from `/speaker_id` and the enrolled voice profiles.
+ElevenLabs diarization is published on `/elevenlabs_diarization` with anonymous turn-level speakers like `speaker_0`, plus `speaker_count`, `dominant_speaker_share`, `segments`, and filtered/raw speaker word counts. Persistent person identity still comes from `/speaker_id` and the enrolled voice profiles.
 
 #### OpenAI Realtime Configuration
 ```bash
@@ -257,11 +262,12 @@ Edit `full_system.launch.py` and adjust:
 
 ## 🐛 Troubleshooting
 
-### "ELEVEN_API_KEY not set" Error
+### "ELEVENLABS_API_KEY not set" Error
 Make sure `.env` file exists and contains your ElevenLabs key:
 ```bash
-ELEVEN_API_KEY=your_elevenlabs_api_key_here
+ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 ```
+`ELEVEN_API_KEY` is still accepted as a backwards-compatible alias.
 
 ### "OPENAI_API_KEY not set" Error
 Make sure `.env` contains:

@@ -135,7 +135,9 @@ def generate_launch_description():
                 'language': 'ro_en',  # Force EN/RO detection only
                 'eleven_model_id': LaunchConfiguration('eleven_stt_model'),
                 'eleven_diarize': True,
-                'eleven_diarization_threshold': 0.22,
+                'eleven_diarization_threshold': 0.18,
+                'eleven_prefer_raw_pcm': True,
+                'eleven_min_diarized_words': 2,
             }]
         ),
         
@@ -165,9 +167,16 @@ def generate_launch_description():
             parameters=[{
                 'provider': LaunchConfiguration('tts_provider'),
                 'eleven_model_id': LaunchConfiguration('eleven_tts_model'),
-                'eleven_voice_id_en': 'JBFqnCBsd6RMkjVDRZzb',
-                'eleven_voice_id_ro': 'JBFqnCBsd6RMkjVDRZzb',
+                'eleven_voice_id_en': 'vBKc2FfBKJfcZNyEt1n6',
+                'eleven_voice_id_ro': 'vBKc2FfBKJfcZNyEt1n6',
                 'eleven_output_format': 'pcm_16000',
+                'eleven_latency_optimization': -1,
+                'eleven_stream_pcm_chunks': True,
+                'eleven_stream_chunk_ms': 120,
+                'eleven_stability': 0.42,
+                'eleven_similarity_boost': 0.78,
+                'eleven_style': 0.38,
+                'eleven_use_speaker_boost': True,
                 'fallback_to_edge': True,
                 'voice_en': 'en-GB-RyanNeural',
                 'voice_ro': 'ro-RO-EmilNeural',

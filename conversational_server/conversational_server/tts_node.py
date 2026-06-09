@@ -86,12 +86,15 @@ class TTSNode(Node):
         self.declare_parameter('rate', '+0%')
         self.declare_parameter('pitch', '+0Hz')
         self.declare_parameter('buffer_size', 2)  # Double buffer (2 chunks ahead)
-        self.declare_parameter('eleven_api_key_env', 'ELEVEN_API_KEY')
+        self.declare_parameter('eleven_api_key_env', 'ELEVENLABS_API_KEY')
         self.declare_parameter('eleven_model_id', 'eleven_v3')
-        self.declare_parameter('eleven_voice_id_en', 'JBFqnCBsd6RMkjVDRZzb')
-        self.declare_parameter('eleven_voice_id_ro', 'JBFqnCBsd6RMkjVDRZzb')
+        self.declare_parameter('eleven_voice_id_en', 'vBKc2FfBKJfcZNyEt1n6')
+        self.declare_parameter('eleven_voice_id_ro', 'vBKc2FfBKJfcZNyEt1n6')
         self.declare_parameter('eleven_output_format', 'pcm_16000')
         self.declare_parameter('eleven_timeout_s', 30.0)
+        self.declare_parameter('eleven_latency_optimization', 2)
+        self.declare_parameter('eleven_stream_pcm_chunks', True)
+        self.declare_parameter('eleven_stream_chunk_ms', 120)
         self.declare_parameter('eleven_stability', 0.45)
         self.declare_parameter('eleven_similarity_boost', 0.75)
         self.declare_parameter('eleven_style', 0.35)
@@ -110,6 +113,16 @@ class TTSNode(Node):
         self.eleven_voice_id_ro = str(self.get_parameter('eleven_voice_id_ro').value)
         self.eleven_output_format = str(self.get_parameter('eleven_output_format').value)
         self.eleven_timeout_s = float(self.get_parameter('eleven_timeout_s').value)
+        self.eleven_latency_optimization = int(
+            self.get_parameter('eleven_latency_optimization').value
+        )
+        self.eleven_stream_pcm_chunks = bool(
+            self.get_parameter('eleven_stream_pcm_chunks').value
+        )
+        self.eleven_stream_chunk_ms = max(
+            20,
+            int(self.get_parameter('eleven_stream_chunk_ms').value),
+        )
         self.eleven_stability = float(self.get_parameter('eleven_stability').value)
         self.eleven_similarity_boost = float(
             self.get_parameter('eleven_similarity_boost').value
@@ -129,10 +142,10 @@ class TTSNode(Node):
             if not REQUESTS_AVAILABLE:
                 self.get_logger().error('requests not installed - required for ElevenLabs TTS!')
                 raise RuntimeError('requests not available')
-            self.eleven_api_key = os.environ.get(self.eleven_api_key_env, '')
+            self.eleven_api_key = self._read_elevenlabs_api_key()
             if not self.eleven_api_key:
                 self.get_logger().error(
-                    f'{self.eleven_api_key_env} environment variable not set!'
+                    f'{self.eleven_api_key_env} or ELEVENLABS_API_KEY environment variable not set!'
                 )
                 raise RuntimeError(f'{self.eleven_api_key_env} not set')
 
@@ -143,7 +156,9 @@ class TTSNode(Node):
         if self.provider == 'elevenlabs':
             self.get_logger().info(
                 f'✅ TTS initialized with ElevenLabs: model={self.eleven_model_id}, '
-                f'EN voice={self.eleven_voice_id_en}, RO voice={self.eleven_voice_id_ro}'
+                f'EN voice={self.eleven_voice_id_en}, RO voice={self.eleven_voice_id_ro}, '
+                f'latency_opt={self.eleven_latency_optimization}, '
+                f'pcm_stream={self.eleven_stream_pcm_chunks}'
             )
         else:
             self.get_logger().info(
@@ -277,6 +292,19 @@ class TTSNode(Node):
         env_path = workspace_root / '.env' if workspace_root else None
         if env_path and env_path.exists():
             load_dotenv(dotenv_path=env_path)
+
+    def _read_elevenlabs_api_key(self) -> str:
+        """Read API key using the configured name, with common aliases."""
+        names = [
+            self.eleven_api_key_env,
+            'ELEVENLABS_API_KEY',
+            'ELEVEN_API_KEY',
+        ]
+        for name in names:
+            value = os.environ.get(str(name or '').strip(), '')
+            if value:
+                return value
+        return ''
     
     def _publish_speaking_status(self):
         """Periodically publish the is_speaking state to /tts_speaking."""
@@ -496,6 +524,16 @@ class TTSNode(Node):
                     self.get_logger().debug(f'🔧 Pre-synthesizing: "{text[:30]}..."')
                     
                     try:
+                        if self._can_stream_elevenlabs_pcm():
+                            self._enqueue_elevenlabs_pcm_stream(
+                                text,
+                                voice,
+                                lang,
+                                is_final,
+                                session_id,
+                            )
+                            continue
+
                         audio_data, sample_rate = self._synthesize(text, voice, lang)
                         
                         # Resample to target rate (16kHz)
@@ -599,25 +637,14 @@ class TTSNode(Node):
 
     def _synthesize_elevenlabs(self, text: str, voice_id: str, lang: str = ''):
         """Synthesize with ElevenLabs TTS stream endpoint."""
-        language_code = 'ro' if str(lang).lower().startswith('ro') else 'en'
         response = requests.post(
             f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream',
             headers={
                 'xi-api-key': self.eleven_api_key,
                 'Content-Type': 'application/json',
             },
-            params={'output_format': self.eleven_output_format},
-            json={
-                'text': text,
-                'model_id': self.eleven_model_id,
-                'language_code': language_code,
-                'voice_settings': {
-                    'stability': max(0.0, min(1.0, self.eleven_stability)),
-                    'similarity_boost': max(0.0, min(1.0, self.eleven_similarity_boost)),
-                    'style': max(0.0, min(1.0, self.eleven_style)),
-                    'use_speaker_boost': self.eleven_use_speaker_boost,
-                },
-            },
+            params=self._elevenlabs_tts_params(),
+            json=self._elevenlabs_tts_payload(text, lang),
             timeout=max(1.0, self.eleven_timeout_s),
         )
         if not response.ok:
@@ -635,6 +662,142 @@ class TTSNode(Node):
 
         audio_data, sample_rate = sf.read(io.BytesIO(audio_bytes), dtype='int16')
         return audio_data, sample_rate
+
+    def _can_stream_elevenlabs_pcm(self) -> bool:
+        return (
+            self.provider == 'elevenlabs'
+            and self.eleven_stream_pcm_chunks
+            and self.eleven_output_format.startswith('pcm_')
+        )
+
+    def _enqueue_elevenlabs_pcm_stream(
+        self,
+        text: str,
+        voice_id: str,
+        lang: str,
+        is_final: bool,
+        session_id: str,
+    ):
+        """Forward ElevenLabs PCM bytes to playback as they arrive."""
+        sample_rate = self._elevenlabs_pcm_sample_rate()
+        current_epoch = self.stop_epoch
+        emitted_chunks = 0
+        try:
+            for audio_data in self._stream_elevenlabs_pcm(text, voice_id, lang, sample_rate):
+                if self.stop_requested or self.current_backend != 'legacy':
+                    return
+                self.audio_queue.put(
+                    (audio_data, sample_rate, False, session_id, current_epoch),
+                    timeout=5.0,
+                )
+                emitted_chunks += 1
+                self.get_logger().debug(
+                    f'📦 Streamed ElevenLabs audio chunk '
+                    f'({len(audio_data)} samples, epoch={current_epoch})'
+                )
+        except Exception as exc:
+            if not self.fallback_to_edge:
+                raise
+            self.get_logger().warn(f'ElevenLabs streaming failed, falling back to Edge: {exc}')
+            edge_voice = self.voice_ro if str(lang).lower().startswith('ro') else self.voice_en
+            audio_data, edge_rate = self._synthesize_edge(text, edge_voice)
+            if edge_rate != self.target_sample_rate:
+                audio_data = self._resample(audio_data, edge_rate, self.target_sample_rate)
+                edge_rate = self.target_sample_rate
+            if len(audio_data.shape) > 1:
+                audio_data = audio_data[:, 0]
+            self.audio_queue.put(
+                (audio_data, edge_rate, is_final, session_id, current_epoch),
+                timeout=5.0,
+            )
+            return
+
+        if is_final:
+            try:
+                self.audio_queue.put((None, 0, True, session_id, current_epoch), timeout=5.0)
+            except queue.Full:
+                self.get_logger().warn('Timed out enqueueing ElevenLabs final stream marker')
+        elif emitted_chunks == 0:
+            self.get_logger().warn('ElevenLabs returned no PCM audio for chunk')
+
+    def _stream_elevenlabs_pcm(
+        self,
+        text: str,
+        voice_id: str,
+        lang: str,
+        sample_rate: int,
+    ):
+        response = requests.post(
+            f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream',
+            headers={
+                'xi-api-key': self.eleven_api_key,
+                'Content-Type': 'application/json',
+            },
+            params=self._elevenlabs_tts_params(),
+            json=self._elevenlabs_tts_payload(text, lang),
+            timeout=max(1.0, self.eleven_timeout_s),
+            stream=True,
+        )
+        if not response.ok:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = response.text.strip()
+            raise RuntimeError(f'HTTP {response.status_code}: {payload}')
+
+        target_samples = max(160, int(sample_rate * self.eleven_stream_chunk_ms / 1000))
+        pending = bytearray()
+        for chunk in response.iter_content(chunk_size=4096):
+            if self.stop_requested:
+                return
+            if not chunk:
+                continue
+            pending.extend(chunk)
+            whole_bytes = len(pending) - (len(pending) % 2)
+            available_samples = whole_bytes // 2
+            if available_samples < target_samples:
+                continue
+            emit_bytes = target_samples * 2
+            audio_data = np.frombuffer(bytes(pending[:emit_bytes]), dtype=np.int16).copy()
+            del pending[:emit_bytes]
+            yield audio_data
+
+        whole_bytes = len(pending) - (len(pending) % 2)
+        if whole_bytes > 0:
+            yield np.frombuffer(bytes(pending[:whole_bytes]), dtype=np.int16).copy()
+
+    def _elevenlabs_tts_params(self) -> dict:
+        params = {'output_format': self.eleven_output_format}
+        if self.eleven_latency_optimization >= 0 and not self._elevenlabs_model_disallows_latency_opt():
+            params['optimize_streaming_latency'] = str(
+                max(0, min(4, self.eleven_latency_optimization))
+            )
+        return params
+
+    def _elevenlabs_model_disallows_latency_opt(self) -> bool:
+        """Return True when the model rejects optimize_streaming_latency."""
+        model_id = str(self.eleven_model_id or '').strip().lower()
+        return model_id in {'eleven_v3', 'eleven_v3_alpha'}
+
+    def _elevenlabs_tts_payload(self, text: str, lang: str = '') -> dict:
+        language_code = 'ro' if str(lang).lower().startswith('ro') else 'en'
+        return {
+            'text': text,
+            'model_id': self.eleven_model_id,
+            'language_code': language_code,
+            'voice_settings': {
+                'stability': max(0.0, min(1.0, self.eleven_stability)),
+                'similarity_boost': max(0.0, min(1.0, self.eleven_similarity_boost)),
+                'style': max(0.0, min(1.0, self.eleven_style)),
+                'use_speaker_boost': self.eleven_use_speaker_boost,
+            },
+        }
+
+    def _elevenlabs_pcm_sample_rate(self) -> int:
+        try:
+            return int(self.eleven_output_format.split('_', 1)[1])
+        except (IndexError, ValueError):
+            return self.target_sample_rate
     
     def _synthesize_edge(self, text: str, voice: str):
         """Synthesize with Edge TTS (online, entirely in RAM)."""

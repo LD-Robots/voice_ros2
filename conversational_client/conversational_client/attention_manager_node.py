@@ -924,6 +924,12 @@ class AttentionManagerNode(Node):
 
     def _diarized_speaker_count(self) -> int:
         diarization = self.latest_diarization if isinstance(self.latest_diarization, dict) else {}
+        try:
+            explicit_count = int(diarization.get('speaker_count', 0) or 0)
+        except (TypeError, ValueError):
+            explicit_count = 0
+        if explicit_count > 0:
+            return explicit_count
         speaker_counts = diarization.get('speaker_word_counts', {}) or {}
         count = 0
         for word_count in speaker_counts.values():

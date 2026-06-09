@@ -76,7 +76,7 @@ class ASRNode(Node):
         self.declare_parameter('beam_size', 5)
         self.declare_parameter('vad_min_silence_ms', 300)
         self.declare_parameter('warmup_enabled', True)
-        self.declare_parameter('eleven_api_key_env', 'ELEVEN_API_KEY')
+        self.declare_parameter('eleven_api_key_env', 'ELEVENLABS_API_KEY')
         self.declare_parameter('eleven_model_id', 'scribe_v2')
         self.declare_parameter('eleven_language_code', '')
         self.declare_parameter('eleven_diarize', True)
@@ -84,6 +84,8 @@ class ASRNode(Node):
         self.declare_parameter('eleven_diarization_threshold', 0.0)
         self.declare_parameter('eleven_tag_audio_events', False)
         self.declare_parameter('eleven_timeout_s', 30.0)
+        self.declare_parameter('eleven_prefer_raw_pcm', True)
+        self.declare_parameter('eleven_min_diarized_words', 2)
         self.declare_parameter('eleven_allowed_language_codes', 'en,eng,ro,ron,rum')
         
         # Anti-echo textual parameters
@@ -112,6 +114,13 @@ class ASRNode(Node):
             self.get_parameter('eleven_tag_audio_events').value
         )
         self.eleven_timeout_s = float(self.get_parameter('eleven_timeout_s').value)
+        self.eleven_prefer_raw_pcm = bool(
+            self.get_parameter('eleven_prefer_raw_pcm').value
+        )
+        self.eleven_min_diarized_words = max(
+            1,
+            int(self.get_parameter('eleven_min_diarized_words').value),
+        )
         self.eleven_allowed_language_codes = {
             code.strip().lower()
             for code in str(self.get_parameter('eleven_allowed_language_codes').value or '').split(',')
@@ -128,10 +137,10 @@ class ASRNode(Node):
             if not REQUESTS_AVAILABLE:
                 self.get_logger().error('requests not installed - required for ElevenLabs STT!')
                 raise RuntimeError('requests not available')
-            self.eleven_api_key = os.environ.get(self.eleven_api_key_env, '')
+            self.eleven_api_key = self._read_elevenlabs_api_key()
             if not self.eleven_api_key:
                 self.get_logger().error(
-                    f'{self.eleven_api_key_env} environment variable not set!'
+                    f'{self.eleven_api_key_env} or ELEVENLABS_API_KEY environment variable not set!'
                 )
                 raise RuntimeError(f'{self.eleven_api_key_env} not set')
             self._warmed_up = True
@@ -229,6 +238,19 @@ class ASRNode(Node):
                     if env_path.exists():
                         load_dotenv(dotenv_path=env_path)
                     return
+
+    def _read_elevenlabs_api_key(self) -> str:
+        """Read API key using the configured name, with common aliases."""
+        names = [
+            self.eleven_api_key_env,
+            'ELEVENLABS_API_KEY',
+            'ELEVEN_API_KEY',
+        ]
+        for name in names:
+            value = os.environ.get(str(name or '').strip(), '')
+            if value:
+                return value
+        return ''
     
     def audio_callback(self, msg: Audio):
         """Buffers audio during speech."""
@@ -350,7 +372,7 @@ class ASRNode(Node):
             wav_io.seek(0)
             
             if self.provider == 'elevenlabs':
-                result = self._run_elevenlabs(wav_io)
+                result = self._run_elevenlabs(wav_io, audio_data)
                 text = result["text"]
                 lang = result["lang"]
                 confidence = result["language_probability"]
@@ -464,17 +486,32 @@ class ASRNode(Node):
         prob = float(getattr(info, "language_probability", 0.0) or 0.0)
         return text, out_lang, prob, score
 
-    def _run_elevenlabs(self, audio_source):
+    def _run_elevenlabs(self, audio_source, audio_pcm: np.ndarray | None = None):
         """Transcribe one utterance with ElevenLabs Scribe v2."""
         if hasattr(audio_source, 'seek'):
             audio_source.seek(0)
+
+        file_bytes = audio_source.read()
+        filename = 'speech.wav'
+        content_type = 'audio/wav'
+        file_format = 'other'
+        if (
+            self.eleven_prefer_raw_pcm
+            and audio_pcm is not None
+            and self.sample_rate == 16000
+            and self.channels == 1
+        ):
+            file_bytes = np.asarray(audio_pcm, dtype=np.int16).tobytes()
+            filename = 'speech.pcm'
+            content_type = 'application/octet-stream'
+            file_format = 'pcm_s16le_16'
 
         data = {
             'model_id': self.eleven_model_id,
             'diarize': 'true' if self.eleven_diarize else 'false',
             'tag_audio_events': 'true' if self.eleven_tag_audio_events else 'false',
             'timestamps_granularity': 'word',
-            'file_format': 'other',
+            'file_format': file_format,
         }
         language_code = self.eleven_language_code.strip()
         if not language_code and self.language and self.language != 'ro_en':
@@ -489,7 +526,7 @@ class ASRNode(Node):
             )
 
         files = {
-            'file': ('speech.wav', audio_source.read(), 'audio/wav'),
+            'file': (filename, file_bytes, content_type),
         }
         response = requests.post(
             'https://api.elevenlabs.io/v1/speech-to-text',
@@ -557,17 +594,30 @@ class ASRNode(Node):
             current['text'] = current['text'].strip()
             spans.append(current)
 
+        filtered_counts = {
+            speaker: count
+            for speaker, count in speaker_counts.items()
+            if int(count or 0) >= self.eleven_min_diarized_words
+        }
         dominant = ''
-        if speaker_counts:
-            dominant = max(speaker_counts.items(), key=lambda item: item[1])[0]
+        dominant_share = 0.0
+        if filtered_counts:
+            dominant, dominant_count = max(filtered_counts.items(), key=lambda item: item[1])
+            total_words = sum(filtered_counts.values())
+            dominant_share = float(dominant_count) / float(total_words or 1)
         return {
             'provider': 'elevenlabs',
             'model_id': self.eleven_model_id,
             'language_code': str(payload.get('language_code', '') or ''),
             'language_probability': float(payload.get('language_probability', 0.0) or 0.0),
             'dominant_speaker_id': dominant,
-            'speaker_word_counts': speaker_counts,
+            'dominant_speaker_share': dominant_share,
+            'speaker_word_counts': filtered_counts,
+            'raw_speaker_word_counts': speaker_counts,
+            'speaker_count': len(filtered_counts),
+            'multi_speaker': len(filtered_counts) > 1,
             'spans': spans,
+            'segments': spans,
         }
 
     def _publish_diarization(self, payload: dict):
@@ -577,9 +627,11 @@ class ASRNode(Node):
         msg.data = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
         self.diarization_pub.publish(msg)
         dominant = payload.get('dominant_speaker_id', '') or 'unknown'
-        speaker_count = len(payload.get('speaker_word_counts', {}) or {})
+        speaker_count = int(payload.get('speaker_count', 0) or 0)
+        dominant_share = float(payload.get('dominant_speaker_share', 0.0) or 0.0)
         self.get_logger().info(
-            f'🗣️ ElevenLabs diarization: dominant={dominant}, speakers={speaker_count}'
+            f'🗣️ ElevenLabs diarization: dominant={dominant}, '
+            f'speakers={speaker_count}, share={dominant_share:.2f}'
         )
 
     def _transcribe_ro_en(self, audio_source):
