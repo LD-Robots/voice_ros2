@@ -292,10 +292,11 @@ class OpenAIRealtimeNode(Node):
             int(self.get_parameter('language_switch_hits_required').value)
         )
 
-        self.api_key = os.environ.get('OPENAI_API_KEY')
-        if not self.api_key:
+        api_key = os.environ.get('OPENAI_API_KEY')
+        if not api_key:
             self.get_logger().error('OPENAI_API_KEY environment variable not set!')
             raise RuntimeError('OPENAI_API_KEY not set')
+        self.api_key: str = api_key
         if not WEBSOCKET_AVAILABLE:
             self.get_logger().error('websocket-client package not installed!')
             raise RuntimeError('websocket-client not available')
@@ -387,7 +388,7 @@ class OpenAIRealtimeNode(Node):
         self.tts_stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
         self.status_pub = self.create_publisher(String, '/openai_realtime_status', 10)
 
-        self.audio_sub = self.create_subscription(Audio, '/audio_raw', self.audio_callback, 10)
+        self.audio_sub = self.create_subscription(Audio, '/audio_clean', self.audio_callback, 10)
         self.session_sub = self.create_subscription(
             Bool,
             '/session_active',
@@ -566,7 +567,7 @@ class OpenAIRealtimeNode(Node):
             'preferred_language': str(payload.get('preferred_language', '') or ''),
             'facts': list(payload.get('facts', []) or []),
         }
-        self.language_tracker.seed(self.person_context.get('preferred_language', ''))
+        self.language_tracker.seed(str(self.person_context.get('preferred_language', '')))
         self._refresh_session()
 
     def robot_command_callback(self, msg: RobotCommand):
@@ -804,7 +805,7 @@ class OpenAIRealtimeNode(Node):
                         self.get_logger().info('Resume request detected for interrupted reply')
                 active_language = self.language_tracker.observe(
                     transcript,
-                    preferred_language=self.person_context.get('preferred_language', ''),
+                    preferred_language=str(self.person_context.get('preferred_language', '')),
                 )
                 self._assistant_name_question_active = self._is_assistant_name_question(normalized)
                 self._refresh_session()
@@ -890,17 +891,12 @@ class OpenAIRealtimeNode(Node):
         if pcm.size == 0:
             return
 
-        # STATEFUL RESAMPLING: 24kHz -> 16kHz
-        pcm_resampled = self.output_resampler.resample(pcm)
-        if pcm_resampled.size == 0:
-            return
-
         self._last_assistant_audio_at = time.monotonic()
 
         out = Audio()
-        out.sample_rate = 16000  # Now always 16kHz
+        out.sample_rate = self.api_sample_rate  # 24kHz natively from OpenAI
         out.channels = 1
-        out.data = pcm_resampled.tolist()
+        out.data = pcm.tolist()
         out.stream_id = str(event.get('response_id', '') or '')
         out.item_id = str(event.get('item_id', '') or '')
         self.audio_pub.publish(out)
@@ -987,7 +983,7 @@ class OpenAIRealtimeNode(Node):
             'interrupt_response': not self.conversation_paused,
         }
 
-        session = {
+        session: dict = {
             'modalities': ['text', 'audio'],
             'instructions': instructions,
             'voice': self.voice,
@@ -1260,7 +1256,7 @@ class OpenAIRealtimeNode(Node):
         if not self._connected.is_set():
             return
 
-        item_id = self._last_playback_progress.get('item_id', '')
+        item_id = str(self._last_playback_progress.get('item_id', '') or '')
         played_ms = int(self._last_playback_progress.get('played_ms', 0) or 0)
         signature = (item_id, played_ms)
         now = time.monotonic()
@@ -1346,7 +1342,7 @@ class OpenAIRealtimeNode(Node):
 
         self._clear_deferred_response()
         self._cancel_pending_response_create()
-        delay_ms = max(0, int(delay_ms))
+        delay_ms = max(0, delay_ms)
         if delay_ms <= 0:
             return self._request_response_create(item_id, reason=reason)
 
@@ -1388,7 +1384,7 @@ class OpenAIRealtimeNode(Node):
             return audio.astype(np.int16, copy=False)
 
         duration = audio.size / float(original_rate)
-        target_samples = max(1, int(round(duration * target_rate)))
+        target_samples = max(1, round(duration * target_rate))
 
         source_positions = np.linspace(0.0, 1.0, num=audio.size, endpoint=False)
         target_positions = np.linspace(0.0, 1.0, num=target_samples, endpoint=False)
@@ -1495,7 +1491,7 @@ class OpenAIRealtimeNode(Node):
             return
 
         self._pending_resume_text = text
-        self._pending_resume_played_ms = max(0, int(played_ms))
+        self._pending_resume_played_ms = max(0, played_ms)
         self._pending_resume_remaining = self._estimate_remaining_text(text, played_ms)
         self._resume_requested = False
 

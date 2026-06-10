@@ -32,6 +32,7 @@ class AudioPlaybackNode(Node):
         self._last_audio_time = 0.0
         self._speaking_grace_period = 1.5
         self._current_item_id = ''
+        self._current_stream_id = ''
         self._played_samples_current_item = 0
         
         self.audio_sub = self.create_subscription(Audio, '/audio_out', self.audio_callback, 10)
@@ -57,19 +58,32 @@ class AudioPlaybackNode(Node):
         self.playback_thread.start()
 
     def audio_callback(self, msg):
-        # Audio is now always 16kHz from the server
+        incoming_rate = getattr(msg, 'sample_rate', self.sample_rate) or self.sample_rate
         audio_data = np.array(msg.data, dtype=np.int16)
         if audio_data.size == 0: return
-        
+
+        incoming_stream_id = getattr(msg, 'stream_id', '') or getattr(msg, 'item_id', '')
+        incoming_item_id = getattr(msg, 'item_id', '')
+
+        # If this is a NEW stream/turn, flush buffered audio from the previous one
+        # to prevent two voices playing simultaneously
+        if incoming_stream_id and incoming_stream_id != self._current_stream_id:
+            self.audio_buffer.clear()
+            self._played_samples_current_item = 0
+            self._current_stream_id = incoming_stream_id
+            self.get_logger().debug(f'New audio stream: {incoming_stream_id}')
+
+        # Only clear stop flag when we receive audio (don't resume stopped old stream)
         self._stop_requested = False
         self._last_audio_time = time.time()
-        self.audio_buffer.append((audio_data, getattr(msg, 'item_id', '')))
+        self.audio_buffer.append((audio_data, incoming_item_id, incoming_rate))
         self.is_playing = True
 
     def stop_callback(self, msg):
         if msg.data:
             self._stop_requested = True
             self.audio_buffer.clear()
+            self._current_stream_id = ''
             self.is_playing = False
             self.speaking_pub.publish(Bool(data=False))
 
@@ -82,7 +96,26 @@ class AudioPlaybackNode(Node):
                 time.sleep(0.01)
                 continue
 
-            chunk_data, item_id = self.audio_buffer.popleft()
+            chunk_data, item_id, chunk_rate = self.audio_buffer.popleft()
+            
+            if chunk_rate != self.sample_rate:
+                if self.stream:
+                    self.stream.stop_stream()
+                    self.stream.close()
+                try:
+                    self.stream = self.audio_p.open(
+                        format=pyaudio.paInt16,
+                        channels=self.channels,
+                        rate=chunk_rate,
+                        output=True,
+                        frames_per_buffer=self._playback_chunk_size
+                    )
+                    self.sample_rate = chunk_rate
+                    self.get_logger().info(f'🔊 Playback stream switched to {chunk_rate}Hz')
+                except Exception as e:
+                    self.get_logger().error(f'❌ Failed to open speaker for {chunk_rate}Hz: {e}')
+                    self.stream = None
+
             if item_id != self._current_item_id:
                 self._current_item_id = item_id
                 self._played_samples_current_item = 0

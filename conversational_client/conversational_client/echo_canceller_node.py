@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from typing import Any, TYPE_CHECKING
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio
@@ -15,6 +16,8 @@ try:
     WEBRTC_AVAILABLE = True
 except ImportError:
     WEBRTC_AVAILABLE = False
+    if TYPE_CHECKING:
+        from aec_audio_processing import AudioProcessor
 
 # Import DeepFilterNet
 try:
@@ -30,9 +33,13 @@ class EchoCancellerNode(Node):
         super().__init__('echo_canceller_node')
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('max_delay_ms', 3000)
+        # Gain applied by AudioPlaybackNode – reference must match what actually
+        # comes out of the speakers so the AEC subtraction is correct.
+        self.declare_parameter('playback_gain', 0.5)
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
+        self.playback_gain = float(self.get_parameter('playback_gain').value)
         
         self.declare_parameter('raw_wav_path', '')
         self.declare_parameter('ref_wav_path', '')
@@ -46,6 +53,7 @@ class EchoCancellerNode(Node):
         self.frame_size_10ms = self.sample_rate // 100 # 160 samples @ 16kHz
         
         # Initialize WebRTC Audio Processor
+        self.apm: AudioProcessor | None = None
         if WEBRTC_AVAILABLE:
             # AGC disabled per user request to avoid over-amplification
             self.apm = AudioProcessor(enable_aec=True, enable_ns=True, ns_level=3, enable_agc=False)
@@ -54,28 +62,27 @@ class EchoCancellerNode(Node):
             self.get_logger().info("🚀 [AEC] WebRTC Engine Started (AEC+NS, AGC Disabled).")
         else:
             self.get_logger().error("❌ [AEC] WebRTC Library NOT FOUND!")
-            self.apm = None
 
         # Initialize DeepFilterNet
         self.declare_parameter('deep_filter_enabled', True)
         self.deep_filter_enabled = self.get_parameter('deep_filter_enabled').value and DF_AVAILABLE
-        
+        self.df_model: Any = None
+
         if self.deep_filter_enabled:
             self.get_logger().info("🧠 [DF] Loading DeepFilterNet model... (this may take a few seconds)")
             start_t = time.time()
-            self.df_model, self.df_state, _ = init_df()
-            self.df_sr = self.df_state.sr() # Usually 48000
-            self.df_hop = self.df_state.hop_size() # Usually 480
+            self.df_model, self.df_state, _ = init_df()  # type: ignore[name-defined]
+            self.df_sr: int = self.df_state.sr() # Usually 48000
+            self.df_hop: int = self.df_state.hop_size() # Usually 480
             
             # Resamplers for DF (16kHz <-> 48kHz)
-            self.resampler_16to48 = torchaudio.transforms.Resample(16000, self.df_sr)
-            self.resampler_48to16 = torchaudio.transforms.Resample(self.df_sr, 16000)
+            self.resampler_16to48: Any = torchaudio.transforms.Resample(16000, self.df_sr)  # type: ignore[name-defined]
+            self.resampler_48to16: Any = torchaudio.transforms.Resample(self.df_sr, 16000)  # type: ignore[name-defined]
             
             self.get_logger().info(f"✅ [DF] Model Loaded in {time.time()-start_t:.2f}s. Running at {self.df_sr}Hz.")
         else:
             if not DF_AVAILABLE:
                 self.get_logger().warn("⚠️ [DF] DeepFilterNet NOT INSTALLED. Skipping AI enhancement.")
-            self.df_model = None
 
         self.buffer_size = self.max_delay_samples + self.sample_rate * 5
         self.ref_circle = np.zeros(self.buffer_size, dtype=np.float32)
@@ -112,9 +119,32 @@ class EchoCancellerNode(Node):
         except: return None
 
     def out_callback(self, msg):
-        if len(msg.data) == 0: return
-        audio_data = np.array(msg.data, dtype=np.int16).astype(np.float32) / 32768.0
-        self.ref_queue.extend(audio_data)
+        """Receive the audio that will be played on speakers and enqueue it as
+        the AEC reference signal.  The audio may arrive at a different sample
+        rate than the AEC processing rate (e.g. Gemini sends 24 kHz, AEC works
+        at 16 kHz), so we resample here.  We also apply the same playback gain
+        used by AudioPlaybackNode so the reference amplitude matches what the
+        microphone will actually capture."""
+        if len(msg.data) == 0:
+            return
+
+        src_rate = int(getattr(msg, 'sample_rate', None) or self.sample_rate)
+        audio_f32 = np.array(msg.data, dtype=np.int16).astype(np.float32) / 32768.0
+
+        # Apply the same gain that AudioPlaybackNode applies before writing to
+        # the speaker so the reference level matches the actual acoustic output.
+        if self.playback_gain != 1.0:
+            audio_f32 = audio_f32 * self.playback_gain
+
+        # Resample to AEC processing rate if the source rate differs.
+        if src_rate != self.sample_rate:
+            from math import gcd
+            g = gcd(src_rate, self.sample_rate)
+            up = self.sample_rate // g
+            down = src_rate // g
+            audio_f32 = signal.resample_poly(audio_f32, up, down).astype(np.float32)
+
+        self.ref_queue.extend(audio_f32)
 
     def get_ref_slice(self, offset, length):
         idx = (self.ref_ptr - offset) % self.buffer_size
@@ -176,7 +206,7 @@ class EchoCancellerNode(Node):
                     if abs(delay - self.current_delay) < 50:
                         self._lock_count += 1
                     else:
-                        self.current_delay = delay
+                        self.current_delay = int(delay)
                         self._lock_count = 1
                     if self._lock_count == 5:
                         self.get_logger().info(f"🔒 AEC LOCKED: {self.current_delay/self.sample_rate*1000:.1f}ms")
