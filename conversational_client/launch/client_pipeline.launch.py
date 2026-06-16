@@ -186,10 +186,12 @@ def generate_launch_description():
             output='screen',
             arguments=['--ros-args', '--log-level', 'barge_in_node:=DEBUG'],
             parameters=[{
-                # Voice-based barge-in params (Intelligent local detection)
-                'voice_enabled': LaunchConfiguration('barge_in_voice_enabled'),
-                'min_voice_ms': 400,          # 400ms de voce continuă peste bot declanșează stop
-                'leak_margin_db': 12.0,       # Margină peste ecou (mai sigură)
+                # Voice barge-in DISABLED – Gemini Live has its own server-side VAD
+                # that handles interruptions natively (sends "interrupted" event).
+                # barge_in_node stays active only for the PyTorch stop-keyword detector.
+                'voice_enabled': False,
+                'min_voice_ms': 400,
+                'leak_margin_db': 12.0,
                 # PyTorch stop keyword detector
                 'stop_enabled': LaunchConfiguration('barge_in_stop_enabled'),
                 'stop_model_path': stop_keyword_path,

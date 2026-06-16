@@ -219,6 +219,10 @@ class BargeInNode(Node):
         # ─────────────────────────────────────────────────────────
         self.barge_pub = self.create_publisher(Bool, '/barge_in', 10)
         self.stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        # /stop_playback is the topic that audio_playback_node AND gemini_live_node
+        # actually listen to – without this the barge-in detection had no effect
+        # on Gemini Live playback.
+        self.stop_playback_pub = self.create_publisher(Bool, '/stop_playback', 10)
         
         self.get_logger().info(
             f'🎯 Intelligent Barge-in started: min_voice={self.min_voice_ms}ms, '
@@ -385,8 +389,12 @@ class BargeInNode(Node):
         msg.data = True
         self.barge_pub.publish(msg)
         
-        # Send stop directly to TTS
+        # Send stop to legacy TTS node
         self.stop_pub.publish(msg)
+        
+        # Send stop to audio_playback_node and gemini_live_node
+        # (both listen on /stop_playback, not /tts_stop)
+        self.stop_playback_pub.publish(msg)
 
 
 # ═══════════════════════════════════════════════════════════════════

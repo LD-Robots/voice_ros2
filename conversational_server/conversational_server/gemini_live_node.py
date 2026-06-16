@@ -238,6 +238,7 @@ class GeminiLiveNode(Node):
         self._last_reconnect_time = 0.0
         self._reconnect_cooldown_s = 1.5
         self._pending_reconnect_reason = ""
+        self._intentional_reconnect = False  # True when we close WS on purpose (context update)
 
         # Response tracking
         self._assistant_text = defaultdict(str)
@@ -407,7 +408,11 @@ class GeminiLiveNode(Node):
             self.pending_focus_at = time.monotonic()
         if speaker != self.current_speaker:
             self.current_speaker = speaker
-            self._request_reconnect("speaker_change")
+            # Inject context mid-session instead of reconnecting.
+            # Gemini Live only allows 'setup' once per WS session, but we can
+            # inject a silent system note via clientContent so the model
+            # knows who it's talking to without dropping the connection.
+            self._inject_context_update("speaker_changed")
 
     def person_context_callback(self, msg: String):
         try:
@@ -422,10 +427,52 @@ class GeminiLiveNode(Node):
         }
         if new_context == self.person_context:
             return
-            
+
         self.person_context = new_context
         self.language_tracker.seed(str(self.person_context.get("preferred_language", "")))
-        self._request_reconnect("context_update")
+        # Inject context mid-session — no reconnect needed.
+        self._inject_context_update("context_updated")
+
+    def _inject_context_update(self, reason: str):
+        """Send a silent context note to Gemini mid-session.
+
+        Instead of closing and reopening the WebSocket (which causes a 3-second
+        silence gap), we push a brief system note as a user turn with
+        turnComplete=False so Gemini updates its working context immediately
+        without generating an audio response.
+        """
+        if not self._connected.is_set() or not self._setup_sent:
+            return
+        if self.current_backend != "gemini_live":
+            return
+        if self._response_active or self._user_speaking:
+            # Don't inject while Gemini is speaking or user is mid-sentence.
+            return
+
+        note_parts = []
+        if self.current_speaker and self.current_speaker != "Unknown":
+            note_parts.append(f"[System note – do not speak] Current speaker identified as internal label: {self.current_speaker}.")
+        preferred_name = self._voice_correlated_preferred_name()
+        if preferred_name:
+            note_parts.append(f"Preferred spoken name: {preferred_name}. Use this name naturally if relevant.")
+        preferred_language = self.person_context.get("preferred_language", "")
+        if preferred_language:
+            note_parts.append(f"Preferred language: {preferred_language}.")
+        facts = self.person_context.get("facts", []) or []
+        if facts:
+            note_parts.append("Known facts: " + "; ".join(str(f) for f in facts[:5]) + ".")
+
+        if not note_parts:
+            return
+
+        note_text = " ".join(note_parts) + " [Continue the conversation naturally without reacting to this note.]"
+        self.get_logger().debug(f"Gemini context inject ({reason}): speaker={self.current_speaker}")
+        self._send_raw({
+            "clientContent": {
+                "turns": [{"role": "user", "parts": [{"text": note_text}]}],
+                "turnComplete": False,
+            }
+        })
 
     def robot_command_callback(self, msg: RobotCommand):
         # Suppress assistant chatter during robot commands
@@ -510,6 +557,7 @@ class GeminiLiveNode(Node):
                 time.sleep(max(1.0, self.reconnect_delay_s))
 
     def _on_open(self, ws):
+        self._intentional_reconnect = False  # Reset flag on successful reconnect
         self.get_logger().info("Connected to Gemini Live API")
         self._connected.set()
         self._publish_status("online")
@@ -518,7 +566,12 @@ class GeminiLiveNode(Node):
     def _on_close(self, ws, status_code, msg):
         self._connected.clear()
         self._setup_sent = False
-        self._publish_status("offline")
+        # Publish 'reconnecting' for intentional closes (context/speaker updates)
+        # so backend_manager does NOT fall back to legacy during the brief gap.
+        if self._intentional_reconnect:
+            self._publish_status("reconnecting")
+        else:
+            self._publish_status("offline")
         self.get_logger().warn(f"Gemini Live disconnected: code={status_code}, msg={msg}")
 
     def _on_error(self, ws, error):
@@ -954,6 +1007,7 @@ class GeminiLiveNode(Node):
         self._last_reconnect_time = now
         self.get_logger().info(f"Gemini Live: reconnecting to refresh context ({reason})")
         self._setup_sent = False
+        self._intentional_reconnect = True  # Signal that this close is intentional
         try:
             if self._ws_app is not None:
                 self._ws_app.close()

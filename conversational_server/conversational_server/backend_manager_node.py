@@ -72,6 +72,10 @@ class BackendManagerNode(Node):
                 self._publish_backend(backend_name, 'realtime_recovered')
             return
 
+        # 'reconnecting' = intentional context refresh by the node itself; stay on preferred backend.
+        if status == 'reconnecting':
+            return
+
         if status in ('offline', 'error', 'auth_error'):
             if self.active_backend != self.fallback_backend:
                 self._publish_backend(self.fallback_backend, f'realtime_{status}')
