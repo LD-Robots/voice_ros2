@@ -56,7 +56,7 @@ def generate_launch_description():
         DeclareLaunchArgument('config', default_value='raspberry', description='Profile (raspberry/laptop)'),
         DeclareLaunchArgument('conversation_backend', default_value='openai_realtime', description='Backend (legacy/openai_realtime)'),
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
-        DeclareLaunchArgument('audio_device_index', default_value='-1', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
+        DeclareLaunchArgument('audio_device_index', default_value='3', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
         DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
         
         # ========== SERVER NODES ==========

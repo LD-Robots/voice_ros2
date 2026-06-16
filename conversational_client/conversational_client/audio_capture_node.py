@@ -61,13 +61,20 @@ class AudioCaptureNode(Node):
         self.debug_wav = None
         if self.debug_recording:
             try:
-                self.debug_wav = wave.open(self.debug_wav_path, 'wb')
+                import os
+                path = os.path.expanduser(self.debug_wav_path)
+                dir_name = os.path.dirname(os.path.abspath(path))
+                if dir_name:
+                    os.makedirs(dir_name, exist_ok=True)
+                with open(path, 'wb') as f:
+                    pass
+                self.debug_wav = wave.open(path, 'wb')
                 self.debug_wav.setnchannels(self.channels)
                 self.debug_wav.setsampwidth(2) # 16-bit
                 self.debug_wav.setframerate(self.sample_rate)
-                self.get_logger().info(f"🔴 DEBUG RECORDING ENABLED: Saving to {self.debug_wav_path}")
+                self.get_logger().info(f"🔴 DEBUG RECORDING ENABLED: Saving to {path}")
             except Exception as e:
-                self.get_logger().error(f"❌ Failed to open debug WAV file: {e}")
+                self.get_logger().error(f"❌ Failed to open debug WAV file at {self.debug_wav_path}: {e}")
 
         
         if SD_AVAILABLE:

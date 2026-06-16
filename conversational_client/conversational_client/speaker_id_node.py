@@ -17,7 +17,12 @@ If the enrollment database is empty, it always publishes "Unknown".
 
 import json
 import os
+import warnings
 from pathlib import Path
+
+# Suppress annoying library warnings (Torch, SpeechBrain, etc.)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 import shutil
 import numpy as np
 import rclpy
