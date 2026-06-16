@@ -127,8 +127,16 @@ class AttentionManagerNode(Node):
             self.focused_doa_angle = -1
             self._publish_status(False, False, 'session_inactive')
         elif self.session_active and not was_active:
-            if self.latest_doa_angle != -1:
-                self.focused_doa_angle = self.latest_doa_angle
+            best_angle = -1
+            if self.current_segment_doa_angles:
+                best_angle = get_circular_average(self.current_segment_doa_angles)
+            elif self.last_segment_doa_angle != -1:
+                best_angle = self.last_segment_doa_angle
+            elif self.latest_doa_angle != -1:
+                best_angle = self.latest_doa_angle
+            
+            if best_angle != -1:
+                self.focused_doa_angle = best_angle
                 self.get_logger().info(f'Locking initial focus angle to {self.focused_doa_angle}°')
 
     def _pause_callback(self, msg: Bool):
@@ -169,6 +177,24 @@ class AttentionManagerNode(Node):
         if not normalized:
             return
 
+        # Dynamically compute current segment's average DOA to avoid race condition with slow VAD-off.
+        segment_doa = -1
+        if self.current_segment_doa_angles:
+            segment_doa = get_circular_average(self.current_segment_doa_angles)
+            self.get_logger().info(
+                f"🎤 DEBUG TRANSCRIPTION DOA: Calculated segment_doa={segment_doa}° "
+                f"from {len(self.current_segment_doa_angles)} samples: {self.current_segment_doa_angles[:20]}"
+            )
+            # Synchronize so self.last_segment_doa_angle is updated and published correctly
+            self.last_segment_doa_angle = segment_doa
+        elif self.last_segment_doa_angle != -1:
+            segment_doa = self.last_segment_doa_angle
+            self.get_logger().info(f"🎤 DEBUG TRANSCRIPTION DOA: Fallback to last_segment_doa_angle={segment_doa}°")
+        else:
+            segment_doa = self.latest_doa_angle
+            self.last_segment_doa_angle = segment_doa
+            self.get_logger().info(f"🎤 DEBUG TRANSCRIPTION DOA: Fallback to latest_doa_angle={segment_doa}°")
+
         direct_address = has_direct_robot_address(normalized)
         reengagement = is_reengagement_phrase(normalized)
         robot_directive = looks_like_robot_command(text, require_direct_robot_address=True)
@@ -179,6 +205,7 @@ class AttentionManagerNode(Node):
             robot_directive,
             control_action,
             normalized,
+            segment_doa,
         )
         self._publish_status(allow, direct_address, reason)
 
@@ -209,6 +236,7 @@ class AttentionManagerNode(Node):
         robot_directive: bool,
         control_action: str | None,
         normalized_text: str,
+        segment_doa: int,
     ):
         allow, reason, effective_focus, effective_focus_time = decide_attention(
             session_active=self.session_active,
@@ -230,26 +258,26 @@ class AttentionManagerNode(Node):
         self.last_focus_time = effective_focus_time
 
         # Spatial DOA filtering: Check if the voice came from a different direction than focused speaker
-        if allow and self.doa_enabled and self.focused_doa_angle != -1 and self.last_segment_doa_angle != -1:
-            dist = angular_distance(self.last_segment_doa_angle, self.focused_doa_angle)
+        if allow and self.doa_enabled and self.focused_doa_angle != -1 and segment_doa != -1:
+            dist = angular_distance(segment_doa, self.focused_doa_angle)
             if dist > self.doa_focus_margin:
                 # Bypassed if directly addressed or re-engaged
                 if not (direct_address or reengagement or robot_directive):
                     self.get_logger().info(
-                        f'🚫 Blocking transcription: segment DOA = {self.last_segment_doa_angle}°, '
+                        f'🚫 Blocking transcription: segment DOA = {segment_doa}°, '
                         f'focused DOA = {self.focused_doa_angle}° (diff = {dist:.1f}° > margin = {self.doa_focus_margin}°)'
                     )
                     return False, 'doa_side_conversation'
                 else:
                     self.get_logger().info(
                         f'🗣️ DOA switch via direct address: focus angle moving from '
-                        f'{self.focused_doa_angle}° to {self.last_segment_doa_angle}°'
+                        f'{self.focused_doa_angle}° to {segment_doa}°'
                     )
 
         if allow:
             # Update focused angle to keep tracking the current speaker
-            if self.last_segment_doa_angle != -1:
-                self.focused_doa_angle = self.last_segment_doa_angle
+            if segment_doa != -1:
+                self.focused_doa_angle = segment_doa
 
         return allow, reason
 

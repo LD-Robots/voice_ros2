@@ -289,13 +289,14 @@ def normalize_focus_state(
     focused_speaker: str,
     last_focus_time: float,
     focus_timeout_s: float,
+    conversation_paused: bool = False,
     *,
     now: float | None = None,
 ) -> tuple[str, float]:
     now_value = time.monotonic() if now is None else float(now)
     focus = (focused_speaker or '').strip() or 'Unknown'
     focus_time = float(last_focus_time or 0.0)
-    if focus != 'Unknown' and (now_value - focus_time) > float(focus_timeout_s):
+    if not conversation_paused and focus != 'Unknown' and (now_value - focus_time) > float(focus_timeout_s):
         return 'Unknown', focus_time
     return focus, focus_time
 
@@ -321,6 +322,7 @@ def decide_attention(
         focused_speaker,
         last_focus_time,
         focus_timeout_s,
+        conversation_paused=conversation_paused,
         now=now_value,
     )
 

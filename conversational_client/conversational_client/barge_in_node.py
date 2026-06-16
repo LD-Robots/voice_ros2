@@ -35,6 +35,14 @@ except ImportError as e:
     STOP_DETECTOR_AVAILABLE = False
     _STOP_DETECTOR_ERROR = str(e)
 
+# WebRTC VAD
+try:
+    import webrtcvad
+    WEBRTCVAD_AVAILABLE = True
+except ImportError as e:
+    WEBRTCVAD_AVAILABLE = False
+    _WEBRTCVAD_ERROR = str(e)
+
 # ═══════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════
@@ -134,6 +142,9 @@ class BargeInNode(Node):
         self.declare_parameter('stop_requires_voice_signature', True)
         
         self.declare_parameter('voice_enabled', True)
+        self.declare_parameter('webrtc_vad_enabled', True)
+        self.declare_parameter('webrtc_vad_aggressiveness', 3)
+        
         self.sr = self.get_parameter('sample_rate').value
         self.min_voice_ms = self.get_parameter('min_voice_ms').value
         self.debounce_ms = self.get_parameter('debounce_ms').value
@@ -150,6 +161,8 @@ class BargeInNode(Node):
         self.leak_margin_db = self.get_parameter('leak_margin_db').value
         self.leak_decay_ms = self.get_parameter('leak_decay_ms').value
         self.voice_enabled = self.get_parameter('voice_enabled').value
+        self.webrtc_vad_enabled = self.get_parameter('webrtc_vad_enabled').value
+        self.webrtc_vad_aggressiveness = self.get_parameter('webrtc_vad_aggressiveness').value
         
         # ─────────────────────────────────────────────────────────
         # STATE
@@ -193,6 +206,19 @@ class BargeInNode(Node):
             self.get_logger().warning(f'⚠️ Stop detector unavailable: {_STOP_DETECTOR_ERROR}')
         elif stop_enabled and stop_model_path and not os.path.exists(stop_model_path):
             self.get_logger().warning(f'⚠️ Stop model not found: {stop_model_path}')
+        
+        # Initialize WebRTC VAD
+        self.webrtc_vad = None
+        if self.webrtc_vad_enabled:
+            if WEBRTCVAD_AVAILABLE:
+                try:
+                    self.webrtc_vad = webrtcvad.Vad(self.webrtc_vad_aggressiveness)
+                    self.get_logger().info(f'🎙️ WebRTC VAD ENABLED (aggressiveness={self.webrtc_vad_aggressiveness})')
+                except Exception as e:
+                    self.get_logger().error(f'❌ Failed to initialize WebRTC VAD: {e}')
+                    self.webrtc_vad = None
+            else:
+                self.get_logger().warning(f'⚠️ WebRTC VAD not available: {_WEBRTCVAD_ERROR}. Falling back to energy/ZCR.')
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBERS
@@ -308,8 +334,8 @@ class BargeInNode(Node):
         """
         Check whether PCM contains human voice (not noise/echo):
         1. RMS above threshold (voice louder than TTS leak)
-        2. High-pass filter (removes low thumps)
-        3. Zero-crossing rate within human voice range
+        2. WebRTC VAD check if enabled and available (dividing block into sub-chunks)
+        3. Fallback: High-pass filter (removes low thumps) + Zero-crossing rate within human voice range
         """
         # Decay leak baseline
         self._maybe_decay_leak(now_ms)
@@ -326,14 +352,56 @@ class BargeInNode(Node):
             self._update_leak_baseline(rms, now_ms, fast=False)
             return False
             
-        # 2) High-pass filtering (low-frequency noise removal)
+        # 2) WebRTC VAD Check
+        if self.webrtc_vad_enabled and self.webrtc_vad is not None:
+            try:
+                frame_len = len(pcm_i16)
+                # WebRTC VAD supports 10ms (160 samples), 20ms (320 samples), or 30ms (480 samples) at 16kHz.
+                # Find the largest supported chunk size that evenly divides frame_len.
+                chunk_size = None
+                if frame_len % 480 == 0:
+                    chunk_size = 480
+                elif frame_len % 320 == 0:
+                    chunk_size = 320
+                elif frame_len % 160 == 0:
+                    chunk_size = 160
+                
+                if chunk_size is not None:
+                    webrtc_speech = False
+                    for i in range(0, frame_len, chunk_size):
+                        sub_audio = pcm_i16[i:i + chunk_size].tobytes()
+                        if self.webrtc_vad.is_speech(sub_audio, self.sr):
+                            webrtc_speech = True
+                            break
+                    
+                    self.get_logger().info(
+                        f'🎤 DEBUG BARGE-IN: RMS={rms:.2f} (thresh={rms_threshold:.2f}), WebRTC VAD speech={webrtc_speech}'
+                    )
+                    
+                    if not webrtc_speech:
+                        self._update_leak_baseline(rms, now_ms, fast=False)
+                        return False
+                    
+                    # Voice hold - keep detection during short dropouts
+                    if (now_ms - self.last_voice_ms) <= self.voice_hold_ms:
+                        return True
+                    self.last_voice_ms = now_ms
+                    return True
+                else:
+                    self.get_logger().debug(
+                        f"Non-standard frame length ({frame_len}) not divisible by WebRTC VAD frames (160/320/480). Falling back to ZCR."
+                    )
+            except Exception as e:
+                self.get_logger().error(f"WebRTC VAD processing error: {e}. Falling back to ZCR.")
+                
+        # 3) Fallback: High-pass filtering & ZCR (impulsive noise filter)
         pcm_filtered = _highpass_filter(pcm_i16, self.highpass_hz, self.sr)
-        
-        # 3) Zero-crossing rate (impulsive noise filter)
         zcr = _zero_crossing_rate(pcm_filtered)
         
         # DEBUG: Print RMS and ZCR if it passes the threshold
-        self.get_logger().info(f'🎤 DEBUG BARGE-IN: RMS={rms:.2f} (thresh={rms_threshold:.2f}), ZCR={zcr:.3f} (needs [{self.zcr_min},{self.zcr_max}])')
+        self.get_logger().info(
+            f'🎤 DEBUG BARGE-IN (ZCR Fallback): RMS={rms:.2f} (thresh={rms_threshold:.2f}), ZCR={zcr:.3f} (needs [{self.zcr_min},{self.zcr_max}])'
+        )
         
         if not (self.zcr_min <= zcr <= self.zcr_max):
             self._update_leak_baseline(rms, now_ms, fast=False)

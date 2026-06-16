@@ -98,6 +98,8 @@ barge_in_node:
     stop_logit_margin: 0.5
     stop_hits_required: 2
     voice_enabled: true
+    webrtc_vad_enabled: true
+    webrtc_vad_aggressiveness: 3
     min_voice_ms: 350
     min_rms_dbfs: -32.0
     highpass_hz: 300.0
