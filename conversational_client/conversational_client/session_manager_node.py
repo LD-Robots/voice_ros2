@@ -16,7 +16,8 @@ class SessionManagerNode(Node):
         super().__init__('session_manager_node')
         self.declare_parameter('transcription_topic', '/attended_transcription')
         transcription_topic = str(self.get_parameter('transcription_topic').value)
-        
+        self.current_backend = 'legacy'
+
         # Subscriber la transcrierea de la server (pentru a detecta intentia de goodbye din text)
         self.transcription_sub = self.create_subscription(
             Transcription,
@@ -24,12 +25,24 @@ class SessionManagerNode(Node):
             self.transcription_callback,
             10
         )
-        
+
+        # Track active backend — when gemini_live is active, Gemini says goodbye
+        # itself so we skip the cached TTS sound to avoid a double goodbye.
+        self.backend_sub = self.create_subscription(
+            String,
+            '/conversation_backend',
+            self._backend_callback,
+            10
+        )
+
         # Publisher pentru controlul sesiunii
         self.session_pub = self.create_publisher(Bool, '/end_session_external', 10)
         self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
         
         self.get_logger().info('✅ Session Manager started. Listening for Goodbye...')
+
+    def _backend_callback(self, msg: String):
+        self.current_backend = (msg.data or '').strip() or 'legacy'
 
     def transcription_callback(self, msg: Transcription):
         """Check if text contains goodbye words."""
@@ -42,14 +55,18 @@ class SessionManagerNode(Node):
             f'👋 Goodbye detected in text: "{detected_keyword}". Closing session.'
         )
 
-        tts_cmd = String()
-        tts_cmd.data = goodbye_tts_command(msg.language)
-        self.tts_cmd_pub.publish(tts_cmd)
+        # Play cached goodbye sound only for legacy backend.
+        # For gemini_live, Gemini responds naturally with its own farewell.
+        if self.current_backend != 'gemini_live':
+            tts_cmd = String()
+            tts_cmd.data = goodbye_tts_command(msg.language)
+            self.tts_cmd_pub.publish(tts_cmd)
 
         end_msg = Bool()
         end_msg.data = True
         self.session_pub.publish(end_msg)
         return
+
 
 def main(args=None):
     rclpy.init(args=args)

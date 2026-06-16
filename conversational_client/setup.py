@@ -20,8 +20,8 @@ setup(
     ],
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='valee',
-    maintainer_email='simavalentina.stefania@gmail.com',
+    maintainer='voice_ros2 contributors',
+    maintainer_email='',
     description='TODO: Package description',
     license='TODO: License declaration',
     extras_require={

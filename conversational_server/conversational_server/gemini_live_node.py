@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from conversational_interfaces.msg import Audio, TextChunk, Transcription, RobotCommand
+from conversational_interfaces.msg import Audio, TextChunk, Transcription, RobotCommand, WakeWord
 from conversational_client.conversation_utils import (
     advance_attention_focus,
     can_accept_control_action,
@@ -279,6 +279,7 @@ class GeminiLiveNode(Node):
         self._capture_user_audio = False
         self._current_input_sample_rate = self.input_sample_rate
         self._current_input_channels = 1
+        self._goodbye_pending = False  # True after user said goodbye, waiting for Gemini to finish
 
         # Publishers
         self.audio_pub = self.create_publisher(Audio, "/audio_out", 10)
@@ -289,6 +290,8 @@ class GeminiLiveNode(Node):
         self.pause_state_pub = self.create_publisher(Bool, "/conversation_pause", 10)
         self.tts_stop_pub = self.create_publisher(Bool, "/stop_playback", 10)
         self.status_pub = self.create_publisher(String, "/gemini_live_status", 10)
+        self.session_pub = self.create_publisher(Bool, "/session_active", 10)
+        self.end_session_pub = self.create_publisher(Bool, "/end_session_external", 10)
 
         # Subscriptions
         self.audio_sub = self.create_subscription(Audio, "/audio_clean", self.audio_callback, 10)
@@ -302,6 +305,7 @@ class GeminiLiveNode(Node):
         self.backend_sub = self.create_subscription(String, "/conversation_backend", self.backend_callback, 10)
         self.person_context_sub = self.create_subscription(String, "/person_context", self.person_context_callback, 10)
         self.pause_sub = self.create_subscription(Bool, "/conversation_pause", self.pause_callback, 10)
+        self.wake_word_sub = self.create_subscription(WakeWord, "/wake_word", self.wake_word_callback, 10)
 
         self._ws_thread.start()
         self._publish_status("connecting")
@@ -335,6 +339,29 @@ class GeminiLiveNode(Node):
             self.pending_focus_speaker = "Unknown"
             self.pending_focus_at = 0.0
             self._cancel_and_clear()
+
+    def wake_word_callback(self, msg: WakeWord):
+        """Inject a greeting into Gemini when wake word is detected.
+
+        Instead of playing a cached 'ack' sound, let Gemini respond naturally
+        to the greeting so the conversation feels alive from the first word.
+        """
+        if self.current_backend != "gemini_live":
+            return
+        if not self._connected.is_set() or not self._setup_sent:
+            return
+        word = (msg.word or "").strip()
+        # Only act on the hello wake word, not barge-in or stop models
+        if "hello" not in word and "wake" not in word:
+            return
+        self.get_logger().info(f"Gemini: injecting greeting for wake word '{word}'")
+        # Inject as a user turn so Gemini responds with a natural greeting
+        self._send_raw({
+            "clientContent": {
+                "turns": [{"role": "user", "parts": [{"text": "Hello!"}]}],
+                "turnComplete": True,
+            }
+        })
 
     def speaking_callback(self, msg: Bool):
         was_speaking = self.robot_speaking
@@ -703,6 +730,18 @@ class GeminiLiveNode(Node):
         import uuid
         self._active_turn_id = str(uuid.uuid4())[:8]
 
+        # If goodbye was detected, close the session now that Gemini finished speaking
+        if self._goodbye_pending:
+            self._goodbye_pending = False
+            self.get_logger().info("Gemini finished goodbye reply — closing session")
+            session_msg = Bool()
+            session_msg.data = False
+            self.session_pub.publish(session_msg)
+            end_msg = Bool()
+            end_msg.data = True
+            self.end_session_pub.publish(end_msg)
+            return
+
         if self._pending_resume_text:
             self._clear_pending_resume()
             self._send_setup()
@@ -713,6 +752,7 @@ class GeminiLiveNode(Node):
             
         if not self._user_speaking and not self.conversation_paused and not self.waiting_for_robot_confirmation:
             self._schedule_deferred_response_after_response_done()
+
 
     def _handle_input_transcript(self, transcript: str):
         ignore_reason = self._ignored_transcript_reason(transcript)
@@ -791,6 +831,12 @@ class GeminiLiveNode(Node):
         self._assistant_name_question_active = self._is_assistant_name_question(normalized)
         self._send_setup()
 
+        # Goodbye detection: let Gemini say farewell naturally, then close the session.
+        if self._detect_goodbye(normalized) and not self._goodbye_pending:
+            self._goodbye_pending = True
+            self.get_logger().info(f"Goodbye detected in transcript: '{transcript}' — Gemini will close session after reply")
+            # Gemini will respond naturally; we close the session after its turn completes.
+
         out = Transcription()
         out.text = transcript
         out.language = active_language
@@ -799,6 +845,36 @@ class GeminiLiveNode(Node):
 
         self._user_speaking = False
         self._publish_captured_user_audio_segment()
+
+    def _detect_goodbye(self, normalized_text: str) -> bool:
+        """Return True if the normalized transcript is a goodbye phrase."""
+        GOODBYE_KEYWORDS = (
+            'bye bye', 'la revedere', 'goodbye', 'see you later', 'see you',
+            'ne vedem', 'pa pa', 'bye', 'pa',
+        )
+        GOODBYE_CONTEXT_WORDS = {
+            'ok', 'okay', 'robot', 'for', 'now', 'thanks', 'thank', 'you',
+            'please', 'well', 'then', 'so', 'alright', 'all', 'right', 'bye',
+            'goodbye', 'bine', 'pa', 'robotule', 'multumesc', 'merci', 'te',
+            'rog', 'gata', 'acum', 'deocamdata',
+        }
+        import re
+        def _phrase_pattern(phrase: str) -> str:
+            tokens = [re.escape(t) for t in phrase.split() if t]
+            return r'\b' + r'\s+'.join(tokens) + r'\b'
+
+        for clause in re.split(r'[.!?]+', normalized_text or ''):
+            clause = clause.strip()
+            if not clause:
+                continue
+            for keyword in GOODBYE_KEYWORDS:
+                m = re.search(_phrase_pattern(keyword), clause)
+                if not m:
+                    continue
+                remainder = ' '.join((clause[:m.start()] + ' ' + clause[m.end():]).split())
+                if not remainder or all(t in GOODBYE_CONTEXT_WORDS for t in remainder.split()):
+                    return True
+        return False
 
     # ─── Session Setup ───────────────────────────────────────────────────────
 

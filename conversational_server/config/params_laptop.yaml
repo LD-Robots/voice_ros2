@@ -98,7 +98,7 @@ audio_capture_node:
     gain: 1.0
     chunk_ms: 60
     debug_recording: true
-    debug_wav_path: "/home/valee/voice_ros2/gemini_debug_mic.wav"
+    # debug_wav_path is injected by the launch file (workspace_root/gemini_debug_mic.wav)
 
 vad_node:
   ros__parameters:
@@ -156,7 +156,7 @@ wake_word_node:
   ros__parameters:
     threshold: 0.5
     cooldown_ms: 1500
-    custom_models: "/home/valee/voice_ros2/conversational_client/models/hello_robot.onnx:wake,/home/valee/voice_ros2/conversational_client/models/goodbye_robot.onnx:stop"
+    # custom_models is injected by the launch file (package share models directory)
     model_thresholds: "hello_robot:0.20,goodbye_robot:0.60"
 
 voice_command_node:
@@ -188,10 +188,8 @@ echo_canceller_node:
     step_size: 0.15              # Putin mai agresiv
     max_delay_ms: 3000           # Crescut la 3 secunde pentru a acoperi latenta extrema
     debug_recording: true
-    raw_wav_path: "/home/valee/voice_ros2/gemini_aec_raw.wav"
-    ref_wav_path: "/home/valee/voice_ros2/gemini_aec_reference.wav"
-    clean_wav_path: "/home/valee/voice_ros2/gemini_aec_cleaned.wav"
-    
+    # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
+
     # DeepFilterNet Settings
     deep_filter_enabled: true
     deep_filter_attenuation: 100  # Percentage of noise reduction (0-100)

@@ -127,6 +127,7 @@ class WakeWordNode(Node):
         # ─────────────────────────────────────────────────────────
         self.session_active = False  # True when the session is active
         self.audio_buffer = []       # Buffer for audio accumulation
+        self.current_backend = 'legacy'  # Track active backend
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - receive microphone audio
@@ -157,6 +158,14 @@ class WakeWordNode(Node):
             Bool,
             '/end_session_external',
             self.external_end_session_callback,
+            10
+        )
+
+        # Track active backend to adjust behaviour
+        self.backend_sub = self.create_subscription(
+            String,
+            '/conversation_backend',
+            self._backend_callback,
             10
         )
         
@@ -340,10 +349,12 @@ class WakeWordNode(Node):
         session_msg.data = True
         self.session_pub.publish(session_msg)
         
-        # Send acknowledgement command to TTS
-        tts_cmd = String()
-        tts_cmd.data = 'ack_en'
-        self.tts_cmd_pub.publish(tts_cmd)
+        # Send acknowledgement to TTS only for legacy backend.
+        # For gemini_live, Gemini responds naturally to the injected greeting.
+        if self.current_backend != 'gemini_live':
+            tts_cmd = String()
+            tts_cmd.data = 'ack_en'
+            self.tts_cmd_pub.publish(tts_cmd)
     
     # ═══════════════════════════════════════════════════════════════════
     # TTS STOP (BARGE-IN ONLY)
@@ -384,10 +395,12 @@ class WakeWordNode(Node):
             session_msg.data = False
             self.session_pub.publish(session_msg)
             
-            # Send goodbye to TTS
-            tts_cmd = String()
-            tts_cmd.data = 'goodbye_en'
-            self.tts_cmd_pub.publish(tts_cmd)
+            # Send goodbye to TTS only for legacy backend.
+            # For gemini_live, Gemini says goodbye naturally in its own response.
+            if self.current_backend != 'gemini_live':
+                tts_cmd = String()
+                tts_cmd.data = 'goodbye_en'
+                self.tts_cmd_pub.publish(tts_cmd)
     
     def external_end_session_callback(self, msg: Bool):
         """Callback for ending the session externally."""
@@ -398,6 +411,10 @@ class WakeWordNode(Node):
             session_msg = Bool()
             session_msg.data = False
             self.session_pub.publish(session_msg)
+
+    def _backend_callback(self, msg: String):
+        """Track the active conversation backend."""
+        self.current_backend = (msg.data or '').strip() or 'legacy'
     
     def reset_session(self):
         """Reset the session to standby."""

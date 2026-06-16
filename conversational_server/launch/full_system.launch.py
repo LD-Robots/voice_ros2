@@ -28,7 +28,14 @@ def generate_launch_description():
     server_share = get_package_share_directory('conversational_server')
     models_dir = os.path.join(client_share, 'models')
     workspace_root = _find_workspace_root()
-    voices_dir = os.path.join(str(workspace_root) if workspace_root else os.getcwd(), 'voices')
+    ws_root_str = str(workspace_root) if workspace_root else str(Path.home())
+    voices_dir = os.path.join(ws_root_str, 'voices')
+
+    # Debug recording paths — resolved at launch time so no user-specific paths in YAML
+    debug_mic_wav   = os.path.join(ws_root_str, 'gemini_debug_mic.wav')
+    aec_raw_wav     = os.path.join(ws_root_str, 'gemini_aec_raw.wav')
+    aec_ref_wav     = os.path.join(ws_root_str, 'gemini_aec_reference.wav')
+    aec_clean_wav   = os.path.join(ws_root_str, 'gemini_aec_cleaned.wav')
     
     stop_model_path = os.path.join(voices_dir, 'stop_keyword.onnx')
     if not os.path.exists(stop_model_path):
@@ -104,7 +111,10 @@ def generate_launch_description():
             package='conversational_client',
             executable='audio_capture_node',
             name='audio_capture_node',
-            parameters=[config_file_path, {'device_index': LaunchConfiguration('audio_device_index')}]
+            parameters=[config_file_path, {
+                'device_index': LaunchConfiguration('audio_device_index'),
+                'debug_wav_path': debug_mic_wav,
+            }]
         ),
         
         Node(
@@ -172,7 +182,11 @@ def generate_launch_description():
             package='conversational_client',
             executable='echo_canceller_node',
             name='echo_canceller_node',
-            parameters=[config_file_path]
+            parameters=[config_file_path, {
+                'raw_wav_path':   aec_raw_wav,
+                'ref_wav_path':   aec_ref_wav,
+                'clean_wav_path': aec_clean_wav,
+            }]
         ),
 
         Node(
