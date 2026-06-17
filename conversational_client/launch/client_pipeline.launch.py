@@ -279,36 +279,7 @@ def generate_launch_description():
                 'default_steps': 1,
                 'max_steps': 20,
                 'enable_tts_ack': False,
-            }]
-        ),
-
-        # Robot Command Executor (bridges voice intents to controllers)
-        Node(
-            package='conversational_client',
-            executable='robot_command_executor_node',
-            name='robot_command_executor_node',
-            output='screen',
-            parameters=[{
-                'execution_enabled': True,
-                'command_topic_enabled': True,
-                'command_topic_only': False,
-                'approved_command_topic': '/humanoid_command',
-                'move_mode': 'twist',
-                'cmd_vel_topic': '/cmd_vel',
-                'behavior_mode': 'topic',
-                'behavior_topic': '/robot_behavior_command',
-                'raise_hands_service': '/raise_hands',
-                'lower_hands_service': '/lower_hands',
-                'wave_service': '/wave',
-                'dance_service': '/dance',
-                'sit_service': '/sit',
-                'stand_service': '/stand',
-                'preempt_on_new_command': True,
-                'enable_voice_cancel': True,
-                'enable_risky_confirmation': True,
-                'confirmation_timeout_s': 12.0,
-                'risky_steps_threshold': 5,
-                'risky_backward_steps_threshold': 3,
+                'command_topic': '/humanoid_command',
             }]
         ),
     ])

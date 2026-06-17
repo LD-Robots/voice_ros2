@@ -147,6 +147,7 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('utterance_capture_prefix_ms', 400)
         self.declare_parameter('utterance_capture_min_ms', 800)
         self.declare_parameter('name_context_wait_ms', 950)
+        self.declare_parameter('robot_command_topic', '/humanoid_command')
         self.declare_parameter('web_search_enabled', True)
         self.declare_parameter('web_search_model', DEFAULT_WEB_SEARCH_MODEL)
         self.declare_parameter('web_search_context_size', DEFAULT_WEB_SEARCH_CONTEXT_SIZE)
@@ -262,6 +263,7 @@ class OpenAIRealtimeNode(Node):
             0,
             int(self.get_parameter('name_context_wait_ms').value),
         )
+        self.robot_command_topic = str(self.get_parameter('robot_command_topic').value)
         self.web_search_enabled = bool(self.get_parameter('web_search_enabled').value)
         self.web_search_model = str(self.get_parameter('web_search_model').value)
         self.web_search_context_size = str(
@@ -415,7 +417,7 @@ class OpenAIRealtimeNode(Node):
         )
         self.robot_command_sub = self.create_subscription(
             RobotCommand,
-            '/robot_command',
+            self.robot_command_topic,
             self.robot_command_callback,
             10,
         )

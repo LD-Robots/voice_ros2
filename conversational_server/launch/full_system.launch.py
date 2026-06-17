@@ -191,13 +191,6 @@ def generate_launch_description():
 
         Node(
             package='conversational_client',
-            executable='robot_command_executor_node',
-            name='robot_command_executor_node',
-            parameters=[config_file_path]
-        ),
-
-        Node(
-            package='conversational_client',
             executable='respeaker_doa_node',
             name='respeaker_doa_node',
             parameters=[config_file_path]

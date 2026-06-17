@@ -143,29 +143,8 @@ voice_command_node:
     default_steps: 1
     max_steps: 20
     enable_tts_ack: false
-
-robot_command_executor_node:
-  ros__parameters:
-    execution_enabled: true
-    command_topic_enabled: true
-    command_topic_only: false
-    approved_command_topic: "/humanoid_command"
-    move_mode: "twist"
-    cmd_vel_topic: "/cmd_vel"
-    behavior_mode: "topic"
-    behavior_topic: "/robot_behavior_command"
-    raise_hands_service: "/raise_hands"
-    lower_hands_service: "/lower_hands"
-    wave_service: "/wave"
-    dance_service: "/dance"
-    sit_service: "/sit"
-    stand_service: "/stand"
-    preempt_on_new_command: true
-    enable_voice_cancel: true
-    enable_risky_confirmation: true
-    confirmation_timeout_s: 12.0
-    risky_steps_threshold: 5
-    risky_backward_steps_threshold: 3
+    command_topic: "/humanoid_command"
+    log_ignored_transcriptions: true
 
 echo_canceller_node:
   ros__parameters:
@@ -179,4 +158,5 @@ echo_canceller_node:
     
     # DeepFilterNet Settings
     deep_filter_enabled: true
+    deep_filter_log_level: "ERROR"
     deep_filter_attenuation: 100  # Percentage of noise reduction (0-100)

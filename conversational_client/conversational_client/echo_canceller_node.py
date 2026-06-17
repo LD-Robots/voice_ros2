@@ -8,6 +8,9 @@ from scipy import signal
 import wave
 import collections
 import time
+import sys
+import types
+from collections import namedtuple
 
 # Import WebRTC Audio Processing
 try:
@@ -20,6 +23,17 @@ except ImportError:
 try:
     import torch
     import torchaudio
+    if 'torchaudio.backend.common' not in sys.modules:
+        # DeepFilterNet 0.5.x imports this old torchaudio path. Newer torchaudio
+        # versions removed it, but DeepFilterNet only needs the metadata type.
+        backend_pkg = types.ModuleType('torchaudio.backend')
+        common_mod = types.ModuleType('torchaudio.backend.common')
+        common_mod.AudioMetaData = namedtuple(
+            'AudioMetaData',
+            'sample_rate num_frames num_channels bits_per_sample encoding',
+        )
+        sys.modules.setdefault('torchaudio.backend', backend_pkg)
+        sys.modules['torchaudio.backend.common'] = common_mod
     from df.enhance import init_df, enhance
     DF_AVAILABLE = True
 except ImportError:
@@ -58,12 +72,20 @@ class EchoCancellerNode(Node):
 
         # Initialize DeepFilterNet
         self.declare_parameter('deep_filter_enabled', True)
+        self.declare_parameter('deep_filter_model_dir', '')
+        self.declare_parameter('deep_filter_log_level', 'ERROR')
         self.deep_filter_enabled = self.get_parameter('deep_filter_enabled').value and DF_AVAILABLE
+        self.deep_filter_model_dir = str(self.get_parameter('deep_filter_model_dir').value).strip() or None
+        self.deep_filter_log_level = str(self.get_parameter('deep_filter_log_level').value)
         
         if self.deep_filter_enabled:
             self.get_logger().info("🧠 [DF] Loading DeepFilterNet model... (this may take a few seconds)")
             start_t = time.time()
-            self.df_model, self.df_state, _ = init_df()
+            self.df_model, self.df_state, _ = init_df(
+                model_base_dir=self.deep_filter_model_dir,
+                log_level=self.deep_filter_log_level,
+                log_file=None,
+            )
             self.df_sr = self.df_state.sr() # Usually 48000
             self.df_hop = self.df_state.hop_size() # Usually 480
             

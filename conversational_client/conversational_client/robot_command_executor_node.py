@@ -18,6 +18,8 @@ from geometry_msgs.msg import Twist
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
+from .robot_command_catalog import command_id_for, command_name_for
+
 
 BEHAVIOR_INTENTS = (
     'raise_hands',
@@ -314,6 +316,8 @@ class RobotCommandExecutorNode(Node):
         out.header = msg.header
         out.intent = msg.intent
         out.direction = msg.direction
+        out.command_id = msg.command_id if msg.command_id >= 0 else command_id_for(msg.intent, msg.direction)
+        out.command_name = msg.command_name or command_name_for(msg.intent, msg.direction)
         out.steps = msg.steps
         out.confidence = msg.confidence
         out.source_text = msg.source_text
@@ -321,6 +325,10 @@ class RobotCommandExecutorNode(Node):
         out.speaker = msg.speaker
         out.parameters_json = msg.parameters_json
         self.approved_command_pub.publish(out)
+        self.get_logger().info(
+            f'Published approved command: id={out.command_id}, name={out.command_name}, '
+            f'intent={out.intent}, direction={out.direction}, steps={out.steps}, topic={self.approved_command_topic}'
+        )
 
     def _execute_move(self, msg: RobotCommand):
         direction = msg.direction.strip().lower()

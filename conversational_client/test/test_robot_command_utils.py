@@ -1,3 +1,4 @@
+from conversational_client.robot_command_catalog import command_id_for, command_name_for
 from conversational_client.robot_command_utils import looks_like_robot_command, parse_robot_command
 
 
@@ -61,6 +62,17 @@ def test_parse_humanoid_posture_commands():
     assert stand is not None
     assert stand['intent'] == 'stand'
     assert stand['parameters']['posture'] == 'stand'
+
+
+def test_command_catalog_ids_are_stable():
+    assert command_name_for('move', 'forward') == 'move_forward'
+    assert command_id_for('move', 'forward') == 10
+    assert command_id_for('move', 'backward') == 11
+    assert command_id_for('turn', 'left') == 20
+    assert command_id_for('turn', 'right') == 21
+    assert command_id_for('dance', 'none') == 33
+    assert command_id_for('sit', 'none') == 34
+    assert command_id_for('stand', 'none') == 35
 
 
 def test_do_not_misread_normal_sentences_as_robot_commands():
