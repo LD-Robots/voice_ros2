@@ -12,11 +12,23 @@ import time
 import unicodedata
 
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.node import Node
+from conversational_interfaces.action import HumanoidMotion
 from conversational_interfaces.msg import RobotCommand, Transcription
 from geometry_msgs.msg import Twist
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
+
+
+BEHAVIOR_INTENTS = (
+    'raise_hands',
+    'lower_hands',
+    'wave',
+    'dance',
+    'sit',
+    'stand',
+)
 
 
 class RobotCommandExecutorNode(Node):
@@ -37,12 +49,16 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('max_move_duration_s', 20.0)
         self.declare_parameter('max_turn_duration_s', 12.0)
 
-        self.declare_parameter('behavior_mode', 'topic')  # topic | service | both
+        self.declare_parameter('behavior_mode', 'topic')  # topic | service | action | both | all
         self.declare_parameter('behavior_topic', '/robot_behavior_command')
+        self.declare_parameter('behavior_action_name', '/humanoid_motion')
+        self.declare_parameter('behavior_action_timeout_s', 30.0)
         self.declare_parameter('raise_hands_service', '/raise_hands')
         self.declare_parameter('lower_hands_service', '/lower_hands')
         self.declare_parameter('wave_service', '/wave')
         self.declare_parameter('dance_service', '/dance')
+        self.declare_parameter('sit_service', '/sit')
+        self.declare_parameter('stand_service', '/stand')
         self.declare_parameter('service_timeout_s', 3.0)
 
         # Command-state handling
@@ -77,10 +93,16 @@ class RobotCommandExecutorNode(Node):
 
         self.behavior_mode = str(self.get_parameter('behavior_mode').value)
         self.behavior_topic = str(self.get_parameter('behavior_topic').value)
+        self.behavior_action_name = str(self.get_parameter('behavior_action_name').value)
+        self.behavior_action_timeout_s = float(
+            self.get_parameter('behavior_action_timeout_s').value
+        )
         self.raise_hands_service = str(self.get_parameter('raise_hands_service').value)
         self.lower_hands_service = str(self.get_parameter('lower_hands_service').value)
         self.wave_service = str(self.get_parameter('wave_service').value)
         self.dance_service = str(self.get_parameter('dance_service').value)
+        self.sit_service = str(self.get_parameter('sit_service').value)
+        self.stand_service = str(self.get_parameter('stand_service').value)
         self.service_timeout_s = float(self.get_parameter('service_timeout_s').value)
 
         self.preempt_on_new_command = bool(self.get_parameter('preempt_on_new_command').value)
@@ -134,16 +156,25 @@ class RobotCommandExecutorNode(Node):
         self.move_topic_pub = self.create_publisher(String, self.move_topic, 10)
         self.behavior_pub = self.create_publisher(String, self.behavior_topic, 10)
         self.status_pub = self.create_publisher(String, '/robot_command_status', 10)
+        self.behavior_action_client = ActionClient(
+            self,
+            HumanoidMotion,
+            self.behavior_action_name,
+        )
 
         self.raise_hands_client = self.create_client(Trigger, self.raise_hands_service)
         self.lower_hands_client = self.create_client(Trigger, self.lower_hands_service)
         self.wave_client = self.create_client(Trigger, self.wave_service)
         self.dance_client = self.create_client(Trigger, self.dance_service)
+        self.sit_client = self.create_client(Trigger, self.sit_service)
+        self.stand_client = self.create_client(Trigger, self.stand_service)
         self.behavior_clients = {
             'raise_hands': self.raise_hands_client,
             'lower_hands': self.lower_hands_client,
             'wave': self.wave_client,
             'dance': self.dance_client,
+            'sit': self.sit_client,
+            'stand': self.stand_client,
         }
 
         self._queue = queue.Queue(maxsize=self.max_pending_commands)
@@ -268,8 +299,8 @@ class RobotCommandExecutorNode(Node):
         if intent == 'turn':
             self._execute_turn(msg)
             return
-        if intent in ('raise_hands', 'lower_hands', 'wave', 'dance'):
-            self._execute_behavior(intent)
+        if intent in BEHAVIOR_INTENTS:
+            self._execute_behavior(intent, msg)
             return
         self.get_logger().warn(f'Unsupported intent: {intent}')
 
@@ -377,17 +408,18 @@ class RobotCommandExecutorNode(Node):
         self.get_logger().info(f'Executed turn: direction={direction}, angle={angle_deg}, duration={duration:.2f}s')
         self._publish_status(f'executed_turn:{direction}:{int(angle_deg)}')
 
-    def _execute_behavior(self, intent: str):
-        mode = self.behavior_mode.lower()
-
-        if mode in ('topic', 'both'):
+    def _execute_behavior(self, intent: str, command: RobotCommand):
+        if self._behavior_mode_enabled('topic'):
             msg = String()
             msg.data = intent
             self.behavior_pub.publish(msg)
             self.get_logger().info(f'Published behavior command: {intent}')
             self._publish_status(f'executed_behavior_topic:{intent}')
 
-        if mode in ('service', 'both'):
+        if self._behavior_mode_enabled('action'):
+            self._execute_behavior_action(intent, command)
+
+        if self._behavior_mode_enabled('service'):
             client = self.behavior_clients.get(intent)
             if client is None:
                 self.get_logger().warn(f'No service client configured for behavior: {intent}')
@@ -427,6 +459,106 @@ class RobotCommandExecutorNode(Node):
             else:
                 self.get_logger().warn(f'Service execution failed for {intent}: {result.message}')
                 self._publish_status(f'executed_behavior_service:{intent}:failed')
+
+    def _execute_behavior_action(self, intent: str, command: RobotCommand):
+        if not self.behavior_action_client.wait_for_server(timeout_sec=0.5):
+            self.get_logger().warn(
+                f'Action server unavailable: {self.behavior_action_name}. '
+                f'Behavior {intent} was not sent.'
+            )
+            self._publish_status(f'action_unavailable:{intent}')
+            return
+
+        goal = HumanoidMotion.Goal()
+        goal.header.stamp = self.get_clock().now().to_msg()
+        goal.motion_name = intent
+        goal.source_intent = command.intent
+        goal.parameters_json = command.parameters_json or '{}'
+        goal.timeout_s = float(max(0.1, self.behavior_action_timeout_s))
+
+        send_future = self.behavior_action_client.send_goal_async(
+            goal,
+            feedback_callback=self._motion_feedback_callback,
+        )
+        deadline = time.monotonic() + goal.timeout_s
+        while (
+            self._running
+            and not self._cancel_event.is_set()
+            and not send_future.done()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+
+        if self._cancel_event.is_set():
+            self._publish_status(f'action_canceled_before_accept:{intent}')
+            return
+        if not send_future.done():
+            self.get_logger().warn(f'Action goal send timeout for behavior: {intent}')
+            self._publish_status(f'action_send_timeout:{intent}')
+            return
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            self.get_logger().warn(f'Action goal rejected for behavior: {intent}')
+            self._publish_status(f'action_rejected:{intent}')
+            return
+
+        self.get_logger().info(f'Action goal accepted for behavior: {intent}')
+        self._publish_status(f'action_accepted:{intent}')
+        result_future = goal_handle.get_result_async()
+
+        while (
+            self._running
+            and not self._cancel_event.is_set()
+            and not result_future.done()
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.05)
+
+        if self._cancel_event.is_set():
+            try:
+                goal_handle.cancel_goal_async()
+            except Exception as exc:
+                self.get_logger().warn(f'Failed to request action cancel: {exc}')
+            self._publish_status(f'action_cancel_requested:{intent}')
+            return
+
+        if not result_future.done():
+            try:
+                goal_handle.cancel_goal_async()
+            except Exception as exc:
+                self.get_logger().warn(f'Failed to request action timeout cancel: {exc}')
+            self.get_logger().warn(f'Action result timeout for behavior: {intent}')
+            self._publish_status(f'action_timeout:{intent}')
+            return
+
+        result_response = result_future.result()
+        result = getattr(result_response, 'result', None)
+        if result is None:
+            self.get_logger().warn(f'Action returned no result for behavior: {intent}')
+            self._publish_status(f'action_result_missing:{intent}')
+            return
+
+        status = result.status or ('ok' if result.success else 'failed')
+        if result.success:
+            self.get_logger().info(f'Action succeeded for {intent}: {result.message}')
+        else:
+            self.get_logger().warn(f'Action failed for {intent}: {result.message}')
+        self._publish_status(f'action_result:{intent}:{status}')
+
+    def _motion_feedback_callback(self, feedback_msg):
+        feedback = feedback_msg.feedback
+        progress = max(0.0, min(1.0, float(feedback.progress)))
+        self._publish_status(f'action_feedback:{feedback.state}:{progress:.2f}')
+
+    def _behavior_mode_enabled(self, target: str) -> bool:
+        mode = self.behavior_mode.lower().strip()
+        if mode == 'all':
+            return True
+        if mode == 'both':
+            return target in ('topic', 'service')
+        modes = {item.strip() for item in mode.split(',') if item.strip()}
+        return target in modes
 
     def _enqueue_command(self, msg: RobotCommand, preempt: bool):
         if preempt:

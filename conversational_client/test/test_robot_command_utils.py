@@ -40,6 +40,29 @@ def test_parse_short_addressed_direction_command():
     assert parsed['steps'] == 1
 
 
+def test_parse_humanoid_posture_commands():
+    sit = parse_robot_command(
+        'Robot, sit down',
+        default_steps=1,
+        max_steps=20,
+        require_direct_robot_address=True,
+    )
+    stand = parse_robot_command(
+        'Robot, stand up',
+        default_steps=1,
+        max_steps=20,
+        require_direct_robot_address=True,
+    )
+
+    assert sit is not None
+    assert sit['intent'] == 'sit'
+    assert sit['parameters']['posture'] == 'sit'
+
+    assert stand is not None
+    assert stand['intent'] == 'stand'
+    assert stand['parameters']['posture'] == 'stand'
+
+
 def test_do_not_misread_normal_sentences_as_robot_commands():
     assert looks_like_robot_command(
         'We should stop climate change.',

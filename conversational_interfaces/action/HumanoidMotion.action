@@ -1,0 +1,14 @@
+std_msgs/Header header
+string motion_name
+string source_intent
+string parameters_json
+float32 timeout_s
+---
+bool accepted
+bool success
+string status
+string message
+---
+string state
+float32 progress
+string message

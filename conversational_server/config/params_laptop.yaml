@@ -186,8 +186,14 @@ robot_command_executor_node:
     cmd_vel_topic: "/cmd_vel"
     behavior_mode: "topic"
     behavior_topic: "/robot_behavior_command"
+    behavior_action_name: "/humanoid_motion"
+    behavior_action_timeout_s: 30.0
     raise_hands_service: "/raise_hands"
+    lower_hands_service: "/lower_hands"
+    wave_service: "/wave"
     dance_service: "/dance"
+    sit_service: "/sit"
+    stand_service: "/stand"
     preempt_on_new_command: true
     enable_voice_cancel: true
     enable_risky_confirmation: true
