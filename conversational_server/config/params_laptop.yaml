@@ -132,8 +132,8 @@ barge_in_node:
 
 speaker_id_node:
   ros__parameters:
-    similarity_threshold: 0.45
-    similarity_margin: 0.12
+    similarity_threshold: 0.40
+    similarity_margin: 0.08
     enrollment_reuse_threshold: 0.58
     enrollment_reuse_margin: 0.16
 

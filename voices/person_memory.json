@@ -14,7 +14,7 @@
       "facts": [
         "this one can you tell me another one"
       ],
-      "last_seen": "2026-05-15T07:50:52.318013+00:00"
+      "last_seen": "2026-06-17T14:17:00.024663+00:00"
     },
     "speaker_002": {
       "voice_label": "speaker_002",
@@ -28,7 +28,7 @@
       "preferred_name": "Dragos",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-03-06T13:39:54.120649+00:00"
+      "last_seen": "2026-06-17T14:15:46.200515+00:00"
     },
     "speaker_004": {
       "voice_label": "speaker_004",
@@ -42,7 +42,7 @@
       "preferred_name": "Delia",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-04-24T11:35:32.544766+00:00"
+      "last_seen": "2026-06-17T14:35:08.425467+00:00"
     },
     "speaker_006": {
       "voice_label": "speaker_006",
@@ -51,7 +51,7 @@
       "facts": [
         "i am allergic to cats can you tell me a breed of cat that doesn t have hair"
       ],
-      "last_seen": "2026-06-10T09:49:37.932335+00:00"
+      "last_seen": "2026-06-17T12:45:55.068449+00:00"
     },
     "speaker_007": {
       "voice_label": "speaker_007",

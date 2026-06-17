@@ -280,6 +280,7 @@ class GeminiLiveNode(Node):
         self._current_input_sample_rate = self.input_sample_rate
         self._current_input_channels = 1
         self._goodbye_pending = False  # True after user said goodbye, waiting for Gemini to finish
+        self._pending_context_update = False  # True when context inject was blocked by active response
 
         # Publishers
         self.audio_pub = self.create_publisher(Audio, "/audio_out", 10)
@@ -328,6 +329,9 @@ class GeminiLiveNode(Node):
         self.session_active = bool(msg.data)
         if self.session_active:
             self.get_logger().debug("Gemini Live session ACTIVE")
+            # Start capturing user audio immediately so speaker_id_node gets
+            # a segment at the end of the first user turn.
+            self._start_user_audio_capture()
         else:
             self.get_logger().debug("Gemini Live session INACTIVE")
             self.speaker_tracker.reset()
@@ -472,16 +476,19 @@ class GeminiLiveNode(Node):
             return
         if self.current_backend != "gemini_live":
             return
-        if self._response_active or self._user_speaking:
-            # Don't inject while Gemini is speaking or user is mid-sentence.
+        if self._response_active:
+            # Don't inject while Gemini is speaking. We CAN inject while the user
+            # is mid-sentence, which allows the model to know who is speaking before it responds!
+            # Schedule a deferred inject for when the response finishes.
+            self._pending_context_update = True
             return
 
         note_parts = []
         if self.current_speaker and self.current_speaker != "Unknown":
-            note_parts.append(f"[System note – do not speak] Current speaker identified as internal label: {self.current_speaker}.")
+            note_parts.append(f"[SYSTEM OVERRIDE: The biometric speaker identification system has confirmed the speaker is internal label: {self.current_speaker}.]")
         preferred_name = self._voice_correlated_preferred_name()
         if preferred_name:
-            note_parts.append(f"Preferred spoken name: {preferred_name}. Use this name naturally if relevant.")
+            note_parts.append(f"[SYSTEM OVERRIDE: The speaker's actual name is {preferred_name}. You MUST acknowledge and use this name immediately.]")
         preferred_language = self.person_context.get("preferred_language", "")
         if preferred_language:
             note_parts.append(f"Preferred language: {preferred_language}.")
@@ -492,8 +499,8 @@ class GeminiLiveNode(Node):
         if not note_parts:
             return
 
-        note_text = " ".join(note_parts) + " [Continue the conversation naturally without reacting to this note.]"
-        self.get_logger().debug(f"Gemini context inject ({reason}): speaker={self.current_speaker}")
+        note_text = "\n\n" + " ".join(note_parts) + "\n\n"
+        self.get_logger().info(f"Gemini context inject ({reason}): speaker={self.current_speaker}, name={preferred_name}")
         self._send_raw({
             "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": note_text}]}],
@@ -624,6 +631,32 @@ class GeminiLiveNode(Node):
             self.get_logger().debug("Gemini Live session setup confirmed")
             return
 
+        # Tool calls from server (Google Search or custom tools)
+        if "toolCall" in event:
+            tool_call = event.get("toolCall", {})
+            function_calls = tool_call.get("functionCalls", [])
+            self.get_logger().info(f"Gemini Live received toolCall with {len(function_calls)} functions")
+            
+            responses = []
+            for fc in function_calls:
+                call_id = fc.get("id", "")
+                name = fc.get("name", "")
+                args = fc.get("args", {})
+                self.get_logger().info(f"  - tool: {name}, args: {args}")
+                responses.append({
+                    "id": call_id,
+                    "name": name,
+                    "response": {"result": "ok"}
+                })
+                
+            if responses:
+                self._send_raw({
+                    "toolResponse": {
+                        "functionResponses": responses
+                    }
+                })
+            return
+
         server_content = event.get("serverContent")
         if not server_content:
             return
@@ -638,6 +671,7 @@ class GeminiLiveNode(Node):
             stop_msg.data = True
             self.tts_stop_pub.publish(stop_msg)
             self._publish_captured_user_audio_segment()
+            self._start_user_audio_capture()  # restart for the next utterance
             self._schedule_deferred_response_after_speech_stop()
             return
 
@@ -845,6 +879,7 @@ class GeminiLiveNode(Node):
 
         self._user_speaking = False
         self._publish_captured_user_audio_segment()
+        self._start_user_audio_capture()  # restart capture for the next user turn
 
     def _detect_goodbye(self, normalized_text: str) -> bool:
         """Return True if the normalized transcript is a goodbye phrase."""
@@ -1227,6 +1262,10 @@ class GeminiLiveNode(Node):
     def _mark_response_inactive(self, response_id: str = ""):
         self._response_create_pending = False
         self._response_active = False
+        # Fire any context injection that was deferred while the response was active
+        if self._pending_context_update:
+            self._pending_context_update = False
+            self._inject_context_update("deferred_after_response")
 
     def _mark_response_create_pending(self):
         self._response_create_pending = True

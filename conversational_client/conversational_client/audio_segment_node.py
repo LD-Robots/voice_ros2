@@ -49,18 +49,21 @@ class AudioSegmentNode(Node):
         self.declare_parameter('min_segment_seconds', 0.5)   # Minimum segment to send
         self.declare_parameter('max_segment_seconds', 30.0)  # Maximum segment (protection)
         self.declare_parameter('pre_buffer_seconds', 0.3)    # Audio before voice detection
+        self.declare_parameter('early_segment_seconds', 0.8) # Send partial buffer for speaker ID
         self.declare_parameter('capture_during_playback', False)
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.min_segment_seconds = self.get_parameter('min_segment_seconds').value
         self.max_segment_seconds = self.get_parameter('max_segment_seconds').value
         self.pre_buffer_seconds = self.get_parameter('pre_buffer_seconds').value
+        self.early_segment_seconds = self.get_parameter('early_segment_seconds').value
         self.capture_during_playback = self.get_parameter('capture_during_playback').value
         
         # Compute sizes in samples
         self.min_samples = int(self.min_segment_seconds * self.sample_rate)
         self.max_samples = int(self.max_segment_seconds * self.sample_rate)
         self.pre_buffer_samples = int(self.pre_buffer_seconds * self.sample_rate)
+        self.early_samples = int(self.early_segment_seconds * self.sample_rate)
         
         # ─────────────────────────────────────────────────────────
         # STATE
@@ -73,6 +76,7 @@ class AudioSegmentNode(Node):
         self.is_robot_speaking = False  # True when the robot is speaking (TTS playback)
         self.ignore_segment = False     # Flag to ignore segment sending
         self.channels = 1
+        self.next_early_segment_samples = self.early_samples
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBERS
@@ -155,6 +159,7 @@ class AudioSegmentNode(Node):
             self.ignore_segment = True  # Ignore any pending segment as it might be echo
         elif not msg.data and was_speaking:
             self.get_logger().info('🔊 Robot stopped - listening again')
+            self.ignore_segment = False  # Allow next user utterance through
 
     def barge_in_callback(self, msg: Bool):
         """Callback pentru evenimentul de barge-in."""
@@ -182,6 +187,7 @@ class AudioSegmentNode(Node):
         if msg.data and not self.was_speaking:
             # Add the pre-buffer at the start of recording
             self.audio_buffer = list(self.pre_buffer)
+            self.next_early_segment_samples = self.early_samples
             self.get_logger().info('🎤 Voice started - capturing...')
         
         # When the user finishes speaking, send the segment
@@ -199,6 +205,11 @@ class AudioSegmentNode(Node):
             if self.is_speaking:
                 # User speaking - add to main buffer
                 self.audio_buffer.extend(msg.data)
+                
+                # Early segments for fast speaker ID during long utterances
+                if len(self.audio_buffer) >= self.next_early_segment_samples:
+                    self._send_early_segment()
+                    self.next_early_segment_samples += int(1.5 * self.sample_rate)
                 
                 # Protection for overly long segments
                 if len(self.audio_buffer) >= self.max_samples:
@@ -219,6 +230,18 @@ class AudioSegmentNode(Node):
     # SEND SEGMENT
     # ═══════════════════════════════════════════════════════════════════
     
+    def _send_early_segment(self):
+        """Send an early copy of the buffer to identify the speaker quickly."""
+        if not self.session_active or getattr(self, 'ignore_segment', False):
+            return
+            
+        out = Audio()
+        out.sample_rate = self.sample_rate
+        out.channels = self.channels
+        out.data = list(self.audio_buffer)
+        self.segment_pub.publish(out)
+        self.get_logger().debug(f'📤 Sent early segment ({len(out.data)} samples)')
+
     def _send_segment(self):
         """Send the audio segment to the server."""
         
