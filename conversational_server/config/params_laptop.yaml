@@ -182,6 +182,9 @@ voice_command_node:
 robot_command_executor_node:
   ros__parameters:
     execution_enabled: true
+    command_topic_enabled: true
+    command_topic_only: false
+    approved_command_topic: "/humanoid_command"
     move_mode: "twist"
     cmd_vel_topic: "/cmd_vel"
     behavior_mode: "topic"

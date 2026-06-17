@@ -290,6 +290,9 @@ def generate_launch_description():
             output='screen',
             parameters=[{
                 'execution_enabled': True,
+                'command_topic_enabled': True,
+                'command_topic_only': False,
+                'approved_command_topic': '/humanoid_command',
                 'move_mode': 'twist',
                 'cmd_vel_topic': '/cmd_vel',
                 'behavior_mode': 'topic',

@@ -142,7 +142,7 @@ def parse_robot_command(
     parsed = (
         _parse_stop(body, direct_address)
         or _parse_behavior(body)
-        or _parse_turn(body)
+        or _parse_turn(body, direct_address=direct_address)
         or _parse_move(body, default_steps=default_steps, max_steps=max_steps, direct_address=direct_address)
     )
     return parsed
@@ -317,13 +317,17 @@ def _parse_behavior(body: str):
     return None
 
 
-def _parse_turn(body: str):
+def _parse_turn(body: str, *, direct_address: bool = False):
     direction = _extract_turn_direction(body)
     if direction is None:
         return None
 
     has_turn_verb = _starts_with_phrase(body, TURN_VERBS)
-    short_directional_turn = len(body.split()) <= 4 and _starts_with_phrase(body, LEFT_PATTERNS + RIGHT_PATTERNS)
+    short_directional_turn = (
+        direct_address
+        and len(body.split()) <= 4
+        and _starts_with_phrase(body, LEFT_PATTERNS + RIGHT_PATTERNS)
+    )
     if not has_turn_verb and not short_directional_turn:
         return None
 

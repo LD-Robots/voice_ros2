@@ -38,6 +38,9 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('execution_enabled', True)
         self.declare_parameter('min_command_confidence', 0.60)
         self.declare_parameter('max_pending_commands', 20)
+        self.declare_parameter('command_topic_enabled', True)
+        self.declare_parameter('command_topic_only', False)
+        self.declare_parameter('approved_command_topic', '/humanoid_command')
 
         self.declare_parameter('move_mode', 'twist')  # twist | topic
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
@@ -80,6 +83,9 @@ class RobotCommandExecutorNode(Node):
         self.execution_enabled = bool(self.get_parameter('execution_enabled').value)
         self.min_command_confidence = float(self.get_parameter('min_command_confidence').value)
         self.max_pending_commands = int(self.get_parameter('max_pending_commands').value)
+        self.command_topic_enabled = bool(self.get_parameter('command_topic_enabled').value)
+        self.command_topic_only = bool(self.get_parameter('command_topic_only').value)
+        self.approved_command_topic = str(self.get_parameter('approved_command_topic').value)
 
         self.move_mode = str(self.get_parameter('move_mode').value)
         self.cmd_vel_topic = str(self.get_parameter('cmd_vel_topic').value)
@@ -152,6 +158,11 @@ class RobotCommandExecutorNode(Node):
             10
         )
 
+        self.approved_command_pub = self.create_publisher(
+            RobotCommand,
+            self.approved_command_topic,
+            10
+        )
         self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
         self.move_topic_pub = self.create_publisher(String, self.move_topic, 10)
         self.behavior_pub = self.create_publisher(String, self.behavior_topic, 10)
@@ -192,6 +203,7 @@ class RobotCommandExecutorNode(Node):
         self.get_logger().info(
             'Robot Command Executor started: '
             f'execution_enabled={self.execution_enabled}, move_mode={self.move_mode}, behavior_mode={self.behavior_mode}, '
+            f'approved_command_topic={self.approved_command_topic}, command_topic_only={self.command_topic_only}, '
             f'preempt_on_new_command={self.preempt_on_new_command}, risky_confirmation={self.enable_risky_confirmation}'
         )
 
@@ -288,10 +300,16 @@ class RobotCommandExecutorNode(Node):
 
     def _execute(self, msg: RobotCommand):
         intent = msg.intent.strip().lower()
+        if self.command_topic_enabled:
+            self._publish_approved_command(msg)
+
         if intent == 'stop':
             self._cancel_active_execution('stop intent')
             self._clear_queue()
             self._publish_status('stopped')
+            return
+        if self.command_topic_only:
+            self._publish_status(f'published_approved_command:{intent}')
             return
         if intent == 'move':
             self._execute_move(msg)
@@ -303,6 +321,19 @@ class RobotCommandExecutorNode(Node):
             self._execute_behavior(intent, msg)
             return
         self.get_logger().warn(f'Unsupported intent: {intent}')
+
+    def _publish_approved_command(self, msg: RobotCommand):
+        out = RobotCommand()
+        out.header = msg.header
+        out.intent = msg.intent
+        out.direction = msg.direction
+        out.steps = msg.steps
+        out.confidence = msg.confidence
+        out.source_text = msg.source_text
+        out.language = msg.language
+        out.speaker = msg.speaker
+        out.parameters_json = msg.parameters_json
+        self.approved_command_pub.publish(out)
 
     def _execute_move(self, msg: RobotCommand):
         direction = msg.direction.strip().lower()
