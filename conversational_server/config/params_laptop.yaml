@@ -42,6 +42,9 @@ openai_realtime_node:
     api_base_url: "wss://api.openai.com/v1/realtime"
     input_sample_rate: 16000
     api_sample_rate: 24000
+    pipecat_log_level: "ERROR"
+    verbose_pipeline_logs: false
+    log_transcriptions: false
     vad_threshold: 0.80
     vad_prefix_padding_ms: 400
     vad_silence_duration_ms: 600
@@ -144,12 +147,19 @@ voice_command_node:
 robot_command_executor_node:
   ros__parameters:
     execution_enabled: true
+    command_topic_enabled: true
+    command_topic_only: false
+    approved_command_topic: "/humanoid_command"
     move_mode: "twist"
     cmd_vel_topic: "/cmd_vel"
     behavior_mode: "topic"
     behavior_topic: "/robot_behavior_command"
     raise_hands_service: "/raise_hands"
+    lower_hands_service: "/lower_hands"
+    wave_service: "/wave"
     dance_service: "/dance"
+    sit_service: "/sit"
+    stand_service: "/stand"
     preempt_on_new_command: true
     enable_voice_cancel: true
     enable_risky_confirmation: true

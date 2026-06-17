@@ -93,6 +93,18 @@ DANCE_PATTERNS = (
     r'^(do a|fa un) dans\b',
 )
 
+SIT_PATTERNS = (
+    r'^(sit|sit down)\b',
+    r'^aseaza te\b',
+    r'^stai jos\b',
+)
+
+STAND_PATTERNS = (
+    r'^(stand|stand up|get up)\b',
+    r'^ridica te\b',
+    r'^stai in picioare\b',
+)
+
 FORWARD_PATTERNS = ('forward', 'ahead', 'inainte', 'in fata')
 BACKWARD_PATTERNS = ('backward', 'backwards', 'back', 'inapoi', 'spate')
 LEFT_PATTERNS = ('left', 'stanga')
@@ -283,6 +295,24 @@ def _parse_behavior(body: str):
                 'steps': 0,
                 'confidence': 0.91,
                 'parameters': {'style': 'greeting'},
+            }
+    for pattern in SIT_PATTERNS:
+        if re.match(pattern, body):
+            return {
+                'intent': 'sit',
+                'direction': 'none',
+                'steps': 0,
+                'confidence': 0.92,
+                'parameters': {'posture': 'sit'},
+            }
+    for pattern in STAND_PATTERNS:
+        if re.match(pattern, body):
+            return {
+                'intent': 'stand',
+                'direction': 'none',
+                'steps': 0,
+                'confidence': 0.92,
+                'parameters': {'posture': 'stand'},
             }
     return None
 
