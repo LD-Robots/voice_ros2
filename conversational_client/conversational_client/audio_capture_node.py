@@ -8,10 +8,12 @@ Refactored to match legacy project configuration for better hardware compatibili
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio
+from std_msgs.msg import Bool
 import numpy as np
 import sys
 import wave
 import os
+os.environ['PA_ALSA_PLUGHW'] = '1'
 import contextlib
 
 @contextlib.contextmanager
@@ -69,18 +71,19 @@ class AudioCaptureNode(Node):
         self.stream = None
         self.frame_count = 0
         self.running = True
+        self.sample_buffer = []
         
         # Debug recording setup
         self.debug_wav = None
         if self.debug_recording:
-            try:
-                self.debug_wav = wave.open(self.debug_wav_path, 'wb')
-                self.debug_wav.setnchannels(self.channels)
-                self.debug_wav.setsampwidth(2) # 16-bit
-                self.debug_wav.setframerate(self.sample_rate)
-                self.get_logger().info(f"🔴 DEBUG RECORDING ENABLED: Saving to {self.debug_wav_path}")
-            except Exception as e:
-                self.get_logger().error(f"❌ Failed to open debug WAV file: {e}")
+            self.recreate_debug_wav()
+
+        self.session_sub = self.create_subscription(
+            Bool,
+            '/session_active',
+            self.session_callback,
+            10
+        )
 
         
         if SD_AVAILABLE:
@@ -95,26 +98,21 @@ class AudioCaptureNode(Node):
                 device = self.device_index
                 self.get_logger().info(f"🎤 Using explicit device index: {device}")
             else:
-                # Search for ReSpeaker if mode is enabled
-                if self.respeaker_mode:
-                    devices = sd.query_devices()
-                    for i, d in enumerate(devices):
-                        # Name match for ReSpeaker hardware or common driver strings
-                        if ('ReSpeaker' in d['name'] or 'ArrayUAC10' in d['name']) and d['max_input_channels'] >= 6:
-                            self.device_index = i
-                            self.get_logger().info(f"🎤 Found ReSpeaker hardware at index {i}: {d['name']}")
-                            break
-                    
-                    if self.device_index < 0:
-                        # If not found by name, try to use default if it has enough channels
-                        default_dev = sd.query_devices(kind='input')
-                        if default_dev['max_input_channels'] >= 6:
-                             self.device_index = default_dev['index']
-                             self.get_logger().info(f"🎤 ReSpeaker name not found, but default input supports 6+ channels. Using index {self.device_index}")
+                # Auto-detect ReSpeaker if present, regardless of respeaker_mode
+                devices = sd.query_devices()
+                detected_index = -1
+                for i, d in enumerate(devices):
+                    if ('ReSpeaker' in d['name'] or 'ArrayUAC10' in d['name']) and d['max_input_channels'] >= 1:
+                        detected_index = i
+                        self.get_logger().info(f"🎤 Auto-detected ReSpeaker hardware at index {i}: {d['name']}")
+                        break
                 
-                device = self.device_index if self.device_index >= 0 else None
-                if device is None:
-                    self.get_logger().info("🎤 Using OS Default Input Device (Pipewire/Pulse bridge)")
+                if detected_index >= 0:
+                    device = detected_index
+                    self.device_index = detected_index
+                else:
+                    self.get_logger().info("🎤 ReSpeaker not found or busy. Using PulseAudio Default ('pulse')")
+                    device = 'pulse'
                 
                 # Debug: show which device sounddevice considers default
                 try:
@@ -125,7 +123,7 @@ class AudioCaptureNode(Node):
 
             # Channel selection logic:
             # - respeaker_mode: open 6ch, extract respeaker_channel
-            # - stereo_mono_extract: open 2ch (hardware minimum), extract channel 0 (left = AEC)
+            # - stereo_mono_extract: open 2ch (hardware minimum), extract channel 0 (left = AEC processed output)
             # - default: use declared channels count
             if self.respeaker_mode:
                 capture_channels = 6
@@ -133,6 +131,25 @@ class AudioCaptureNode(Node):
                 capture_channels = 2
             else:
                 capture_channels = self.channels
+
+            # Safe hardware bounds fallback to prevent PaErrorCode -9998:
+            selected_device = device if device is not None else sd.default.device[0]
+            if selected_device is not None:
+                try:
+                    dev_info = sd.query_devices(selected_device)
+                    max_input_ch = dev_info.get('max_input_channels', capture_channels)
+                    if max_input_ch < capture_channels:
+                        self.get_logger().warn(
+                            f"⚠️ Device {selected_device} only supports {max_input_ch} input channels, "
+                            f"but {capture_channels} were requested. Falling back to {max_input_ch} channels."
+                        )
+                        capture_channels = max_input_ch
+                        if capture_channels < 2:
+                            self.stereo_mono_extract = False
+                        if capture_channels < 6:
+                            self.respeaker_mode = False
+                except Exception as e:
+                    self.get_logger().warn(f"⚠️ Could not query device channels: {e}")
 
             self.get_logger().info(
                 f"✅ Starting Capture: {self.sample_rate}Hz, {capture_channels}ch (publish={self.channels}ch), "
@@ -143,7 +160,7 @@ class AudioCaptureNode(Node):
             with ignore_stderr():
                 self.stream = sd.InputStream(
                     samplerate=self.sample_rate,
-                    blocksize=self.block_size,
+                    blocksize=0,
                     device=device,
                     channels=capture_channels,
                     dtype='float32',  # sounddevice native is float32 usually
@@ -179,30 +196,40 @@ class AudioCaptureNode(Node):
             elif self.stereo_mono_extract:
                 # indata shape is (frames, 2) — extract channel 0 (left = AEC processed output)
                 audio_f32 = audio_f32[:, 0]
+            else:
+                # Fallback: if multi-channel but neither is active, default to first channel
+                if audio_f32.ndim > 1:
+                    audio_f32 = audio_f32[:, 0]
             
-            # Scale and cast
+            # Scale and cast to int16
             audio_i16 = (audio_f32 * 32767.0).astype(np.int16)
             
-            # Flatten to list
-            audio_data = audio_i16.flatten().tolist()
-
-            # Publish
-            msg = Audio()
-            msg.sample_rate = self.sample_rate
-            msg.channels = self.channels
-            msg.data = audio_data
-            self.audio_pub.publish(msg)
+            # Add to buffer
+            self.sample_buffer.extend(audio_i16.flatten().tolist())
             
-            # Save to debug WAV
-            if self.debug_wav:
-                self.debug_wav.writeframes(audio_i16.tobytes())
-            
-            self.frame_count += 1
-            
-            # Periodic logging
-            if self.frame_count % 500 == 0:  # Log every ~10 seconds
-                rms = np.sqrt(np.mean(audio_f32**2)) * 32767.0 # Scale RMS to int16 range for readable logs
-                self.get_logger().debug(f"📊 Audio Level (RMS): {rms:.2f} (Frames: {self.frame_count})")
+            # Emit chunks of exactly block_size (fixed latency)
+            while len(self.sample_buffer) >= self.block_size:
+                chunk_data = self.sample_buffer[:self.block_size]
+                self.sample_buffer = self.sample_buffer[self.block_size:]
+                
+                # Publish
+                msg = Audio()
+                msg.sample_rate = self.sample_rate
+                msg.channels = self.channels
+                msg.data = chunk_data
+                self.audio_pub.publish(msg)
+                
+                # Save to debug WAV
+                if self.debug_wav:
+                    self.debug_wav.writeframes(np.array(chunk_data, dtype=np.int16).tobytes())
+                
+                self.frame_count += 1
+                
+                # Periodic logging
+                if self.frame_count % 50 == 0:  # Log every ~3 seconds
+                    chunk_f32 = np.array(chunk_data, dtype=np.float32)
+                    rms = np.sqrt(np.mean(chunk_f32**2))
+                    self.get_logger().info(f"📊 Audio Level (RMS): {rms:.2f}")
                 
         except Exception as e:
             if self.running and rclpy.ok():
@@ -210,6 +237,33 @@ class AudioCaptureNode(Node):
                     self.get_logger().error(f"Callback error: {e}")
                 except Exception:
                     pass
+
+    def session_callback(self, msg: Bool):
+        if msg.data and self.debug_recording:
+            self.get_logger().info("🔄 New active session started: recreating debug capture WAV file.")
+            self.recreate_debug_wav()
+
+    def recreate_debug_wav(self):
+        old_wav = self.debug_wav
+        self.debug_wav = None
+        if old_wav:
+            try: old_wav.close()
+            except: pass
+        try:
+            import os
+            path = os.path.expanduser(self.debug_wav_path)
+            dir_name = os.path.dirname(os.path.abspath(path))
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            with open(path, 'wb') as f:
+                pass
+            self.debug_wav = wave.open(path, 'wb')
+            self.debug_wav.setnchannels(self.channels)
+            self.debug_wav.setsampwidth(2) # 16-bit
+            self.debug_wav.setframerate(self.sample_rate)
+            self.get_logger().info(f"🔴 DEBUG RECORDING ENABLED: Saving to {path}")
+        except Exception as e:
+            self.get_logger().error(f"❌ Failed to open/recreate debug WAV file: {e}")
 
     def destroy_node(self):
         self.running = False

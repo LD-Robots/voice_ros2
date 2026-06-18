@@ -65,14 +65,14 @@ openai_realtime_node:
 
 audio_capture_node:
   ros__parameters:
-    device_index: 3       # -1 = auto-detect (ReSpeaker will be found automatically)
+    device_index: -1       # -1 = auto-detect (ReSpeaker will be found automatically)
     respeaker_mode: false  # not needed: 1-channel firmware outputs mono natively
     respeaker_channel: 0
-    stereo_mono_extract: true
+    stereo_mono_extract: false
     gain: 1.0
     chunk_ms: 60
     debug_recording: true
-    debug_wav_path: "/tmp/debug_mic_capture.wav"
+    debug_wav_path: "~/voice_ros2/debug_mic_capture.wav"
 
 vad_node:
   ros__parameters:
@@ -101,7 +101,7 @@ barge_in_node:
     webrtc_vad_enabled: true
     webrtc_vad_aggressiveness: 3
     min_voice_ms: 350
-    min_rms_dbfs: -32.0
+    min_rms_dbfs: -38.0
     highpass_hz: 300.0
     zcr_min: 0.02
     zcr_max: 0.35
@@ -163,9 +163,9 @@ echo_canceller_node:
     step_size: 0.15              # Putin mai agresiv
     max_delay_ms: 3000           # Crescut la 3 secunde pentru a acoperi latenta extrema
     debug_recording: true
-    raw_wav_path: "/tmp/aec_raw.wav"
-    ref_wav_path: "/tmp/aec_reference.wav"
-    clean_wav_path: "/tmp/aec_cleaned.wav"
+    raw_wav_path: "~/voice_ros2/aec_raw.wav"
+    ref_wav_path: "~/voice_ros2/aec_reference.wav"
+    clean_wav_path: "~/voice_ros2/aec_cleaned.wav"
     
     # DeepFilterNet Settings
     deep_filter_enabled: true

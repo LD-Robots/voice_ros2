@@ -24,7 +24,10 @@ import time
 from datetime import datetime
 from pathlib import Path
 from conversational_client.robot_command_utils import looks_like_robot_command
-from .prompt_config import load_prompt_defaults
+try:
+    from .prompt_config import load_prompt_defaults
+except ImportError:
+    from prompt_config import load_prompt_defaults
 
 # Load variables from .env
 try:
@@ -398,6 +401,7 @@ class LLMNode(Node):
     def _speaker_id_callback(self, msg: String):
         """
         Update the current speaker based on voice fingerprint.
+
         Uses "Sticky Speaker" logic to avoid immediately forgetting who is speaking
         when short "Unknown" segments appear.
         """
@@ -410,7 +414,7 @@ class LLMNode(Node):
         
         # Initialize timestamp for the last known speaker if not present
         if not hasattr(self, 'last_known_speaker_time'):
-            self.last_known_speaker_time = 0
+            self.last_known_speaker_time = 0.0
             
         # STICKY SPEAKER LOGIC:
         # 1. If it's a KNOWN speaker (not Unknown), update immediately
@@ -467,7 +471,7 @@ class LLMNode(Node):
             # This forces the model to respond in the correct language
             lang_instruction = "[RESPOND IN ENGLISH]" if not user_lang.startswith('ro') else "[RĂSPUNDE ÎN ROMÂNĂ]"
             
-            preferred_name = self.person_context.get('preferred_name', '').strip()
+            preferred_name = str(self.person_context.get('preferred_name', '')).strip()
             display_speaker = preferred_name or self.current_speaker
 
             # Add speaker name if known
@@ -530,7 +534,7 @@ class LLMNode(Node):
                     if self._stop_requested:
                         break
                     
-                    if chunk.choices[0].delta.content:
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                         token = chunk.choices[0].delta.content
                         
                         # Backchannel: if first token is delayed > delay_ms
@@ -551,7 +555,10 @@ class LLMNode(Node):
                         yield token
             
             # Process tokens with stream shaper logic
-            from .stream_shaper import shape_stream
+            try:
+                from .stream_shaper import shape_stream
+            except ImportError:
+                from stream_shaper import shape_stream
             shaped_tokens = shape_stream(
                 token_generator(),
                 prebuffer_chars=self.prebuffer_chars,

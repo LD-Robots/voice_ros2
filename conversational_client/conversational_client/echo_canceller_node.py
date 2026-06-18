@@ -49,9 +49,11 @@ class EchoCancellerNode(Node):
         super().__init__('echo_canceller_node')
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('max_delay_ms', 3000)
+        self.declare_parameter('playback_gain', 0.5)
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
+        self.playback_gain = float(self.get_parameter('playback_gain').value)
         
         self.declare_parameter('raw_wav_path', '')
         self.declare_parameter('ref_wav_path', '')
@@ -114,26 +116,70 @@ class EchoCancellerNode(Node):
         self.is_speaking_sub = self.create_subscription(Bool, '/is_speaking', self.is_speaking_callback, 10)
         self.clean_pub = self.create_publisher(Audio, '/audio_clean', 10)
         
+        # Debug file paths for recreation
+        self.raw_path = raw_path
+        self.ref_path = ref_path
+        self.clean_path = clean_path
+        
         # Debug files (only open if path is provided)
         self.wav_raw = self.open_wav(raw_path, 16000) if raw_path else None
         self.wav_ref_aligned = self.open_wav(ref_path, 16000) if ref_path else None
         self.wav_clean = self.open_wav(clean_path, 16000) if clean_path else None
+        
+        self.session_sub = self.create_subscription(Bool, '/session_active', self.session_callback, 10)
 
     def is_speaking_callback(self, msg):
         self.robot_speaking = msg.data
 
+    def session_callback(self, msg: Bool):
+        if msg.data:
+            self.get_logger().info("🔄 New active session started: recreating debug WAV files.")
+            # Safeguard reference swap
+            old_raw = self.wav_raw
+            old_ref = self.wav_ref_aligned
+            old_clean = self.wav_clean
+            
+            self.wav_raw = None
+            self.wav_ref_aligned = None
+            self.wav_clean = None
+            
+            if old_raw:
+                try: old_raw.close()
+                except: pass
+            if old_ref:
+                try: old_ref.close()
+                except: pass
+            if old_clean:
+                try: old_clean.close()
+                except: pass
+                
+            self.wav_raw = self.open_wav(self.raw_path, 16000) if self.raw_path else None
+            self.wav_ref_aligned = self.open_wav(self.ref_path, 16000) if self.ref_path else None
+            self.wav_clean = self.open_wav(self.clean_path, 16000) if self.clean_path else None
+
     def open_wav(self, path, rate):
         try:
+            import os
+            path = os.path.expanduser(path)
+            dir_name = os.path.dirname(os.path.abspath(path))
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            with open(path, 'wb') as f:
+                pass
             w = wave.open(path, 'wb')
             w.setnchannels(1)
             w.setsampwidth(2)
             w.setframerate(rate)
             return w
-        except: return None
+        except Exception as e:
+            self.get_logger().warn(f"⚠️ [AEC] Could not open debug WAV file at {path}: {e}")
+            return None
 
     def out_callback(self, msg):
         if len(msg.data) == 0: return
         audio_data = np.array(msg.data, dtype=np.int16).astype(np.float32) / 32768.0
+        if self.playback_gain != 1.0:
+            audio_data = audio_data * self.playback_gain
         self.ref_queue.extend(audio_data)
 
     def get_ref_slice(self, offset, length):
@@ -196,7 +242,7 @@ class EchoCancellerNode(Node):
                     if abs(delay - self.current_delay) < 50:
                         self._lock_count += 1
                     else:
-                        self.current_delay = delay
+                        self.current_delay = int(delay)
                         self._lock_count = 1
                     if self._lock_count == 5:
                         self.get_logger().info(f"🔒 AEC LOCKED: {self.current_delay/self.sample_rate*1000:.1f}ms")

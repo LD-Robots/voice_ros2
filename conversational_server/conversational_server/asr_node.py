@@ -30,16 +30,21 @@ class DeepgramASRNode(Node):
         # Load .env explicitly
         try:
             from dotenv import load_dotenv
+            from pathlib import Path
             import os
-            # Try a few paths to find .env
-            env_paths = [
-                os.path.join(os.getcwd(), '.env'),
-                os.path.join(os.path.expanduser('~'), 'voice_ros2', '.env')
-            ]
-            for path in env_paths:
-                if os.path.exists(path):
-                    load_dotenv(dotenv_path=path)
-                    break
+            # Search for the .env file in voice_ros2/ (works from install/ or src/)
+            current_path = Path(__file__).resolve()
+            while current_path.name != 'voice_ros2' and current_path != current_path.parent:
+                current_path = current_path.parent
+            if current_path.name != 'voice_ros2':
+                current_path = Path(__file__).resolve().parents[3]
+            
+            env_path = current_path / '.env'
+            if env_path.exists():
+                load_dotenv(dotenv_path=env_path)
+                self.get_logger().info(f"✅ Loaded .env from: {env_path}")
+            else:
+                self.get_logger().warn(f"⚠️ .env not found at: {env_path}")
         except ImportError:
             self.get_logger().warn("python-dotenv not installed, assuming env vars are set.")
             
@@ -50,15 +55,22 @@ class DeepgramASRNode(Node):
         self.declare_parameter('echo_enabled', True)
         
         self.language = self.get_parameter('language').value
+        if self.language == 'ro_en':
+            self.get_logger().info("🔄 Mapping language 'ro_en' to Deepgram-supported 'multi'")
+            self.language = 'multi'
+            
         self.model = self.get_parameter('model').value
         
         self.echo_threshold = self.get_parameter('echo_threshold').value
         self.echo_min_length = self.get_parameter('echo_min_length').value
         self.echo_enabled = self.get_parameter('echo_enabled').value and RAPIDFUZZ_AVAILABLE
         
-        self.api_key = os.environ.get("DEEPGRAM_API_KEY", "")
+        self.api_key = os.environ.get("DEEPGRAM_API_KEY", "").strip()
         if not self.api_key:
             self.get_logger().error("DEEPGRAM_API_KEY environment variable is not set!")
+        else:
+            masked = self.api_key[:5] + "..." + self.api_key[-5:] if len(self.api_key) > 10 else "..."
+            self.get_logger().info(f"🔑 Loaded Deepgram API Key: {masked} (length={len(self.api_key)})")
         
         self.current_backend = 'legacy'
         self.last_bot_reply = ""
@@ -153,7 +165,7 @@ class DeepgramASRNode(Node):
             headers = {"Authorization": f"Token {self.api_key}"}
             
             try:
-                self.get_logger().info("Connecting to Deepgram...")
+                self.get_logger().info(f"Connecting to Deepgram at: {url}")
                 with websockets.sync.client.connect(url, additional_headers=headers) as ws:
                     self.ws_connection = ws
                     self.is_connected = True

@@ -1,6 +1,6 @@
 # Voice ROS2 - Conversational Robot System
 
-A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with optional OpenAI-backed web search.
+A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, and a Deepgram ASR + Groq LLM + Edge TTS pipeline.
 
 ## 🏗️ Architecture
 
@@ -10,8 +10,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - **ASR Node** - Automatic Speech Recognition (Deepgram Streaming STT / Faster-Whisper fallback)
 - **LLM Node** - Language Model processing (Groq API with streaming & web search tool)
 - **TTS Node** - Text-to-Speech (Edge TTS + Audio Cache)
-- **OpenAI Realtime Node** - Speech-to-speech via `gpt-realtime-mini`
-- **Backend Manager Node** - Decides which backend to forward transcriptions to (Legacy vs. OpenAI Realtime).
+- **Backend Manager Node** - Manage the active conversational backend pipeline.
 
 ### Client Nodes (Robot Hardware)
 - **Audio Capture Node** - Microphone input
@@ -57,7 +56,7 @@ The runtime code currently depends on these Python modules:
 - Wake word and stop keyword detection: `openwakeword`, `onnxruntime`
 - Speaker identification: `speechbrain`, `torch`, `torchaudio`, `huggingface_hub`, `torchcodec`
 
-For the current `full_system.launch.py`, install the full list even if you mostly use OpenAI Realtime, because the launch file still starts helper and legacy-side nodes alongside the realtime node.
+For the current `full_system.launch.py`, install the full list of dependencies to ensure all helper and pipeline nodes start successfully.
 
 ## 🔧 Setup
 
@@ -107,58 +106,24 @@ sudo ./tools/usb_4_mic_array/apply_tuning.sh
 ## 🚀 Running the System
 
 ### Full System (Server + Client)
-```bash
-source /path/to/ros2_ws/install/setup.bash
-ros2 launch conversational_server full_system.launch.py
-```
-
-### Full System with OpenAI Realtime
-```bash
-source /path/to/ros2_ws/install/setup.bash
-ros2 launch conversational_server full_system.launch.py \
-    conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar \
-    realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
-    realtime_web_search_context_size:=medium \
-    realtime_vad_silence_duration_ms:=550 \
-    realtime_response_create_delay_ms:=100 \
-    realtime_continued_turn_response_delay_ms:=450 \
-    realtime_capture_during_playback:=true
-```
-
-### Server Only
-```bash
-ros2 launch conversational_server server_pipeline.launch.py
-```
-corect:
-source ~/voice_ros2/install/setup.bash
-ros2 launch conversational_server server_pipeline.launch.py
-
-Pentru OpenAI Realtime:
+To run the full system using the Deepgram ASR and Groq LLM pipeline:
 ```bash
 source ~/voice_ros2/install/setup.bash
-ros2 launch conversational_server server_pipeline.launch.py \
-    conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar \
-    realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
-    realtime_web_search_context_size:=medium \
-    realtime_vad_silence_duration_ms:=550 \
-    realtime_response_create_delay_ms:=100 \
-    realtime_continued_turn_response_delay_ms:=450 \
-    realtime_capture_during_playback:=true
+ros2 launch conversational_server full_system.launch.py conversation_backend:=legacy config:=laptop
+```
+*(Replace `config:=laptop` with `config:=raspberry` if running on a Raspberry Pi)*
+
+### Server Only (Deepgram ASR + Groq LLM + Edge TTS)
+```bash
+source ~/voice_ros2/install/setup.bash
+ros2 launch conversational_server server_pipeline.launch.py conversation_backend:=legacy config:=laptop
 ```
 
 ### Client Only (on robot hardware)
 ```bash
-ros2 launch conversational_client client_pipeline.launch.py
-```
-corect:
 source ~/voice_ros2/install/setup.bash
-ros2 launch conversational_client client_pipeline.launch.py
+ros2 launch conversational_client client_pipeline.launch.py config:=laptop
+```
 
 ### 🎤 Speaker Enrollment (Voice Fingerprint)
 
@@ -207,35 +172,6 @@ Available Groq models:
 - `compound-beta` (web search enabled)
 - `mixtral-8x7b-32768`
 
-#### OpenAI Realtime Configuration
-```bash
-ros2 launch conversational_server full_system.launch.py \
-    conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar \
-    realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
-    realtime_web_search_context_size:=medium \
-    realtime_vad_silence_duration_ms:=550 \
-    realtime_response_create_delay_ms:=100 \
-    realtime_continued_turn_response_delay_ms:=450 \
-    realtime_capture_during_playback:=true
-```
-
-Recommended first test:
-- `conversation_backend:=openai_realtime`
-- `realtime_model:=gpt-realtime-mini`
-- `realtime_voice:=cedar`
-- `realtime_web_search_enabled:=true`
-- `realtime_web_search_model:=gpt-4.1-mini`
-- `realtime_web_search_context_size:=medium`
-- `realtime_vad_silence_duration_ms:=550`
-- `realtime_response_create_delay_ms:=100`
-- `realtime_continued_turn_response_delay_ms:=450`
-- `realtime_capture_during_playback:=true`
-
-When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
-
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
 ```python
@@ -247,7 +183,7 @@ Edit `full_system.launch.py` and adjust:
 ### ✅ Implemented
 - ✅ **Bilingual** - Romanian and English automatic detection
 - ✅ **Streaming LLM** - Real-time response generation
-- ✅ **Web Search** - OpenAI Realtime can trigger OpenAI web search for current events and live facts
+- ✅ **Web Search** - LLM node can trigger web search for current events and live facts
 - ✅ **Wake Word** - "Hello robot" / "Hey robot" / "Goodbye robot" detection
 - ✅ **Barge-in** - Interrupt TTS when user speaks (augmented with WebRTC VAD)
 - ✅ **Voice Activity Detection** - Automatic speech end detection
@@ -295,11 +231,6 @@ Make sure `.env` file exists and contains your API key:
 cat /path/to/ros2_ws/src/voice_ros2/.env
 ```
 
-### "OPENAI_API_KEY not set" Error
-Make sure `.env` contains:
-```bash
-OPENAI_API_KEY=your_openai_api_key_here
-```
 
 ### Microphone Not Working
 Check audio devices:
