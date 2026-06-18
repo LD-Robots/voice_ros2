@@ -376,18 +376,25 @@ class VADNode(Node):
             # METHOD 1: WebRTC VAD (more accurate)
             # ─────────────────────────────────────────────────────
             try:
-                # WebRTC VAD requires exactly 10, 20, or 30ms of audio
-                # At 16kHz: 160, 320, or 480 samples
-                audio_bytes = audio.tobytes()
+                # WebRTC VAD requires exactly 10, 20, or 30ms of audio (160, 320, or 480 samples at 16kHz)
+                # Split the input frame into 20ms (320 samples) sub-frames to handle arbitrary chunk sizes.
+                sub_frame_len = 320
+                if len(audio) % sub_frame_len == 0 and len(audio) > 0:
+                    for i in range(0, len(audio), sub_frame_len):
+                        sub_frame = audio[i:i+sub_frame_len]
+                        if self.vad.is_speech(sub_frame.tobytes(), self.sample_rate):
+                            return True
+                    return False
                 
-                # Adjust length if needed
+                # If we cannot split evenly into 20ms frames, check if single frame matches standard sizes
                 frame_len = len(audio)
-                if frame_len == 320:  # 20ms la 16kHz
-                    return self.vad.is_speech(audio_bytes, self.sample_rate)
-                else:
-                    # Energy fallback for non-standard lengths
-                    return self._energy_based_detection(audio)
-            except Exception:
+                if frame_len in (160, 320, 480):
+                    return self.vad.is_speech(audio.tobytes(), self.sample_rate)
+                
+                # Otherwise fallback to energy-based detection
+                return self._energy_based_detection(audio)
+            except Exception as e:
+                self.get_logger().error(f"VAD classification failed: {e}")
                 return self._energy_based_detection(audio)
         else:
             # ─────────────────────────────────────────────────────

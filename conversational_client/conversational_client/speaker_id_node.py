@@ -217,8 +217,9 @@ class SpeakerIdNode(Node):
         
         duration = len(audio_float) / msg.sample_rate
         
-        # Ignore very short segments (noise, clicks) for identification
-        if duration < 0.8:
+        # Ignore very short segments (noise, clicks) for identification.
+        # Reduced threshold to 0.5s to allow processing early segments for low-latency backends like Gemini Live.
+        if duration < 0.5:
             self.get_logger().debug(f'🔇 Segment too short for ID ({duration:.2f}s) - skipped')
             return
 
@@ -252,13 +253,13 @@ class SpeakerIdNode(Node):
                         else -1.0
                     )
                     if match.best_name != 'Unknown':
-                        self.get_logger().debug(
+                        self.get_logger().info(
                             f'👤 Unidentified speaker (reason={match.reason}, '
                             f'top={match.best_name}:{match.best_score:.3f}, '
                             f'margin={margin:.3f})'
                         )
                     else:
-                        self.get_logger().debug(
+                        self.get_logger().info(
                             f'👤 Unidentified speaker (reason={match.reason})'
                         )
 
@@ -283,7 +284,7 @@ class SpeakerIdNode(Node):
                 f'📤 /speaker_id: "{speaker_name}" (segment: {duration:.2f}s)'
             )
         else:
-            self.get_logger().debug(
+            self.get_logger().info(
                 f'📤 /speaker_id: "Unknown" (segment: {duration:.2f}s)'
             )
 

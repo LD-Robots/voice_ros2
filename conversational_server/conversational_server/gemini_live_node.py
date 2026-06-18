@@ -225,6 +225,9 @@ class GeminiLiveNode(Node):
             "preferred_language": "",
             "facts": [],
         }
+        self._speaker_context_cache = {}
+        self._setup_speaker = 'Unknown'
+        self._setup_preferred_name = ''
 
         # WebSocket state
         self._ws_app = None
@@ -277,6 +280,7 @@ class GeminiLiveNode(Node):
         self._recent_input_audio = []
         self._current_user_audio = []
         self._capture_user_audio = False
+        self._current_user_transcript = ""
         self._current_input_sample_rate = self.input_sample_rate
         self._current_input_channels = 1
         self._goodbye_pending = False  # True after user said goodbye, waiting for Gemini to finish
@@ -332,11 +336,22 @@ class GeminiLiveNode(Node):
             # Start capturing user audio immediately so speaker_id_node gets
             # a segment at the end of the first user turn.
             self._start_user_audio_capture()
+            
+            # Force immediate reconnect if setup is out of sync with actual speaker context
+            current_name = self._voice_correlated_preferred_name()
+            is_speaker_diff = (self.current_speaker != 'Unknown' and
+                               self.current_speaker != self._setup_speaker)
+            is_name_diff = (current_name and
+                            current_name != self._setup_preferred_name)
+            if is_speaker_diff or is_name_diff:
+                self._request_reconnect(
+                    'session_active', immediate_user_turn=True
+                )
+            else:
+                self._inject_context_update('session_active')
         else:
             self.get_logger().debug("Gemini Live session INACTIVE")
-            self.speaker_tracker.reset()
-            self.current_speaker = "Unknown"
-            self.last_raw_speaker = "Unknown"
+            # Cache the speaker and context (do not reset current_speaker or speaker_tracker)
             self.language_tracker.reset()
             self.focused_speaker = "Unknown"
             self.last_focus_time = 0.0
@@ -376,6 +391,8 @@ class GeminiLiveNode(Node):
             if not was_speaking and self.playback_input_filter_enabled:
                 self.playback_input_filter.reset()
                 self._playback_frames_blocked = 0
+            # Clear user audio buffer when robot starts speaking to avoid contamination/leak!
+            self._current_user_audio = []
         elif was_speaking:
             self._last_robot_speaking_end_ms = now_ms
 
@@ -431,19 +448,38 @@ class GeminiLiveNode(Node):
         }
 
     def speaker_callback(self, msg: String):
-        raw_speaker = msg.data.strip() or "Unknown"
+        raw_speaker = msg.data.strip() or 'Unknown'
         self.last_raw_speaker = raw_speaker
         speaker = self.speaker_tracker.update(raw_speaker)
-        if raw_speaker != "Unknown" and speaker == raw_speaker:
+        if raw_speaker != 'Unknown' and speaker == raw_speaker:
             self.pending_focus_speaker = raw_speaker
             self.pending_focus_at = time.monotonic()
-        if speaker != self.current_speaker:
+            
+        speaker_changed = speaker != self.current_speaker
+        if speaker_changed:
             self.current_speaker = speaker
-            # Inject context mid-session instead of reconnecting.
-            # Gemini Live only allows 'setup' once per WS session, but we can
-            # inject a silent system note via clientContent so the model
-            # knows who it's talking to without dropping the connection.
-            self._inject_context_update("speaker_changed")
+
+            # Sync self.person_context with cached speaker context if available
+            if speaker in self._speaker_context_cache:
+                self.person_context = self._speaker_context_cache[speaker]
+                self.language_tracker.seed(
+                    str(self.person_context.get('preferred_language', ''))
+                )
+
+        # Trigger reconnection if WebSocket setup is out of sync
+        if speaker != 'Unknown':
+            current_name = self._voice_correlated_preferred_name()
+            is_speaker_diff = speaker != self._setup_speaker
+            is_name_diff = (current_name and
+                            current_name != self._setup_preferred_name)
+            if is_speaker_diff or is_name_diff:
+                self._request_reconnect(
+                    'speaker_changed', immediate_user_turn=True
+                )
+                return
+                
+        if speaker_changed and speaker == 'Unknown':
+            self._inject_context_update('speaker_changed')
 
     def person_context_callback(self, msg: String):
         try:
@@ -451,18 +487,35 @@ class GeminiLiveNode(Node):
         except Exception:
             return
         new_context = {
-            "speaker": str(payload.get("speaker", "Unknown") or "Unknown"),
-            "preferred_name": str(payload.get("preferred_name", "") or ""),
-            "preferred_language": str(payload.get("preferred_language", "") or ""),
-            "facts": list(payload.get("facts", []) or []),
+            'speaker': str(payload.get('speaker', 'Unknown') or 'Unknown'),
+            'preferred_name': str(payload.get('preferred_name', '') or ''),
+            'preferred_language': str(
+                payload.get('preferred_language', '') or ''
+            ),
+            'facts': list(payload.get('facts', []) or []),
         }
+
+        # Cache context for this speaker
+        speaker = new_context['speaker']
+        if speaker != 'Unknown':
+            self._speaker_context_cache[speaker] = new_context
+
         if new_context == self.person_context:
             return
 
         self.person_context = new_context
-        self.language_tracker.seed(str(self.person_context.get("preferred_language", "")))
-        # Inject context mid-session — no reconnect needed.
-        self._inject_context_update("context_updated")
+        self.language_tracker.seed(
+            str(self.person_context.get('preferred_language', ''))
+        )
+        
+        # Force reconnect if name doesn't match setup name
+        current_name = self._voice_correlated_preferred_name()
+        if current_name and current_name != self._setup_preferred_name:
+            self._request_reconnect(
+                'context_updated', immediate_user_turn=True
+            )
+        else:
+            self._inject_context_update('context_updated')
 
     def _inject_context_update(self, reason: str):
         """Send a silent context note to Gemini mid-session.
@@ -483,24 +536,26 @@ class GeminiLiveNode(Node):
             self._pending_context_update = True
             return
 
-        note_parts = []
-        if self.current_speaker and self.current_speaker != "Unknown":
-            note_parts.append(f"[SYSTEM OVERRIDE: The biometric speaker identification system has confirmed the speaker is internal label: {self.current_speaker}.]")
         preferred_name = self._voice_correlated_preferred_name()
-        if preferred_name:
-            note_parts.append(f"[SYSTEM OVERRIDE: The speaker's actual name is {preferred_name}. You MUST acknowledge and use this name immediately.]")
+        if not preferred_name:
+            return
+        note_parts = []
+        note_parts.append(f"*System note: The person currently speaking is named {preferred_name}.*")
+
         preferred_language = self.person_context.get("preferred_language", "")
         if preferred_language:
-            note_parts.append(f"Preferred language: {preferred_language}.")
+            note_parts.append(f"*Preferred language: {preferred_language}.*")
+
         facts = self.person_context.get("facts", []) or []
         if facts:
-            note_parts.append("Known facts: " + "; ".join(str(f) for f in facts[:5]) + ".")
+            note_parts.append("*Known facts about this person:* " + "; ".join(str(f) for f in facts[:5]) + ".")
 
         if not note_parts:
             return
 
         note_text = "\n\n" + " ".join(note_parts) + "\n\n"
         self.get_logger().info(f"Gemini context inject ({reason}): speaker={self.current_speaker}, name={preferred_name}")
+        self.get_logger().info(f"Injected text: {note_text.strip()}")
         self._send_raw({
             "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": note_text}]}],
@@ -527,16 +582,28 @@ class GeminiLiveNode(Node):
             self._request_reconnect("robot_confirmation_done")
 
     def audio_callback(self, msg: Audio):
-        if not self.session_active or not self._connected.is_set() or not self._setup_sent:
+        if not self.session_active:
             return
         if self.current_backend != "gemini_live":
-            return
-        if not self.capture_during_playback and self.robot_speaking:
             return
         if not msg.data:
             return
 
         input_sample_rate = int(msg.sample_rate or self.input_sample_rate)
+        self._current_input_sample_rate = input_sample_rate
+        self._current_input_channels = int(msg.channels or 1)
+
+        # Buffer incoming user audio during the current turn, even during a reconnect gap
+        if not self.robot_speaking:
+            self._remember_input_audio(msg.data)
+            if self._capture_user_audio:
+                self._current_user_audio.extend(msg.data)
+
+        if not self._connected.is_set() or not self._setup_sent:
+            return
+        if not self.capture_during_playback and self.robot_speaking:
+            return
+
         now_ms = int(time.time() * 1000)
         pcm = np.array(msg.data, dtype=np.int16)
         if pcm.size == 0:
@@ -552,12 +619,6 @@ class GeminiLiveNode(Node):
             self.playback_input_filter.reset()
             self._playback_guard_was_active = False
             self._playback_frames_blocked = 0
-
-        self._current_input_sample_rate = input_sample_rate
-        self._current_input_channels = int(msg.channels or 1)
-        self._remember_input_audio(msg.data)
-        if self._capture_user_audio:
-            self._current_user_audio.extend(msg.data)
 
         # Resample to API rate (Gemini expects 16kHz)
         pcm_api = self._resample_pcm16(pcm, input_sample_rate, self.api_sample_rate)
@@ -629,6 +690,7 @@ class GeminiLiveNode(Node):
         # Setup acknowledgement
         if "setupComplete" in event:
             self.get_logger().debug("Gemini Live session setup confirmed")
+            self._replay_accumulated_audio()
             return
 
         # Tool calls from server (Google Search or custom tools)
@@ -673,6 +735,7 @@ class GeminiLiveNode(Node):
             self._publish_captured_user_audio_segment()
             self._start_user_audio_capture()  # restart for the next utterance
             self._schedule_deferred_response_after_speech_stop()
+            self._current_user_transcript = ""
             return
 
         # Input transcription (user speech)
@@ -680,7 +743,11 @@ class GeminiLiveNode(Node):
         if input_transcription:
             transcript = str(input_transcription.get("text", "") or "").strip()
             if transcript:
-                self._handle_input_transcript(transcript)
+                if self._current_user_transcript:
+                    self._current_user_transcript += " " + transcript
+                else:
+                    self._current_user_transcript = transcript
+                self.get_logger().debug(f"Gemini Live intermediate word: '{transcript}' (accumulated: '{self._current_user_transcript}')")
 
         # Model turn (assistant response)
         model_turn = server_content.get("modelTurn")
@@ -702,6 +769,11 @@ class GeminiLiveNode(Node):
         if server_content.get("turnComplete"):
             self.get_logger().debug("Gemini Live: turn complete")
             self._user_speaking = False
+            self._publish_captured_user_audio_segment()
+            self._start_user_audio_capture()
+            if self._current_user_transcript:
+                self._handle_input_transcript(self._current_user_transcript)
+                self._current_user_transcript = ""
             self._handle_turn_complete()
 
     def _handle_output_audio(self, inline_data: dict):
@@ -878,8 +950,6 @@ class GeminiLiveNode(Node):
         self.transcription_pub.publish(out)
 
         self._user_speaking = False
-        self._publish_captured_user_audio_segment()
-        self._start_user_audio_capture()  # restart capture for the next user turn
 
     def _detect_goodbye(self, normalized_text: str) -> bool:
         """Return True if the normalized transcript is a goodbye phrase."""
@@ -950,6 +1020,8 @@ class GeminiLiveNode(Node):
 
         self._send_raw(setup_msg)
         self._setup_sent = True
+        self._setup_speaker = self.current_speaker
+        self._setup_preferred_name = self._voice_correlated_preferred_name()
 
     # ─── Instructions ────────────────────────────────────────────────────────
 
@@ -960,6 +1032,11 @@ class GeminiLiveNode(Node):
             'Your own assistant name is Robot. '
             'If the user asks your name, answer "Robot". '
             'Do not use any speaker preferred name as your own identity.'
+        )
+        extras.append(
+            "The speaker's identity, name, and background facts can be updated mid-session. "
+            "If a system note (e.g. '*System note: The person currently speaking is named X.*') is injected, "
+            "you must immediately update your context, treat them as that person, and use their preferred name."
         )
         if assistant_name_question:
             extras.append('The user is asking your name right now. Answer clearly with "My name is Robot."')
@@ -1090,7 +1167,7 @@ class GeminiLiveNode(Node):
 
     # ─── Utilities ───────────────────────────────────────────────────────────
 
-    def _request_reconnect(self, reason: str):
+    def _request_reconnect(self, reason: str, immediate_user_turn: bool = False):
         """Close the WebSocket to force reconnection with a fresh setup message.
 
         Gemini Live API accepts 'setup' only once per session, so the only way
@@ -1103,8 +1180,9 @@ class GeminiLiveNode(Node):
         if not self._connected.is_set():
             return  # Already disconnected; reconnect loop will handle it
             
-        # Defer reconnect if the turn is not completely idle
-        if self._user_speaking or self._response_active or self._response_create_pending:
+        # Defer reconnect if the turn is not completely idle, unless immediate_user_turn is True and robot is not speaking
+        is_busy = self._response_active or self._response_create_pending or self._user_speaking
+        if self.robot_speaking or (is_busy and not immediate_user_turn):
             self._pending_reconnect_reason = reason
             self.get_logger().info(f"Gemini Live: deferring reconnect ({reason}) until turn completes")
             return
@@ -1147,6 +1225,31 @@ class GeminiLiveNode(Node):
         target_positions = np.linspace(0.0, 1.0, num=target_samples, endpoint=False)
         resampled = np.interp(target_positions, source_positions, audio.astype(np.float32))
         return np.clip(np.round(resampled), -32768, 32767).astype(np.int16)
+
+    def _replay_accumulated_audio(self):
+        if not self._current_user_audio:
+            return
+        self.get_logger().info(f"Replaying {len(self._current_user_audio)} samples of accumulated user audio to new session")
+        pcm = np.array(self._current_user_audio, dtype=np.int16)
+        pcm_api = self._resample_pcm16(pcm, self._current_input_sample_rate, self.api_sample_rate)
+        
+        chunk_size = 4800
+        with self._send_lock:
+            for i in range(0, pcm_api.size, chunk_size):
+                chunk = pcm_api[i:i+chunk_size]
+                encoded = base64.b64encode(chunk.tobytes()).decode("ascii")
+                payload = {
+                    "realtimeInput": {
+                        "mediaChunks": [{"mimeType": f"audio/pcm;rate={self.api_sample_rate}", "data": encoded}]
+                    }
+                }
+                if self._connected.is_set() and self._ws_app is not None:
+                    try:
+                        self._ws_app.send(json.dumps(payload, separators=(",", ":")))
+                    except Exception as exc:
+                        self.get_logger().error(f"Failed to send replayed chunk: {exc}")
+                        self._connected.clear()
+                        break
 
     def _should_filter_playback_input(self, now_ms: int) -> bool:
         if not self.playback_input_filter_enabled:
@@ -1245,6 +1348,7 @@ class GeminiLiveNode(Node):
         self._capture_user_audio = False
         self._current_user_audio = []
         self._recent_input_audio = []
+        self._current_user_transcript = ""
         self._user_speaking = False
         self._playback_guard_was_active = False
         self._playback_frames_blocked = 0
@@ -1298,9 +1402,15 @@ class GeminiLiveNode(Node):
         if self.current_speaker == "Unknown":
             return ""
         context_speaker = str(self.person_context.get("speaker", "Unknown") or "Unknown")
-        if context_speaker != self.current_speaker:
-            return ""
-        return str(self.person_context.get("preferred_name", "") or "").strip()
+        if context_speaker == self.current_speaker:
+            name = str(self.person_context.get("preferred_name", "") or "").strip()
+            if name:
+                return name
+        # Fallback to cache if context_speaker doesn't match current_speaker
+        cached_context = self._speaker_context_cache.get(self.current_speaker)
+        if cached_context:
+            return str(cached_context.get("preferred_name", "") or "").strip()
+        return ""
 
     def _ignored_transcript_reason(self, text: str) -> str:
         reason = ignored_short_transcript_reason(

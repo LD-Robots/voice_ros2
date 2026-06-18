@@ -71,6 +71,7 @@ class LLMNode(Node):
         self.declare_parameter('temperature', 0.7)
         self.declare_parameter('min_chunk_chars', 40)  # Min chars per chunk
         self.declare_parameter('transcription_topic', '/attended_transcription')
+        self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         
         default_system_prompt = str(load_prompt_defaults().get('llm_system_prompt', ''))
         
@@ -88,6 +89,7 @@ class LLMNode(Node):
         self.min_chunk_chars = self.get_parameter('min_chunk_chars').value
         self.system_prompt = self.get_parameter('system_prompt').value
         self.transcription_topic = str(self.get_parameter('transcription_topic').value)
+        self.sticky_speaker_timeout_s = float(self.get_parameter('sticky_speaker_timeout_s').value)
 
         if self.provider != 'groq':
             raise RuntimeError(
@@ -163,6 +165,7 @@ class LLMNode(Node):
         
         # Speaker identification — who is speaking now
         self.current_speaker = "Unknown"
+        self.last_known_speaker_time = 0.0
         self.speaker_sub = self.create_subscription(
             String,
             '/speaker_id',
@@ -394,10 +397,6 @@ class LLMNode(Node):
         # Current time
         now = time.time()
         
-        # Initialize timestamp for the last known speaker if not present
-        if not hasattr(self, 'last_known_speaker_time'):
-            self.last_known_speaker_time = 0
-            
         # STICKY SPEAKER LOGIC:
         # 1. If it's a KNOWN speaker (not Unknown), update immediately
         if new_speaker != "Unknown":
@@ -416,10 +415,10 @@ class LLMNode(Node):
                 
             # If we know someone, check how much time has passed
             else:
-                # If less than 60 seconds have passed since the last identification,
+                # If less than the sticky timeout has passed since the last identification,
                 # IGNORE "Unknown" and assume it's still the previous person.
                 time_since_last = now - self.last_known_speaker_time
-                if time_since_last < 60.0:
+                if time_since_last < self.sticky_speaker_timeout_s:
                     self.get_logger().debug(f'Ignoring "Unknown" - keeping {self.current_speaker} ({time_since_last:.1f}s)')
                 else:
                     # Too much time has passed, reset to Unknown

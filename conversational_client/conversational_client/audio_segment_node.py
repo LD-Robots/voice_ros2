@@ -154,6 +154,12 @@ class AudioSegmentNode(Node):
         
         if msg.data and not was_speaking:
             self.get_logger().info('🔇 Robot speaking - muting input')
+            
+            # Send current buffer as segment before clearing/ignoring, if VAD was active
+            if self.is_speaking and self.audio_buffer:
+                self.get_logger().info('📤 Robot started speaking while user was active - flushing segment')
+                self._send_segment()
+                
             # Clear buffer immediately when robot starts speaking to remove any leak
             self.audio_buffer = []
             self.ignore_segment = True  # Ignore any pending segment as it might be echo
