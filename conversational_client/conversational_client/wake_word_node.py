@@ -341,7 +341,7 @@ class WakeWordNode(Node):
         wake_event = WakeWord()
         wake_event.header.stamp = self.get_clock().now().to_msg()
         wake_event.word = model_name
-        wake_event.score = float(score)
+        wake_event.score = score
         self.wake_word_pub.publish(wake_event)
         
         # Publish to /wake_detected
