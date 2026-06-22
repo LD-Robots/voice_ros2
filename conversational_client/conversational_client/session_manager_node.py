@@ -2,7 +2,7 @@
 """
 session_manager_node.py - Manages session state and closing on "Goodbye"
 
-Acest nod ascultă transcrierea și decide când să închidă sesiunea.
+This node listens to the transcription and decides when to close the session.
 """
 import rclpy
 from rclpy.node import Node
@@ -18,7 +18,7 @@ class SessionManagerNode(Node):
         transcription_topic = str(self.get_parameter('transcription_topic').value)
         self.current_backend = 'legacy'
 
-        # Subscriber la transcrierea de la server (pentru a detecta intentia de goodbye din text)
+        # Subscriber to server transcription (to detect goodbye intent in the text)
         self.transcription_sub = self.create_subscription(
             Transcription,
             transcription_topic,
@@ -35,7 +35,7 @@ class SessionManagerNode(Node):
             10
         )
 
-        # Publisher pentru controlul sesiunii
+        # Publisher for session control
         self.session_pub = self.create_publisher(Bool, '/end_session_external', 10)
         self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
         

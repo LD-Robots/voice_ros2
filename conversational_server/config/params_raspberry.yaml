@@ -5,7 +5,7 @@
 
 backend_manager_node:
   ros__parameters:
-    preferred_backend: "openai_realtime"
+    preferred_backend: "gemini_live"
     fallback_backend: "legacy"
     offline_timeout_s: 1000.0
     auto_return_to_preferred: true
@@ -35,33 +35,6 @@ tts_node:
     rate: "+0%"
     volume: "+0%"
 
-openai_realtime_node:
-  ros__parameters:
-    model: "gpt-realtime-mini"
-    voice: "cedar"
-    api_base_url: "wss://api.openai.com/v1/realtime"
-    input_sample_rate: 16000
-    api_sample_rate: 24000
-    vad_threshold: 0.70
-    vad_prefix_padding_ms: 400
-    vad_silence_duration_ms: 550
-    response_create_delay_ms: 100
-    continued_turn_response_delay_ms: 450
-    short_transcript_dedupe_window_s: 4.0
-    playback_input_filter_enabled: true
-    playback_input_filter_post_playback_ms: 1400
-    playback_input_filter_min_rms_dbfs: -24.0
-    playback_input_filter_hits_required: 2
-    assistant_echo_filter_enabled: true
-    assistant_echo_window_s: 10.0
-    assistant_echo_similarity_threshold: 84.0
-    web_search_enabled: true
-    web_search_model: "gpt-4.1"
-    web_search_context_size: "medium"
-    capture_during_playback: true
-    speaker_switch_hits_required: 2
-    language_switch_hits_required: 2
-    allow_known_speaker_switch_without_address: true
 
 # ========== CLIENT NODES ==========
 

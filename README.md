@@ -1,6 +1,6 @@
 # Voice ROS2 - Conversational Robot System
 
-A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and an OpenAI Realtime speech-to-speech backend with optional OpenAI-backed web search.
+A bilingual (Romanian/English) conversational robot system built with ROS2. Features real-time voice interaction, wake word detection, a legacy Groq text pipeline, and a Gemini Live speech-to-speech backend.
 
 ## 🏗️ Architecture
 
@@ -10,7 +10,7 @@ The system uses a **client-server architecture** with ROS2 nodes:
 - **ASR Node** - Automatic Speech Recognition (Faster-Whisper)
 - **LLM Node** - Language Model processing (Groq API with streaming)
 - **TTS Node** - Text-to-Speech (Edge TTS + Audio Cache)
-- **OpenAI Realtime Node** - Speech-to-speech via `gpt-realtime-mini`
+- **Gemini Live Node** - Speech-to-speech via Gemini Live API
 
 ### Client Nodes (Robot Hardware)
 - **Audio Capture Node** - Microphone input
@@ -53,7 +53,7 @@ The runtime code currently depends on these Python modules:
 - Wake word and stop keyword detection: `openwakeword`, `onnxruntime`
 - Speaker identification: `speechbrain`, `torch`, `torchaudio`, `huggingface_hub`, `torchcodec`
 
-For the current `full_system.launch.py`, install the full list even if you mostly use OpenAI Realtime, because the launch file still starts helper and legacy-side nodes alongside the realtime node.
+For the current `full_system.launch.py`, install the full list even if you mostly use Gemini Live, because the launch file still starts helper and legacy-side nodes alongside the realtime node.
 
 ## 🔧 Setup
 
@@ -73,7 +73,7 @@ nano .env
 Add your API keys:
 ```
 GROQ_API_KEY=your_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
 > **Note:** The `.env` file is already in `.gitignore` to protect your API key.
@@ -102,76 +102,58 @@ source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py
 ```
 
-### Full System with OpenAI Realtime
+### Full System with Gemini Live
 ```bash
 source /path/to/ros2_ws/install/setup.bash
 ros2 launch conversational_server full_system.launch.py \
-    conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar \
-    realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
-    realtime_web_search_context_size:=medium \
-    realtime_vad_silence_duration_ms:=550 \
-    realtime_response_create_delay_ms:=100 \
-    realtime_continued_turn_response_delay_ms:=450 \
-    realtime_capture_during_playback:=true
+    conversation_backend:=gemini_live
 ```
 
 ### Server Only
 ```bash
 ros2 launch conversational_server server_pipeline.launch.py
 ```
-corect:
+Correct command:
 source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_server server_pipeline.launch.py
 
-Pentru OpenAI Realtime:
+For Gemini Live:
 ```bash
 source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_server server_pipeline.launch.py \
-    conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar \
-    realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
-    realtime_web_search_context_size:=medium \
-    realtime_vad_silence_duration_ms:=550 \
-    realtime_response_create_delay_ms:=100 \
-    realtime_continued_turn_response_delay_ms:=450 \
-    realtime_capture_during_playback:=true
+    conversation_backend:=gemini_live
 ```
 
 ### Client Only (on robot hardware)
 ```bash
 ros2 launch conversational_client client_pipeline.launch.py
 ```
-corect:
+Correct command:
 source ~/voice_ros2/install/setup.bash
 ros2 launch conversational_client client_pipeline.launch.py
 
 ### 🎤 Speaker Enrollment (Voice Fingerprint)
 
-Înainte de a folosi identificarea vocală, înregistrează vocea fiecărui utilizator:
+Before using voice identification, record the voice of each user:
 
 ```bash
-# Înregistrează vocea (5 secunde)
+# Record the voice (5 seconds)
 python3 speaker_id/enroll_speaker.py
 ```
 
-Scriptul va cere numele și va salva amprenta vocală în `voices/enrollment/<nume>.wav`. Repetă pentru fiecare utilizator.
-Acesta este modul recomandat pentru enrollment stabil al unei persoane noi.
+The script will ask for the name and save the voice fingerprint in `voices/enrollment/<name>.wav`. Repeat for each user.
+This is the recommended way for stable enrollment of a new person.
 
-Verifică baza de date:
+Verify the database:
 ```bash
 python3 speaker_id/speaker_manager.py
 ```
 
-`speaker_manager.py` doar verifică ce voci sunt încărcabile din baza de date. Nu înregistrează o voce nouă.
+`speaker_manager.py` only checks which voices are loadable from the database. It does not record a new voice.
 
-Enrollment automat din conversație este intenționat mai strict: pornește doar când persoana se prezintă explicit, de exemplu `my name is Vasile`, `call me Vasile`, `ma numesc Vasile`.
+Automatic enrollment from conversation is intentionally stricter: it starts only when the person explicitly introduces themselves, for example: `my name is Vasile`, `call me Vasile`, `ma numesc Vasile`.
 
-După enrollment, `speaker_id_node` va identifica automat vorbitorul la pornirea sistemului și va comunica numele către LLM.
+After enrollment, `speaker_id_node` will automatically identify the speaker when the system starts and communicate the name to the LLM.
 
 ## ⚙️ Configuration
 
@@ -197,34 +179,14 @@ Available Groq models:
 - `compound-beta` (web search enabled)
 - `mixtral-8x7b-32768`
 
-#### OpenAI Realtime Configuration
+#### Gemini Live Configuration
 ```bash
 ros2 launch conversational_server full_system.launch.py \
-    conversation_backend:=openai_realtime \
-    realtime_model:=gpt-realtime-mini \
-    realtime_voice:=cedar \
-    realtime_web_search_enabled:=true \
-    realtime_web_search_model:=gpt-4.1-mini \
-    realtime_web_search_context_size:=medium \
-    realtime_vad_silence_duration_ms:=550 \
-    realtime_response_create_delay_ms:=100 \
-    realtime_continued_turn_response_delay_ms:=450 \
-    realtime_capture_during_playback:=true
+    conversation_backend:=gemini_live
 ```
 
 Recommended first test:
-- `conversation_backend:=openai_realtime`
-- `realtime_model:=gpt-realtime-mini`
-- `realtime_voice:=cedar`
-- `realtime_web_search_enabled:=true`
-- `realtime_web_search_model:=gpt-4.1-mini`
-- `realtime_web_search_context_size:=medium`
-- `realtime_vad_silence_duration_ms:=550`
-- `realtime_response_create_delay_ms:=100`
-- `realtime_continued_turn_response_delay_ms:=450`
-- `realtime_capture_during_playback:=true`
-
-When `conversation_backend:=openai_realtime`, online search can stay inside the OpenAI path: the Realtime model can call a local `web_search` function tool, which executes an OpenAI Responses API request with `web_search_preview` and returns the result back into the same voice turn.
+- `conversation_backend:=gemini_live`
 
 ### Wake Word Threshold
 Edit `full_system.launch.py` and adjust:
@@ -237,7 +199,7 @@ Edit `full_system.launch.py` and adjust:
 ### ✅ Implemented
 - ✅ **Bilingual** - Romanian and English automatic detection
 - ✅ **Streaming LLM** - Real-time response generation
-- ✅ **Web Search** - OpenAI Realtime can trigger OpenAI web search for current events and live facts
+- ✅ **Web Search** - Gemini Live can trigger Google Search for current events and live facts
 - ✅ **Wake Word** - "Hello robot" / "Hey robot" detection
 - ✅ **Barge-in** - Interrupt TTS when user speaks
 - ✅ **Voice Activity Detection** - Automatic speech end detection
@@ -261,10 +223,10 @@ Make sure `.env` file exists and contains your API key:
 cat /path/to/ros2_ws/src/voice_ros2/.env
 ```
 
-### "OPENAI_API_KEY not set" Error
+### "GEMINI_API_KEY not set" Error
 Make sure `.env` contains:
 ```bash
-OPENAI_API_KEY=your_openai_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
 ### Microphone Not Working

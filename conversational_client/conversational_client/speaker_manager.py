@@ -93,13 +93,13 @@ class SpeakerManager:
         # ─────────────────────────────────────────────────────────
         # Load SpeechBrain ECAPA-TDNN model
         # ─────────────────────────────────────────────────────────
-        print("🔄 Se încarcă modelul SpeechBrain ECAPA-TDNN...")
+        print("🔄 Loading SpeechBrain ECAPA-TDNN model...")
         self.classifier = EncoderClassifier.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
             savedir=self.model_cache_dir,
             run_opts={"device": "cpu"}
         )
-        print("✅ Model ECAPA-TDNN încărcat!")
+        print("✅ ECAPA-TDNN model loaded!")
 
         # ─────────────────────────────────────────────────────────
         # Database: {"Vale": embedding_tensor, "Delia": embedding_tensor}
@@ -115,16 +115,16 @@ class SpeakerManager:
         """Load all .wav files from enrollment_dir and compute embeddings."""
 
         if not os.path.isdir(self.enrollment_dir):
-            print(f"⚠️ Folderul de enrollment nu există: {self.enrollment_dir}")
+            print(f"⚠️ Enrollment folder does not exist: {self.enrollment_dir}")
             return
 
         wav_files = [f for f in os.listdir(self.enrollment_dir) if f.endswith('.wav')]
 
         if not wav_files:
-            print(f"⚠️ Niciun fișier .wav în: {self.enrollment_dir}")
+            print(f"⚠️ No .wav files in: {self.enrollment_dir}")
             return
 
-        print(f"🔄 Se încarcă {len(wav_files)} voci din enrollment...")
+        print(f"🔄 Loading {len(wav_files)} voices from enrollment...")
 
         for wav_file in wav_files:
             # Person name = file name without extension
@@ -134,11 +134,11 @@ class SpeakerManager:
             try:
                 embedding = self._compute_embedding_from_file(wav_path)
                 self.speaker_db[speaker_name] = embedding
-                print(f"  ✅ {speaker_name} — embedding calculat ({wav_file})")
+                print(f"  ✅ {speaker_name} — embedding calculated ({wav_file})")
             except Exception as e:
-                print(f"  ❌ Eroare la {wav_file}: {e}")
+                print(f"  ❌ Error at {wav_file}: {e}")
 
-        print(f"📊 Baza de date: {len(self.speaker_db)} voci "
+        print(f"📊 Database: {len(self.speaker_db)} voices "
               f"({', '.join(self.speaker_db.keys())})")
 
     def _ensure_placeholder_custom_module(self):
@@ -340,20 +340,20 @@ def main():
     enrollment_path = os.path.join(voices_dir, 'enrollment')
 
     if not os.path.isdir(enrollment_path):
-        print(f"❌ Folderul de enrollment nu există: {enrollment_path}")
-        print("   Rulează mai întâi: python3 speaker_id/enroll_speaker.py")
+        print(f"❌ Enrollment folder does not exist: {enrollment_path}")
+        print("   Run first: python3 speaker_id/enroll_speaker.py")
         sys.exit(1)
 
     wav_count = len([f for f in os.listdir(enrollment_path) if f.endswith('.wav')])
     if wav_count == 0:
-        print("❌ Niciun fișier .wav în enrollment. Rulează mai întâi: python3 speaker_id/enroll_speaker.py")
+        print("❌ No .wav files in enrollment. Run first: python3 speaker_id/enroll_speaker.py")
         sys.exit(1)
 
-    print(f"\n📂 Testare SpeakerManager cu {wav_count} voci...\n")
+    print(f"\n📂 Testing SpeakerManager with {wav_count} voices...\n")
     manager = SpeakerManager(enrollment_path)
-    print(f"\n✅ Vorbitori încărcați: {manager.get_speakers()}")
+    print(f"\n✅ Loaded speakers: {manager.get_speakers()}")
 
 
 if __name__ == '__main__':
     main()
-    print("   SpeakerManager funcționează corect!")
+    print("   SpeakerManager is working correctly!")

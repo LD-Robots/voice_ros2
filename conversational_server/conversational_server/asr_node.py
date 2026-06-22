@@ -19,14 +19,11 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Audio, Transcription
 from std_msgs.msg import Bool, String
 import numpy as np
-import tempfile
 import wave
-import os
 import time
 import io
 import re
 import unicodedata
-import soundfile as sf
 
 # RapidFuzz for textual anti-echo
 try:

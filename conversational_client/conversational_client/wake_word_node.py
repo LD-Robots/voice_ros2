@@ -25,7 +25,6 @@ from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool, String
 import numpy as np
 import time
-import os
 from pathlib import Path
 
 # Try to import OpenWakeWord
@@ -232,7 +231,7 @@ class WakeWordNode(Node):
             #     if len(self.debug_wav_buffer) >= 48000:
             #         try:
             #             import soundfile as sf
-            #             wav_path = '/home/delia/ros2_ws/debug_wake_audio.wav'
+            #             wav_path = os.path.expanduser('~/debug_wake_audio.wav')
                         
             #             # Convert to numpy int16 array explicitly
             #             wav_data = np.array(self.debug_wav_buffer, dtype=np.int16)

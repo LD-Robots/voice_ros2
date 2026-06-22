@@ -606,11 +606,6 @@ class LLMNode(Node):
         out.confidence = 1.0
         self.response_pub.publish(out)
     
-    def clear_history(self):
-        """Clear the conversation history."""
-        self.conversation_history = []
-        self.get_logger().debug('Conversation history cleared')
-
 
 def main(args=None):
     rclpy.init(args=args)

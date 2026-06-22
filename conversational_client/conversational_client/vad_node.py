@@ -382,7 +382,7 @@ class VADNode(Node):
                 
                 # Adjust length if needed
                 frame_len = len(audio)
-                if frame_len == 320:  # 20ms la 16kHz
+                if frame_len == 320:  # 20ms at 16kHz
                     return self.vad.is_speech(audio_bytes, self.sample_rate)
                 else:
                     # Energy fallback for non-standard lengths

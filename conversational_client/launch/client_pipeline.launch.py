@@ -31,10 +31,10 @@ def generate_launch_description():
     # Build the string for custom_models
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
-    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # testăm modelul original
+    stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # test the original model
     goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
-    # Definim modelele: hello=wake, stop_robot_oww=barge_in (doar stop TTS), goodbye=stop (bye bye)
+    # Define models: hello=wake, stop_robot_oww=barge_in (stop TTS only), goodbye=stop (bye bye)
     custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
     model_thresholds = "hello_robot:0.10,stop_robot:0.70,goodbye_robot:0.50"
@@ -120,21 +120,21 @@ def generate_launch_description():
             description='Enable stop-keyword based barge-in'
         ),
         
-        # Audio Capture (microfon)
+        # Audio Capture (microphone)
         Node(
             package='conversational_client',
             executable='audio_capture_node',
             name='audio_capture_node',
             output='screen',
             parameters=[{
-                'device_index': 3,  # Explicit PulseAudio ca să prindem cele 6 canale ale ReSpeaker
+                'device_index': 3,  # Explicit PulseAudio to capture the 6 ReSpeaker channels
                 'respeaker_mode': True,
-                'respeaker_channel': 5, # AEC procesat (Testele au arătat că 5 e mai bun)
-                'gain': 3.0,            # Gain digital pentru a nu avea clipping
+                'respeaker_channel': 5, # Processed AEC (Tests showed 5 is better)
+                'gain': 3.0,            # Digital gain to avoid clipping
             }]
         ),
         
-        # Wake Word (detectare "hello robot") + Stop Keyword ("stop")
+        # Wake Word (detect "hello robot") + Stop Keyword ("stop")
         Node(
             package='conversational_client',
             executable='wake_word_node',
@@ -160,7 +160,7 @@ def generate_launch_description():
                 'wake_word_enabled': True,
                 'session_timeout': 30.0,
                 'min_silence_frames': LaunchConfiguration('vad_min_silence_frames'),
-                'capture_during_playback': False, # Dezactivăm captarea server-side în timpul redării pentru a evita bucla
+                'capture_during_playback': False, # Disable server-side capture during playback to avoid feedback loop
             }]
         ),
         
@@ -174,7 +174,7 @@ def generate_launch_description():
             parameters=[{
                 'min_segment_seconds': 0.5,
                 'max_segment_seconds': 30.0,
-                'capture_during_playback': False, # Revenim la Half-Duplex pentru stabilitate
+                'capture_during_playback': False, # Revert to Half-Duplex for stability
             }]
         ),
         
@@ -198,13 +198,13 @@ def generate_launch_description():
                 'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
                 'stop_logit_margin': LaunchConfiguration('stop_keyword_logit_margin'),
                 'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),
-                'stop_frame_samples': 16000,  # Frame = 1s (impus de model!)
-                'stop_hop_samples': 4000,     # Hop = 0.25s = verificare la fiecare 250ms
+                'stop_frame_samples': 16000,  # Frame = 1s (imposed by model!)
+                'stop_hop_samples': 4000,     # Hop = 0.25s = check every 250ms
                 'stop_requires_voice_signature': LaunchConfiguration('stop_keyword_requires_voice_signature'),
             }]
         ),
         
-        # Audio Playback (difuzor)
+        # Audio Playback (speaker)
         Node(
             package='conversational_client',
             executable='audio_playback_node',
@@ -212,7 +212,7 @@ def generate_launch_description():
             output='screen',
         ),
 
-        # Speaker Identification (cine vorbește)
+        # Speaker Identification (who is speaking)
         Node(
             package='conversational_client',
             executable='speaker_id_node',

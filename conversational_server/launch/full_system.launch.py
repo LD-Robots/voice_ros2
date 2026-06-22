@@ -4,7 +4,7 @@ Relies on YAML configuration profiles for most parameters.
 """
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from ament_index_python.packages import get_package_share_directory
@@ -22,8 +22,6 @@ def _find_workspace_root():
 
 def generate_launch_description():
     # ========== SHARED CONTEXT ==========
-    realtime_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'openai_realtime'"])
-    gemini_live_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'gemini_live'"])
     non_gemini_backend = PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' != 'gemini_live'"])
     
     client_share = get_package_share_directory('conversational_client')
@@ -54,7 +52,7 @@ def generate_launch_description():
     return LaunchDescription([
         # ========== LAUNCH ARGUMENTS (CORE OVERRIDES) ==========
         DeclareLaunchArgument('config', default_value='raspberry', description='Profile (raspberry/laptop)'),
-        DeclareLaunchArgument('conversation_backend', default_value='openai_realtime', description='Backend (legacy/openai_realtime)'),
+        DeclareLaunchArgument('conversation_backend', default_value='gemini_live', description='Backend (legacy/gemini_live)'),
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
         DeclareLaunchArgument('audio_device_index', default_value='-1', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
         DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
@@ -89,14 +87,7 @@ def generate_launch_description():
             parameters=[config_file_path]
         ),
 
-        Node(
-            package='conversational_server',
-            executable='openai_realtime_node',
-            name='openai_realtime_node',
-            condition=IfCondition(realtime_backend),
-            parameters=[config_file_path],
-            remappings=[('/audio_raw', '/audio_clean')]
-        ),
+
 
         Node(
             package='conversational_server',
@@ -142,7 +133,7 @@ def generate_launch_description():
             parameters=[config_file_path]
         ),
         
-        # barge_in_node is only needed for legacy/openai_realtime backends.
+        # barge_in_node is only needed for the legacy backend.
         # When using gemini_live, Gemini handles barge-in natively via its
         # own automaticActivityDetection VAD — the local node would interfere.
         Node(
