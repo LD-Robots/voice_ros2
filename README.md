@@ -181,6 +181,26 @@ ros2 launch conversational_server full_system.launch.py \
 ```
 Use the same id (`export ROS_DOMAIN_ID=11`) in any terminal running `ros2` CLI tools.
 
+#### ROS Namespace
+All nodes run under the **`voice`** namespace by default. All topics therefore live
+at `/voice/<topic>` (e.g. `/voice/robot_commands`, `/voice/transcription`).
+
+To use a different namespace:
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    namespace:=my_robot
+```
+
+CLI tools in a separate terminal also need the namespace:
+```bash
+export ROS_DOMAIN_ID=11
+ros2 topic echo /voice/robot_commands
+ros2 node list   # shows /voice/robot_command_gate_node etc.
+```
+
+The motion team must subscribe to `/voice/robot_commands` and `/voice/robot_command_status`.
+See `ROBOT_COMMAND_CONTRACT.md` for the full integration spec.
+
 #### ASR Configuration
 ```bash
 ros2 launch conversational_server full_system.launch.py \

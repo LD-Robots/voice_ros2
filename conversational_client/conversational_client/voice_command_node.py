@@ -6,13 +6,16 @@ Recognizes one of the 5 supported commands and publishes it to the safety gate.
 It does NOT talk to the motion team directly; the gate
 (robot_command_gate_node) validates and forwards approved commands.
 
+Topic names are relative; under the default `voice` namespace they resolve
+to /voice/... (e.g. /voice/recognized_commands).
+
 Subscribes to:
-  - /attended_transcription (Transcription)
-  - /speaker_id (String)
+  - attended_transcription (Transcription)
+  - speaker_id (String)
 
 Publishes to:
-  - /recognized_commands (RobotCommand, raw recognizer output -> gate input)
-  - /tts_command (String, optional acknowledgement)
+  - recognized_commands (RobotCommand, raw recognizer output -> gate input)
+  - tts_command (String, optional acknowledgement)
 """
 import json
 
