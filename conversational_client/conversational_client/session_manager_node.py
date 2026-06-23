@@ -14,7 +14,7 @@ from .session_text_utils import detect_goodbye_keyword, goodbye_tts_command
 class SessionManagerNode(Node):
     def __init__(self):
         super().__init__('session_manager_node')
-        self.declare_parameter('transcription_topic', '/attended_transcription')
+        self.declare_parameter('transcription_topic', 'attended_transcription')
         transcription_topic = str(self.get_parameter('transcription_topic').value)
         self.current_backend = 'legacy'
 
@@ -30,14 +30,14 @@ class SessionManagerNode(Node):
         # itself so we skip the cached TTS sound to avoid a double goodbye.
         self.backend_sub = self.create_subscription(
             String,
-            '/conversation_backend',
+            'conversation_backend',
             self._backend_callback,
             10
         )
 
         # Publisher for session control
-        self.session_pub = self.create_publisher(Bool, '/end_session_external', 10)
-        self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
+        self.session_pub = self.create_publisher(Bool, 'end_session_external', 10)
+        self.tts_cmd_pub = self.create_publisher(String, 'tts_command', 10)
         
         self.get_logger().info('✅ Session Manager started. Listening for Goodbye...')
 

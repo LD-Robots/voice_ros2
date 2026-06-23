@@ -3,16 +3,25 @@ Launch file for the server-side pipeline.
 Starts ASR, LLM, and TTS nodes.
 """
 from launch import LaunchDescription
-from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch.substitutions import PythonExpression
+from launch_ros.actions import Node, PushRosNamespace
 
 
 def generate_launch_description():
     return LaunchDescription([
         # Declare arguments
+        # ROS_DOMAIN_ID isolates this system on the DDS network. Defaults to 11,
+        # respects an already-exported ROS_DOMAIN_ID, overridable with ros_domain_id:=<N>.
+        DeclareLaunchArgument(
+            'ros_domain_id',
+            default_value=EnvironmentVariable('ROS_DOMAIN_ID', default_value='11'),
+            description='DDS domain id shared by all nodes (default 11)'
+        ),
+        SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('ros_domain_id')),
+
         DeclareLaunchArgument(
             'conversation_backend',
             default_value='gemini_live',
@@ -43,8 +52,12 @@ def generate_launch_description():
             default_value='0.82',
             description='Sensitivity threshold for VAD (higher means less sensitive to noise)'
         ),
+        DeclareLaunchArgument('namespace', default_value='voice', description='ROS namespace for all nodes (default voice)'),
 
-        
+        # Every node runs under `namespace` (default /voice); node topic names are relative.
+        GroupAction([
+            PushRosNamespace(LaunchConfiguration('namespace')),
+
         # ASR Node
         Node(
             package='conversational_server',
@@ -113,4 +126,5 @@ def generate_launch_description():
                 'vad_threshold': LaunchConfiguration('vad_threshold'),
             }]
         ),
+        ]),  # end GroupAction(namespace)
     ])

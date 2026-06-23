@@ -138,7 +138,7 @@ class WakeWordNode(Node):
         # ─────────────────────────────────────────────────────────
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            'audio_raw',
             self.audio_callback,
             10
         )
@@ -146,21 +146,21 @@ class WakeWordNode(Node):
         # ─────────────────────────────────────────────────────────
         # PUBLISHERS
         # ─────────────────────────────────────────────────────────
-        self.wake_pub = self.create_publisher(Bool, '/wake_detected', 10)
-        self.wake_word_pub = self.create_publisher(WakeWord, '/wake_word', 10)
-        self.session_pub = self.create_publisher(Bool, '/session_active', 10)
-        self.end_session_pub = self.create_publisher(Bool, '/end_session', 10)
-        self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.wake_pub = self.create_publisher(Bool, 'wake_detected', 10)
+        self.wake_word_pub = self.create_publisher(WakeWord, 'wake_word', 10)
+        self.session_pub = self.create_publisher(Bool, 'session_active', 10)
+        self.end_session_pub = self.create_publisher(Bool, 'end_session', 10)
+        self.tts_stop_pub = self.create_publisher(Bool, 'tts_stop', 10)
         
         # Publisher for TTS commands (cache playback)
-        self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
+        self.tts_cmd_pub = self.create_publisher(String, 'tts_command', 10)
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER for external session end
         # ─────────────────────────────────────────────────────────
         self.external_end_sub = self.create_subscription(
             Bool,
-            '/end_session_external',
+            'end_session_external',
             self.external_end_session_callback,
             10
         )
@@ -168,7 +168,7 @@ class WakeWordNode(Node):
         # Track active backend to adjust behaviour
         self.backend_sub = self.create_subscription(
             String,
-            '/conversation_backend',
+            'conversation_backend',
             self._backend_callback,
             10
         )

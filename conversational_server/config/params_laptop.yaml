@@ -141,7 +141,7 @@ wake_word_node:
 
 voice_command_node:
   ros__parameters:
-    command_topic: "/recognized_commands"
+    command_topic: "recognized_commands"
     min_transcription_confidence: 0.45
     default_steps: 1
     max_steps: 20
@@ -149,8 +149,8 @@ voice_command_node:
 
 robot_command_gate_node:
   ros__parameters:
-    input_topic: "/recognized_commands"
-    command_topic: "/robot_commands"
+    input_topic: "recognized_commands"
+    command_topic: "robot_commands"
     execution_enabled: true
     enable_voice_cancel: true
     enable_risky_confirmation: true

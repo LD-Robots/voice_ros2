@@ -5,9 +5,9 @@ Starts all client nodes for voice conversation.
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
+from launch_ros.actions import Node, PushRosNamespace
 from pathlib import Path
 
 
@@ -44,6 +44,15 @@ def generate_launch_description():
     enrollment_dir = os.path.join(voices_dir, 'enrollment')
 
     return LaunchDescription([
+        # ROS_DOMAIN_ID isolates this system on the DDS network. Defaults to 11,
+        # respects an already-exported ROS_DOMAIN_ID, overridable with ros_domain_id:=<N>.
+        DeclareLaunchArgument(
+            'ros_domain_id',
+            default_value=EnvironmentVariable('ROS_DOMAIN_ID', default_value='11'),
+            description='DDS domain id shared by all nodes (default 11)'
+        ),
+        SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('ros_domain_id')),
+
         DeclareLaunchArgument(
             'speaker_similarity_threshold',
             default_value='0.45',
@@ -119,7 +128,12 @@ def generate_launch_description():
             default_value='true',
             description='Enable stop-keyword based barge-in'
         ),
-        
+        DeclareLaunchArgument('namespace', default_value='voice', description='ROS namespace for all nodes (default voice)'),
+
+        # Every node runs under `namespace` (default /voice); node topic names are relative.
+        GroupAction([
+            PushRosNamespace(LaunchConfiguration('namespace')),
+
         # Audio Capture (microphone)
         Node(
             package='conversational_client',
@@ -277,7 +291,7 @@ def generate_launch_description():
             name='voice_command_node',
             output='screen',
             parameters=[{
-                'command_topic': '/recognized_commands',
+                'command_topic': 'recognized_commands',
                 'min_transcription_confidence': 0.45,
                 'default_steps': 1,
                 'max_steps': 20,
@@ -293,8 +307,8 @@ def generate_launch_description():
             name='robot_command_gate_node',
             output='screen',
             parameters=[{
-                'input_topic': '/recognized_commands',
-                'command_topic': '/robot_commands',
+                'input_topic': 'recognized_commands',
+                'command_topic': 'robot_commands',
                 'execution_enabled': True,
                 'enable_voice_cancel': True,
                 'enable_risky_confirmation': True,
@@ -303,4 +317,5 @@ def generate_launch_description():
                 'risky_turn_angle_deg': 150.0,
             }]
         ),
+        ]),  # end GroupAction(namespace)
     ])

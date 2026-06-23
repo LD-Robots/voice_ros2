@@ -34,12 +34,12 @@ class BackendManagerNode(Node):
 
         self.gemini_status_sub = self.create_subscription(
             String,
-            '/gemini_live_status',
+            'gemini_live_status',
             self._gemini_status_callback,
             10,
         )
-        self.backend_pub = self.create_publisher(String, '/conversation_backend', 10)
-        self.status_pub = self.create_publisher(String, '/conversation_backend_status', 10)
+        self.backend_pub = self.create_publisher(String, 'conversation_backend', 10)
+        self.status_pub = self.create_publisher(String, 'conversation_backend_status', 10)
         self.timer = self.create_timer(1.0, self._timer_callback)
 
         self._publish_backend(self.active_backend, 'startup')

@@ -15,16 +15,18 @@ that sits between voice recognition and the motion team:
 Only the 5 supported commands are ever forwarded:
     move_forward(1), raise_hand(2), turn_arround(3), clap(4), say_hi(5)
 
+Topic names below are relative; under the default `voice` namespace they resolve
+to /voice/... (e.g. /voice/robot_commands).
+
 Subscribes to:
-  - /recognized_commands     (RobotCommand, raw recognizer output)
-  - /attended_transcription  (Transcription, for "stop" cancel and yes/no confirmation)
-  - /speaker_id              (String)
+  - recognized_commands     (RobotCommand, raw recognizer output)
+  - attended_transcription  (Transcription, for "stop" cancel and yes/no confirmation)
+  - speaker_id              (String)
 
 Publishes to:
-  - /robot_commands          (RobotCommand, approved commands -> motion team)
-  - /robot_commands/<name>   (RobotCommand, per-command convenience topics)
-  - /robot_command_status    (String, lifecycle: dispatched/canceled/confirmation_*)
-  - /tts_command             (String, spoken confirmation prompt)
+  - robot_commands          (RobotCommand, approved commands -> motion team)
+  - robot_command_status    (String, lifecycle: dispatched/canceled/confirmation_*)
+  - tts_command             (String, spoken confirmation prompt)
 """
 import json
 import re
@@ -46,10 +48,10 @@ class RobotCommandGateNode(Node):
 
         self.declare_parameter('execution_enabled', True)
         self.declare_parameter('min_command_confidence', 0.60)
-        self.declare_parameter('input_topic', '/recognized_commands')
-        self.declare_parameter('command_topic', '/robot_commands')
-        self.declare_parameter('status_topic', '/robot_command_status')
-        self.declare_parameter('transcription_topic', '/attended_transcription')
+        self.declare_parameter('input_topic', 'recognized_commands')
+        self.declare_parameter('command_topic', 'robot_commands')
+        self.declare_parameter('status_topic', 'robot_command_status')
+        self.declare_parameter('transcription_topic', 'attended_transcription')
 
         # Safety: spoken cancel ("stop")
         self.declare_parameter('enable_voice_cancel', True)
@@ -102,12 +104,12 @@ class RobotCommandGateNode(Node):
             Transcription, transcription_topic, self._transcription_callback, 10
         )
         self.speaker_sub = self.create_subscription(
-            String, '/speaker_id', self._speaker_callback, 10
+            String, 'speaker_id', self._speaker_callback, 10
         )
 
         self.command_pub = self.create_publisher(RobotCommand, self.command_topic, 10)
         self.status_pub = self.create_publisher(String, status_topic, 10)
-        self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
+        self.tts_cmd_pub = self.create_publisher(String, 'tts_command', 10)
 
         self._confirm_timer = self.create_timer(0.25, self._confirmation_timer_callback)
 

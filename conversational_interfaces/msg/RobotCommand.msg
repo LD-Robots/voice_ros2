@@ -1,8 +1,8 @@
 std_msgs/Header header
 
 # Public motion-team command contract.
-# Published on /robot_commands (and the per-command topics /robot_commands/<name>)
-# AFTER the safety gate. The motion team subscribes here and runs one script per command.
+# Published on the single bus /voice/robot_commands AFTER the safety gate.
+# The motion team subscribes there and runs one script per command (switch on command_id).
 # Only these 5 commands are ever published:
 int32 command_id           # 1=move_forward, 2=raise_hand, 3=turn_arround, 4=clap, 5=say_hi
 string command_name        # move_forward | raise_hand | turn_arround | clap | say_hi

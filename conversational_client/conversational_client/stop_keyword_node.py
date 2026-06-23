@@ -127,14 +127,14 @@ class StopKeywordNode(Node):
         # Subscribers
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            'audio_raw',
             self.audio_callback,
             10
         )
         
         # Publishers
-        self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
-        self.end_session_pub = self.create_publisher(Bool, '/end_session', 10)
+        self.tts_stop_pub = self.create_publisher(Bool, 'tts_stop', 10)
+        self.end_session_pub = self.create_publisher(Bool, 'end_session', 10)
         
         self.get_logger().info(
             f'🛑 Stop Keyword Detector activ: model={model_path.name}, '

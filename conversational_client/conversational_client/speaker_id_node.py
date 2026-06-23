@@ -115,19 +115,19 @@ class SpeakerIdNode(Node):
         # ─────────────────────────────────────────────────────────
         self.segment_sub = self.create_subscription(
             Audio,
-            '/audio_segment',
+            'audio_segment',
             self.segment_callback,
             10
         )
         self.realtime_segment_sub = self.create_subscription(
             Audio,
-            '/realtime_user_audio_segment',
+            'realtime_user_audio_segment',
             self.segment_callback,
             10,
         )
         self.enrollment_request_sub = self.create_subscription(
             String,
-            '/speaker_enrollment_request',
+            'speaker_enrollment_request',
             self._enrollment_request_callback,
             10,
         )
@@ -135,8 +135,8 @@ class SpeakerIdNode(Node):
         # ─────────────────────────────────────────────────────────
         # PUBLISHER — publishes speaker name
         # ─────────────────────────────────────────────────────────
-        self.speaker_pub = self.create_publisher(String, '/speaker_id', 10)
-        self.enrollment_status_pub = self.create_publisher(String, '/speaker_enrollment_status', 10)
+        self.speaker_pub = self.create_publisher(String, 'speaker_id', 10)
+        self.enrollment_status_pub = self.create_publisher(String, 'speaker_enrollment_status', 10)
 
         if self.db_loaded:
             self.get_logger().info('🎤 Speaker ID Node started (database loaded)')

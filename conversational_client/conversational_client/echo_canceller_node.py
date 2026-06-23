@@ -96,10 +96,10 @@ class EchoCancellerNode(Node):
         self._lock_count = 0
         self.total_ref_samples = 0
         
-        self.raw_sub = self.create_subscription(Audio, '/audio_raw', self.raw_callback, 10)
-        self.out_sub = self.create_subscription(Audio, '/audio_out', self.out_callback, 10)
-        self.is_speaking_sub = self.create_subscription(Bool, '/is_speaking', self.is_speaking_callback, 10)
-        self.clean_pub = self.create_publisher(Audio, '/audio_clean', 10)
+        self.raw_sub = self.create_subscription(Audio, 'audio_raw', self.raw_callback, 10)
+        self.out_sub = self.create_subscription(Audio, 'audio_out', self.out_callback, 10)
+        self.is_speaking_sub = self.create_subscription(Bool, 'is_speaking', self.is_speaking_callback, 10)
+        self.clean_pub = self.create_publisher(Audio, 'audio_clean', 10)
         
         # Debug files (only open if path is provided)
         self.wav_raw = self.open_wav(raw_path, 16000) if raw_path else None

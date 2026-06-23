@@ -70,7 +70,7 @@ class LLMNode(Node):
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
         self.declare_parameter('min_chunk_chars', 40)  # Min chars per chunk
-        self.declare_parameter('transcription_topic', '/attended_transcription')
+        self.declare_parameter('transcription_topic', 'attended_transcription')
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         
         default_system_prompt = str(load_prompt_defaults().get('llm_system_prompt', ''))
@@ -168,7 +168,7 @@ class LLMNode(Node):
         self.last_known_speaker_time = 0.0
         self.speaker_sub = self.create_subscription(
             String,
-            '/speaker_id',
+            'speaker_id',
             self._speaker_id_callback,
             10
         )
@@ -177,25 +177,25 @@ class LLMNode(Node):
         self.waiting_for_robot_confirmation = False
         self.robot_status_sub = self.create_subscription(
             String,
-            '/robot_command_status',
+            'robot_command_status',
             self._robot_status_callback,
             10
         )
         self.person_context_sub = self.create_subscription(
             String,
-            '/person_context',
+            'person_context',
             self._person_context_callback,
             10
         )
         self.backend_sub = self.create_subscription(
             String,
-            '/conversation_backend',
+            'conversation_backend',
             self._backend_callback,
             10
         )
         self.control_sub = self.create_subscription(
             String,
-            '/conversation_control',
+            'conversation_control',
             self._control_callback,
             10
         )
@@ -211,21 +211,21 @@ class LLMNode(Node):
         # Publisher for streaming chunks
         self.stream_pub = self.create_publisher(
             TextChunk,
-            '/llm_stream',
+            'llm_stream',
             10
         )
         
         # Publisher for full response (compatibility)
         self.response_pub = self.create_publisher(
             Transcription,
-            '/llm_response',
+            'llm_response',
             10
         )
         
         # Publisher for TTS command (backchannel)
         self.tts_cmd_pub = self.create_publisher(
             String,
-            '/tts_command',
+            'tts_command',
             10
         )
         

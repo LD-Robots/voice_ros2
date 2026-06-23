@@ -83,7 +83,7 @@ class AudioSegmentNode(Node):
         # Microphone audio
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            'audio_raw',
             self.audio_callback,
             10
         )
@@ -91,7 +91,7 @@ class AudioSegmentNode(Node):
         # VAD state
         self.vad_sub = self.create_subscription(
             Bool,
-            '/voice_activity',
+            'voice_activity',
             self.vad_callback,
             10
         )
@@ -99,7 +99,7 @@ class AudioSegmentNode(Node):
         # Session state (from wake_word_node)
         self.session_sub = self.create_subscription(
             Bool,
-            '/session_active',
+            'session_active',
             self.session_callback,
             10
         )
@@ -107,7 +107,7 @@ class AudioSegmentNode(Node):
         # TTS state - when the robot is speaking, ignore input
         self.robot_speaking_sub = self.create_subscription(
             Bool,
-            '/is_speaking',
+            'is_speaking',
             self.robot_speaking_callback,
             10
         )
@@ -115,7 +115,7 @@ class AudioSegmentNode(Node):
         # Barge-in event - clear current buffer to avoid transcribing "Stop"
         self.barge_in_sub = self.create_subscription(
             Bool,
-            '/barge_in',
+            'barge_in',
             self.barge_in_callback,
             10
         )
@@ -123,7 +123,7 @@ class AudioSegmentNode(Node):
         # ─────────────────────────────────────────────────────────
         # PUBLISHER - send complete segments to the server
         # ─────────────────────────────────────────────────────────
-        self.segment_pub = self.create_publisher(Audio, '/audio_segment', 10)
+        self.segment_pub = self.create_publisher(Audio, 'audio_segment', 10)
         
         self.get_logger().debug('📦 Audio Segment Node started')
     

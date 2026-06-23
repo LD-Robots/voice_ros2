@@ -201,7 +201,7 @@ class BargeInNode(Node):
         # Raw audio for local analysis
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            'audio_raw',
             self.audio_callback,
             10
         )
@@ -209,7 +209,7 @@ class BargeInNode(Node):
         # TTS state
         self.tts_sub = self.create_subscription(
             Bool,
-            '/is_speaking',  # From audio_playback_node (actual playback state)
+            'is_speaking',  # From audio_playback_node (actual playback state)
             self.tts_callback,
             10
         )
@@ -217,12 +217,12 @@ class BargeInNode(Node):
         # ─────────────────────────────────────────────────────────
         # PUBLISHERS
         # ─────────────────────────────────────────────────────────
-        self.barge_pub = self.create_publisher(Bool, '/barge_in', 10)
-        self.stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.barge_pub = self.create_publisher(Bool, 'barge_in', 10)
+        self.stop_pub = self.create_publisher(Bool, 'tts_stop', 10)
         # /stop_playback is the topic that audio_playback_node AND gemini_live_node
         # actually listen to – without this the barge-in detection had no effect
         # on Gemini Live playback.
-        self.stop_playback_pub = self.create_publisher(Bool, '/stop_playback', 10)
+        self.stop_playback_pub = self.create_publisher(Bool, 'stop_playback', 10)
         
         self.get_logger().info(
             f'🎯 Intelligent Barge-in started: min_voice={self.min_voice_ms}ms, '

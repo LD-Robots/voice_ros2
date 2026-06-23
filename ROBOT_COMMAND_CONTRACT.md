@@ -5,6 +5,12 @@ This document is the integration contract between the **voice stack** and the
 motion team *executes* them (one script per command). The voice stack never drives
 any actuator (`cmd_vel`, services, etc.).
 
+> **Network prerequisites:** all nodes run under the **`voice`** ROS namespace and on
+> **`ROS_DOMAIN_ID=11`** by default. Your motion node must use the same domain
+> (`export ROS_DOMAIN_ID=11`) and subscribe to the namespaced topics shown below
+> (`/voice/robot_commands`, `/voice/robot_command_status`). Both are configurable on
+> the voice side via the `namespace:=` and `ros_domain_id:=` launch arguments.
+
 ---
 
 ## 1. The flow
@@ -13,16 +19,16 @@ any actuator (`cmd_vel`, services, etc.).
 mic / STT / speaker-id
         │
         ▼
-voice_command_node ──► /recognized_commands ──► robot_command_gate_node ──► /robot_commands ──► MOTION TEAM
+voice_command_node ──► /voice/recognized_commands ──► robot_command_gate_node ──► /voice/robot_commands ──► MOTION TEAM
    (recognizes)            (raw, internal)         (safety gate)              (approved)         (executes)
 ```
 
 - `voice_command_node` recognizes one of the 5 commands from speech and publishes
-  it on the **internal** topic `/recognized_commands`.
+  it on the **internal** topic `/voice/recognized_commands`.
 - `robot_command_gate_node` applies safety (confidence floor, spoken **stop**
   cancel, and confirmation for risky commands) and **only then** forwards the
   command to the motion team.
-- **You (motion team) subscribe to the single topic `/robot_commands`** and switch
+- **You (motion team) subscribe to the single topic `/voice/robot_commands`** and switch
   on `command_id` to run the matching motion script.
 
 ---
@@ -31,11 +37,11 @@ voice_command_node ──► /recognized_commands ──► robot_command_gate_n
 
 | Topic | Type | Direction | Purpose |
 |---|---|---|---|
-| `/robot_commands` | `conversational_interfaces/RobotCommand` | voice → **motion** | Approved command (all 5). **Subscribe here and switch on `command_id`.** |
-| `/robot_command_status` | `std_msgs/String` | both | Lifecycle. Voice publishes `dispatched:*`, `canceled`, `confirmation_*`. **Motion team should also publish progress here** (see §6). |
-| `/recognized_commands` | `conversational_interfaces/RobotCommand` | internal | Raw recognizer output, **pre-safety**. Do **not** use it to drive the robot. |
+| `/voice/robot_commands` | `conversational_interfaces/RobotCommand` | voice → **motion** | Approved command (all 5). **Subscribe here and switch on `command_id`.** |
+| `/voice/robot_command_status` | `std_msgs/String` | both | Lifecycle. Voice publishes `dispatched:*`, `canceled`, `confirmation_*`. **Motion team should also publish progress here** (see §6). |
+| `/voice/recognized_commands` | `conversational_interfaces/RobotCommand` | internal | Raw recognizer output, **pre-safety**. Do **not** use it to drive the robot. |
 
-> There is a single command bus: `/robot_commands`. All 5 commands arrive on it;
+> There is a single command bus: `/voice/robot_commands`. All 5 commands arrive on it;
 > dispatch by `command_id` (see §4). (No per-command topics.)
 
 ---
@@ -76,20 +82,20 @@ Notes:
 
 ## 5. Safety behavior you can rely on
 
-The gate guarantees that anything arriving on `/robot_commands`:
+The gate guarantees that anything arriving on `/voice/robot_commands`:
 
 1. **Passed a confidence floor** (default 0.60).
 2. **Was confirmed if risky.** Risky = `turn_arround` (≥150°) or `move_forward` with
    ≥5 steps. These reach you only *after* the speaker said "yes". You do not need to
    re-confirm.
 3. **Can be canceled by voice.** If the user says **"stop"** (or `cancel/halt/opreste/
-   anuleaza/stai`) the gate publishes `canceled` on `/robot_command_status`.
-   **You must watch `/robot_command_status` for `canceled` and abort the running
+   anuleaza/stai`) the gate publishes `canceled` on `/voice/robot_command_status`.
+   **You must watch `/voice/robot_command_status` for `canceled` and abort the running
    script.** This is the primary emergency-stop path.
 
 ---
 
-## 6. `/robot_command_status` values
+## 6. `/voice/robot_command_status` values
 
 Published by the **voice stack**:
 
@@ -127,9 +133,9 @@ from std_msgs.msg import String
 class MotionExecutor(Node):
     def __init__(self):
         super().__init__('motion_executor')
-        self.create_subscription(RobotCommand, '/robot_commands', self.on_command, 10)
-        self.create_subscription(String, '/robot_command_status', self.on_status, 10)
-        self.status_pub = self.create_publisher(String, '/robot_command_status', 10)
+        self.create_subscription(RobotCommand, '/voice/robot_commands', self.on_command, 10)
+        self.create_subscription(String, '/voice/robot_command_status', self.on_status, 10)
+        self.status_pub = self.create_publisher(String, '/voice/robot_command_status', 10)
         self._active = None
 
     def on_command(self, msg: RobotCommand):
@@ -176,21 +182,21 @@ class MotionExecutor(Node):
 Watch what the motion team would receive:
 
 ```bash
-ros2 topic echo /robot_commands
-ros2 topic echo /robot_command_status
+ros2 topic echo /voice/robot_commands
+ros2 topic echo /voice/robot_command_status
 ```
 
 Inject a command without speaking (simulate the gate output):
 
 ```bash
-ros2 topic pub --once /robot_commands conversational_interfaces/msg/RobotCommand \
+ros2 topic pub --once /voice/robot_commands conversational_interfaces/msg/RobotCommand \
   "{command_id: 4, command_name: 'clap', steps: 0, confidence: 0.95, parameters_json: '{}'}"
 ```
 
 Simulate an emergency stop:
 
 ```bash
-ros2 topic pub --once /robot_command_status std_msgs/msg/String "{data: 'canceled'}"
+ros2 topic pub --once /voice/robot_command_status std_msgs/msg/String "{data: 'canceled'}"
 ```
 
 ---
@@ -202,4 +208,4 @@ ros2 topic pub --once /robot_command_status std_msgs/msg/String "{data: 'cancele
 | Speech → command recognition | voice stack (`voice_command_node`) |
 | Confidence / stop-cancel / risky-confirmation | voice stack (`robot_command_gate_node`) |
 | Actual robot motion / actuators | **motion team** |
-| Reporting execution progress on `/robot_command_status` | **motion team** |
+| Reporting execution progress on `/voice/robot_command_status` | **motion team** |

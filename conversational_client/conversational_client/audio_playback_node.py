@@ -21,8 +21,8 @@ class AudioPlaybackNode(Node):
         self.channels = self.get_parameter('channels').value
         self.gain = self.get_parameter('gain').value
         
-        self.speaking_pub = self.create_publisher(Bool, '/is_speaking', 10)
-        self.progress_pub = self.create_publisher(String, '/audio_playback_progress', 10)
+        self.speaking_pub = self.create_publisher(Bool, 'is_speaking', 10)
+        self.progress_pub = self.create_publisher(String, 'audio_playback_progress', 10)
 
         # No maxlen – Gemini streams audio faster than real-time, so a bounded
         # deque would silently drop the oldest (next-to-play) chunks, causing
@@ -41,8 +41,8 @@ class AudioPlaybackNode(Node):
         self._current_stream_id = ''
         self._played_samples_current_item = 0
         
-        self.audio_sub = self.create_subscription(Audio, '/audio_out', self.audio_callback, 10)
-        self.stop_sub = self.create_subscription(Bool, '/stop_playback', self.stop_callback, 10)
+        self.audio_sub = self.create_subscription(Audio, 'audio_out', self.audio_callback, 10)
+        self.stop_sub = self.create_subscription(Bool, 'stop_playback', self.stop_callback, 10)
         
         # PyAudio Setup
         self.audio_p = pyaudio.PyAudio()
