@@ -48,10 +48,11 @@ gemini_live_node:
     response_create_delay_ms: 100
     continued_turn_response_delay_ms: 450
     short_transcript_dedupe_window_s: 4.0
-    playback_input_filter_enabled: true  # Activam filtrul software pentru a bloca ecoul rezidual
-    playback_input_filter_post_playback_ms: 1200
-    playback_input_filter_min_rms_dbfs: -35.0
-    playback_input_filter_hits_required: 3
+    playback_input_filter_enabled: true  # Filtru software anti-echo rezidual (dupa AEC WebRTC+DeepFilterNet)
+    playback_input_filter_post_playback_ms: 500   # Fereastra de protectie dupa stop playback (era 1200 - prea lung)
+    playback_input_filter_min_rms_dbfs: -32.0     # Prag RMS mai strict, AEC curata deja ecoul major
+    playback_input_filter_hits_required: 2         # Hits necesare pentru a deschide gate-ul (era 3)
+    playback_input_filter_hold_ms: 300             # Gate ramas deschis 300ms dupa ultimul hit de voce
     assistant_echo_filter_enabled: true
     assistant_echo_window_s: 8.0
     assistant_echo_similarity_threshold: 84.0
