@@ -389,7 +389,7 @@ class VADNode(Node):
                 # If we cannot split evenly into 20ms frames, check if single frame matches standard sizes
                 frame_len = len(audio)
                 if frame_len == 320:  # 20ms at 16kHz
-                    return self.vad.is_speech(audio_bytes, self.sample_rate)
+                    return self.vad.is_speech(audio.tobytes(), self.sample_rate)
                 else:
                     # Energy fallback for non-standard lengths
                     return self._energy_based_detection(audio)
