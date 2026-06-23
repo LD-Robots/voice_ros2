@@ -21,6 +21,7 @@ def _find_workspace_root():
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('conversational_client')
+    server_share = get_package_share_directory('conversational_server')
     models_dir = os.path.join(pkg_share, 'models')
     workspace_root = _find_workspace_root()
     voices_dir = os.path.join(
@@ -43,7 +44,20 @@ def generate_launch_description():
         stop_keyword_path = os.path.join(models_dir, 'stop_keyword.onnx')
     enrollment_dir = os.path.join(voices_dir, 'enrollment')
 
+    # YAML configuration profile resolution
+    config_name = LaunchConfiguration('config')
+    config_file_path = [server_share, '/config/params_', config_name, '.yaml']
+
+    # Debug recording path
+    ws_root_str = str(workspace_root) if workspace_root else str(Path.home())
+    debug_mic_wav = os.path.join(ws_root_str, 'gemini_debug_mic.wav')
+
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'config',
+            default_value='raspberry',
+            description='Profile (raspberry/laptop)'
+        ),
         DeclareLaunchArgument(
             'speaker_similarity_threshold',
             default_value='0.45',
@@ -126,11 +140,8 @@ def generate_launch_description():
             executable='audio_capture_node',
             name='audio_capture_node',
             output='screen',
-            parameters=[{
-                'device_index': 3,  # Explicit PulseAudio to capture the 6 ReSpeaker channels
-                'respeaker_mode': True,
-                'respeaker_channel': 5, # Processed AEC (Tests showed 5 is better)
-                'gain': 3.0,            # Digital gain to avoid clipping
+            parameters=[config_file_path, {
+                'debug_wav_path': debug_mic_wav,
             }]
         ),
         
@@ -140,11 +151,8 @@ def generate_launch_description():
             executable='wake_word_node',
             name='wake_word_node',
             output='screen',
-            parameters=[{
-                'threshold': 0.5,  # Default threshold
-                'cooldown_ms': 1500,
+            parameters=[config_file_path, {
                 'custom_models': custom_models,
-                'model_thresholds': model_thresholds,
             }],
             arguments=['--ros-args', '--log-level', 'wake_word_node:=DEBUG']
         ),
@@ -155,13 +163,7 @@ def generate_launch_description():
             executable='vad_node',
             name='vad_node',
             output='screen',
-            parameters=[{
-                'aggressiveness': 2,
-                'wake_word_enabled': True,
-                'session_timeout': 30.0,
-                'min_silence_frames': LaunchConfiguration('vad_min_silence_frames'),
-                'capture_during_playback': False, # Disable server-side capture during playback to avoid feedback loop
-            }]
+            parameters=[config_file_path]
         ),
         
         # Audio Segment (buffers audio and sends complete segment)
@@ -171,11 +173,7 @@ def generate_launch_description():
             name='audio_segment_node',
             output='screen',
             arguments=['--ros-args', '--log-level', 'audio_segment_node:=DEBUG'],
-            parameters=[{
-                'min_segment_seconds': 0.5,
-                'max_segment_seconds': 30.0,
-                'capture_during_playback': False, # Revert to Half-Duplex for stability
-            }]
+            parameters=[config_file_path]
         ),
         
         # Barge-in (detectare voce + PyTorch stop keyword)
@@ -185,22 +183,8 @@ def generate_launch_description():
             name='barge_in_node',
             output='screen',
             arguments=['--ros-args', '--log-level', 'barge_in_node:=DEBUG'],
-            parameters=[{
-                # Voice barge-in DISABLED – Gemini Live has its own server-side VAD
-                # that handles interruptions natively (sends "interrupted" event).
-                # barge_in_node stays active only for the PyTorch stop-keyword detector.
-                'voice_enabled': False,
-                'min_voice_ms': 400,
-                'leak_margin_db': 12.0,
-                # PyTorch stop keyword detector
-                'stop_enabled': LaunchConfiguration('barge_in_stop_enabled'),
+            parameters=[config_file_path, {
                 'stop_model_path': stop_keyword_path,
-                'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
-                'stop_logit_margin': LaunchConfiguration('stop_keyword_logit_margin'),
-                'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),
-                'stop_frame_samples': 16000,  # Frame = 1s (imposed by model!)
-                'stop_hop_samples': 4000,     # Hop = 0.25s = check every 250ms
-                'stop_requires_voice_signature': LaunchConfiguration('stop_keyword_requires_voice_signature'),
             }]
         ),
         
@@ -210,6 +194,7 @@ def generate_launch_description():
             executable='audio_playback_node',
             name='audio_playback_node',
             output='screen',
+            parameters=[config_file_path]
         ),
 
         # Speaker Identification (who is speaking)
@@ -218,12 +203,8 @@ def generate_launch_description():
             executable='speaker_id_node',
             name='speaker_id_node',
             output='screen',
-            parameters=[{
+            parameters=[config_file_path, {
                 'enrollment_dir': enrollment_dir,
-                'similarity_threshold': LaunchConfiguration('speaker_similarity_threshold'),
-                'similarity_margin': LaunchConfiguration('speaker_similarity_margin'),
-                'enrollment_reuse_threshold': LaunchConfiguration('enrollment_reuse_threshold'),
-                'enrollment_reuse_margin': LaunchConfiguration('enrollment_reuse_margin'),
             }]
         ),
 
@@ -232,12 +213,7 @@ def generate_launch_description():
             executable='attention_manager_node',
             name='attention_manager_node',
             output='screen',
-            parameters=[{
-                'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
-                'allow_known_speaker_switch_without_address': LaunchConfiguration(
-                    'allow_known_speaker_switch_without_address'
-                ),
-            }]
+            parameters=[config_file_path]
         ),
 
         Node(
@@ -245,11 +221,7 @@ def generate_launch_description():
             executable='person_memory_store_node',
             name='person_memory_store_node',
             output='screen',
-            parameters=[{
-                'auto_enroll_unknown_speakers': LaunchConfiguration('auto_enroll_unknown_speakers'),
-                'min_enrollment_segment_seconds': LaunchConfiguration('min_enrollment_segment_seconds'),
-                'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
-            }]
+            parameters=[config_file_path]
         ),
 
         Node(
@@ -257,9 +229,7 @@ def generate_launch_description():
             executable='conversation_control_node',
             name='conversation_control_node',
             output='screen',
-            parameters=[{
-                'speaker_switch_hits_required': LaunchConfiguration('speaker_switch_hits_required'),
-            }]
+            parameters=[config_file_path]
         ),
         
         # Session Manager (Goodbye handling)
@@ -268,6 +238,7 @@ def generate_launch_description():
             executable='session_manager_node',
             name='session_manager_node',
             output='screen',
+            parameters=[config_file_path]
         ),
 
         # Voice Command Intent (raise hands / move / dance)
@@ -276,12 +247,7 @@ def generate_launch_description():
             executable='voice_command_node',
             name='voice_command_node',
             output='screen',
-            parameters=[{
-                'min_transcription_confidence': 0.45,
-                'default_steps': 1,
-                'max_steps': 20,
-                'enable_tts_ack': False,
-            }]
+            parameters=[config_file_path]
         ),
 
         # Robot Command Executor (bridges voice intents to controllers)
@@ -290,20 +256,6 @@ def generate_launch_description():
             executable='robot_command_executor_node',
             name='robot_command_executor_node',
             output='screen',
-            parameters=[{
-                'execution_enabled': True,
-                'move_mode': 'twist',
-                'cmd_vel_topic': '/cmd_vel',
-                'behavior_mode': 'topic',
-                'behavior_topic': '/robot_behavior_command',
-                'raise_hands_service': '/raise_hands',
-                'dance_service': '/dance',
-                'preempt_on_new_command': True,
-                'enable_voice_cancel': True,
-                'enable_risky_confirmation': True,
-                'confirmation_timeout_s': 12.0,
-                'risky_steps_threshold': 5,
-                'risky_backward_steps_threshold': 3,
-            }]
+            parameters=[config_file_path]
         ),
     ])

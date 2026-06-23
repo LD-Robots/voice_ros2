@@ -63,14 +63,14 @@ def generate_launch_description():
             package='conversational_server',
             executable='backend_manager_node',
             name='backend_manager_node',
-            parameters=[config_file_path, {'preferred_backend': LaunchConfiguration('conversation_backend')}]
+            parameters=[config_file_path]
         ),
         
         Node(
             package='conversational_server',
             executable='asr_node',
             name='asr_node',
-            parameters=[config_file_path, {'model_size': LaunchConfiguration('asr_model_size')}]
+            parameters=[config_file_path]
         ),
         
         Node(
@@ -105,7 +105,6 @@ def generate_launch_description():
             executable='audio_capture_node',
             name='audio_capture_node',
             parameters=[config_file_path, {
-                'device_index': LaunchConfiguration('audio_device_index'),
                 'debug_wav_path': debug_mic_wav,
             }]
         ),
@@ -143,7 +142,6 @@ def generate_launch_description():
             condition=IfCondition(non_gemini_backend),
             parameters=[config_file_path, {
                 'stop_model_path': stop_model_path,
-                'stop_enabled': LaunchConfiguration('stop_enabled')
             }]
         ),
 
