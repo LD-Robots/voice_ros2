@@ -46,6 +46,7 @@ class AudioPlaybackNode(Node):
         
         # PyAudio Setup
         self.audio_p = pyaudio.PyAudio()
+        self.stream: pyaudio.Stream | None = None
         try:
             self.stream = self.audio_p.open(
                 format=pyaudio.paInt16,

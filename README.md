@@ -7,20 +7,23 @@ A bilingual (Romanian/English) conversational robot system built with ROS2. Feat
 The system uses a **client-server architecture** with ROS2 nodes:
 
 ### Server Nodes (Heavy Processing)
-- **ASR Node** - Automatic Speech Recognition (Faster-Whisper)
-- **LLM Node** - Language Model processing (Groq API with streaming)
+- **ASR Node** - Automatic Speech Recognition (Deepgram Streaming STT / Faster-Whisper fallback)
+- **LLM Node** - Language Model processing (Groq API with streaming & web search tool)
 - **TTS Node** - Text-to-Speech (Edge TTS + Audio Cache)
 - **Gemini Live Node** - Speech-to-speech via Gemini Live API
 
 ### Client Nodes (Robot Hardware)
 - **Audio Capture Node** - Microphone input
 - **Audio Playback Node** - Speaker output
-- **Wake Word Node** - OpenWakeWord detection ("Hello robot", "Hey robot")
+- **Wake Word Node** - OpenWakeWord detection ("Hello robot", "Hey robot", "Goodbye robot")
 - **VAD Node** - Voice Activity Detection (WebRTC VAD)
-- **Barge-in Node** - Interrupt TTS when user speaks
+- **Barge-in Node** - Interrupt TTS when user speaks (augmented with WebRTC VAD noise filtering and PyTorch stop detector)
 - **Stop Keyword Node** - Stop command detection
 - **Audio Segment Node** - Audio preprocessing
 - **Speaker ID Node** - Speaker identification via voice fingerprint (SpeechBrain ECAPA-TDNN)
+- **Echo Canceller Node** - Software Acoustic Echo Cancellation (AEC) with standard adaptive filters and DeepFilterNet support
+- **Attention Manager Node** - Spatial sound source validation and speaker focus using ReSpeaker DOA
+- **ReSpeaker DOA Node** - sound Direction of Arrival (DOA) tracking from the mic array
 
 ### Message Interfaces
 - `Audio.msg` - Audio data chunks
@@ -94,12 +97,18 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
+### 5. ReSpeaker Microphone Tuning (Optional)
+If you are using the ReSpeaker USB 4-Mic Array, apply the optimized hardware parameters (such as noise reduction and VAD registers) before starting the system:
+```bash
+sudo ./tools/usb_4_mic_array/apply_tuning.sh
+```
+
 ## 🚀 Running the System
 
 ### Full System (Server + Client)
 ```bash
 source /path/to/ros2_ws/install/setup.bash
-ros2 launch conversational_server full_system.launch.py
+ 
 ```
 
 ### Full System with Gemini Live
@@ -207,6 +216,30 @@ Edit `full_system.launch.py` and adjust:
 - ✅ **Backchannel** - "One moment..." for slow responses
 - ✅ **Fallback Responses** - Error handling
 - ✅ **Speaker Identification** - Voice fingerprint via SpeechBrain ECAPA-TDNN
+- ✅ **Deepgram Streaming STT** - WebSocket-based, sub-100ms transcription latency (replaces Faster-Whisper)
+- ✅ **Spatial DOA Filtering** - ReSpeaker sound source tracking (Direction of Arrival) to ignore side conversations
+- ✅ **Software AEC & DeepFilterNet** - Advanced echo cancellation and deep noise suppression
+
+### 🚀 New in this Branch (`feature/multi-party-deepgram`)
+
+This branch introduces several high-performance enhancements for robust multi-party conversational interaction, spatial filtering, and noise-resilient barge-in:
+
+#### 1. 🎙️ Deepgram Streaming STT Integration
+- Replaced the slower local Faster-Whisper engine with a high-performance **Deepgram WebSocket-based streaming STT** client.
+- Offers sub-100ms transcription latency and superior endpointing by injecting synthetic silence padding upon VAD-off to resolve WebSocket buffering issues.
+
+#### 2. 🧭 Spatial DOA Attention Filtering
+- Integrated ReSpeaker microphone array **Direction of Arrival (DOA)** tracking (`/doa_angle`).
+- Added an **Attention Manager Node** that uses circular-mean math to compute the speaker's angular position.
+- Filters out side-conversations by comparing incoming sound angles with the active speaker focus angle (using a configurable `doa_focus_margin`, default `45.0` degrees), unless explicitly addressed with a wake word.
+
+#### 3. 🔊 WebRTC VAD for Intelligent Barge-in
+- Integrated **WebRTC VAD** in the barge-in detection node (`barge_in_node.py`).
+- Splitting the incoming audio frame into 10ms, 20ms, or 30ms chunks to run accurate voice/non-voice speech classification.
+- Drastically reduces false barge-ins triggered by physical noises (keyboard clicks, chair squeaks, object drops) during TTS playback, with full fallback to ZCR (Zero-Crossing Rate) if WebRTC VAD is disabled.
+
+#### 4. 🔕 Acoustic Echo Cancellation (AEC) & DeepFilterNet
+- Added the **Echo Canceller Node** that performs software-based Acoustic Echo Cancellation (AEC) on the raw microphone stream using standard adaptive filtering or high-quality **DeepFilterNet** deep noise suppression.
 
 ### 🔄 Future Enhancements
 - Motor commands integration

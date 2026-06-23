@@ -111,12 +111,21 @@ class EchoCancellerNode(Node):
 
     def open_wav(self, path, rate):
         try:
+            import os
+            path = os.path.expanduser(path)
+            dir_name = os.path.dirname(os.path.abspath(path))
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
+            with open(path, 'wb') as f:
+                pass
             w = wave.open(path, 'wb')
             w.setnchannels(1)
             w.setsampwidth(2)
             w.setframerate(rate)
             return w
-        except: return None
+        except Exception as e:
+            self.get_logger().warn(f"⚠️ [AEC] Could not open debug WAV file at {path}: {e}")
+            return None
 
     def out_callback(self, msg):
         """Receive the audio that will be played on speakers and enqueue it as

@@ -376,11 +376,17 @@ class VADNode(Node):
             # METHOD 1: WebRTC VAD (more accurate)
             # ─────────────────────────────────────────────────────
             try:
-                # WebRTC VAD requires exactly 10, 20, or 30ms of audio
-                # At 16kHz: 160, 320, or 480 samples
-                audio_bytes = audio.tobytes()
+                # WebRTC VAD requires exactly 10, 20, or 30ms of audio (160, 320, or 480 samples at 16kHz)
+                # Split the input frame into 20ms (320 samples) sub-frames to handle arbitrary chunk sizes.
+                sub_frame_len = 320
+                if len(audio) % sub_frame_len == 0 and len(audio) > 0:
+                    for i in range(0, len(audio), sub_frame_len):
+                        sub_frame = audio[i:i+sub_frame_len]
+                        if self.vad.is_speech(sub_frame.tobytes(), self.sample_rate):
+                            return True
+                    return False
                 
-                # Adjust length if needed
+                # If we cannot split evenly into 20ms frames, check if single frame matches standard sizes
                 frame_len = len(audio)
                 if frame_len == 320:  # 20ms at 16kHz
                     return self.vad.is_speech(audio_bytes, self.sample_rate)

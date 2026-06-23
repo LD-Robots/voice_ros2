@@ -30,10 +30,15 @@ from pathlib import Path
 # Try to import OpenWakeWord
 try:
     import logging
-    # Suppress "Tried to import the tflite runtime" warning
-    logging.getLogger().setLevel(logging.ERROR)
-    from openwakeword.model import Model as OWWModel
-    logging.getLogger().setLevel(logging.INFO)  # Restore
+    import warnings
+
+    # Suppress "Tried to import the tflite runtime" and other model-loading noise
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning)
+        logging.getLogger().setLevel(logging.ERROR)
+        from openwakeword.model import Model as OWWModel
+        logging.getLogger().setLevel(logging.INFO)  # Restore
+
     OPENWAKEWORD_AVAILABLE = True
 except ImportError:
     OPENWAKEWORD_AVAILABLE = False
@@ -335,7 +340,7 @@ class WakeWordNode(Node):
         wake_event = WakeWord()
         wake_event.header.stamp = self.get_clock().now().to_msg()
         wake_event.word = model_name
-        wake_event.score = float(score)
+        wake_event.score = score
         self.wake_word_pub.publish(wake_event)
         
         # Publish to /wake_detected
