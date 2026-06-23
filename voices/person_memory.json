@@ -14,6 +14,59 @@
       "facts": [],
       "last_seen": "2026-06-17T14:15:46.200515+00:00"
     },
+    "speaker_001": {
+      "voice_label": "speaker_001",
+      "preferred_name": "Vasile By",
+      "preferred_language": "en",
+      "facts": [
+        "this one can you tell me another one"
+      ],
+      "last_seen": "2026-06-23T10:14:58.882518+00:00"
+    },
+    "speaker_002": {
+      "voice_label": "speaker_002",
+      "preferred_name": "Alex",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-03-03T15:26:05.702678+00:00"
+    },
+    "speaker_003": {
+      "voice_label": "speaker_003",
+      "preferred_name": "Dragos",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-06-17T14:15:46.200515+00:00"
+    },
+    "speaker_004": {
+      "voice_label": "speaker_004",
+      "preferred_name": "Valer",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-04-24T11:10:23.423778+00:00"
+    },
+    "speaker_005": {
+      "voice_label": "speaker_005",
+      "preferred_name": "Delia",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-06-17T14:35:08.425467+00:00"
+    },
+    "speaker_006": {
+      "voice_label": "speaker_006",
+      "preferred_name": "Zilia",
+      "preferred_language": "",
+      "facts": [
+        "i am allergic to cats can you tell me a breed of cat that doesn t have hair"
+      ],
+      "last_seen": "2026-06-17T12:45:55.068449+00:00"
+    },
+    "speaker_007": {
+      "voice_label": "speaker_007",
+      "preferred_name": "Alex",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-03-06T12:54:47.506368+00:00"
+    },
     "valee": {
       "voice_label": "valee",
       "preferred_name": "Va Len",

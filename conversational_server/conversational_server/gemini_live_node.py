@@ -303,7 +303,7 @@ class GeminiLiveNode(Node):
         self.stop_sub = self.create_subscription(Bool, "/stop_playback", self.stop_callback, 10)
         self.progress_sub = self.create_subscription(String, "/audio_playback_progress", self.playback_progress_callback, 10)
         self.speaker_sub = self.create_subscription(String, "/speaker_id", self.speaker_callback, 10)
-        self.robot_command_sub = self.create_subscription(RobotCommand, "/robot_command", self.robot_command_callback, 10)
+        self.robot_command_sub = self.create_subscription(RobotCommand, "/robot_commands", self.robot_command_callback, 10)
         self.robot_status_sub = self.create_subscription(String, "/robot_command_status", self.robot_status_callback, 10)
         self.backend_sub = self.create_subscription(String, "/conversation_backend", self.backend_callback, 10)
         self.person_context_sub = self.create_subscription(String, "/person_context", self.person_context_callback, 10)
@@ -739,13 +739,14 @@ class GeminiLiveNode(Node):
         # Input transcription (user speech)
         input_transcription = server_content.get("inputTranscription")
         if input_transcription:
-            transcript = str(input_transcription.get("text", "") or "").strip()
+            # Gemini streams the input transcription as incremental chunks that already
+            # carry their own spacing (a new word arrives with a leading space, a word
+            # continuation without one). Concatenate raw — do NOT strip per chunk or
+            # insert spaces, otherwise single words get split apart ("robot" -> "ro bot").
+            transcript = str(input_transcription.get("text", "") or "")
             if transcript:
-                if self._current_user_transcript:
-                    self._current_user_transcript += " " + transcript
-                else:
-                    self._current_user_transcript = transcript
-                self.get_logger().debug(f"Gemini Live intermediate word: '{transcript}' (accumulated: '{self._current_user_transcript}')")
+                self._current_user_transcript += transcript
+                self.get_logger().debug(f"Gemini Live intermediate chunk: '{transcript}' (accumulated: '{self._current_user_transcript}')")
 
         # Model turn (assistant response)
         model_turn = server_content.get("modelTurn")
@@ -769,9 +770,10 @@ class GeminiLiveNode(Node):
             self._user_speaking = False
             self._publish_captured_user_audio_segment()
             self._start_user_audio_capture()
-            if self._current_user_transcript:
-                self._handle_input_transcript(self._current_user_transcript)
-                self._current_user_transcript = ""
+            accumulated = self._current_user_transcript.strip()
+            if accumulated:
+                self._handle_input_transcript(accumulated)
+            self._current_user_transcript = ""
             self._handle_turn_complete()
 
     def _handle_output_audio(self, inline_data: dict):

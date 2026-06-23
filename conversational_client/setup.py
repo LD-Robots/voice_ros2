@@ -41,7 +41,7 @@ setup(
             'speaker_id_node = conversational_client.speaker_id_node:main',
             'session_manager_node = conversational_client.session_manager_node:main',
             'voice_command_node = conversational_client.voice_command_node:main',
-            'robot_command_executor_node = conversational_client.robot_command_executor_node:main',
+            'robot_command_gate_node = conversational_client.robot_command_gate_node:main',
             'attention_manager_node = conversational_client.attention_manager_node:main',
             'person_memory_store_node = conversational_client.person_memory_store_node:main',
             'conversation_control_node = conversational_client.conversation_control_node:main',

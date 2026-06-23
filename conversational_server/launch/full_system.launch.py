@@ -212,8 +212,8 @@ def generate_launch_description():
 
         Node(
             package='conversational_client',
-            executable='robot_command_executor_node',
-            name='robot_command_executor_node',
+            executable='robot_command_gate_node',
+            name='robot_command_gate_node',
             parameters=[config_file_path]
         ),
     ])

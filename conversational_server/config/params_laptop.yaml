@@ -141,26 +141,24 @@ wake_word_node:
 
 voice_command_node:
   ros__parameters:
+    command_topic: "/recognized_commands"
     min_transcription_confidence: 0.45
     default_steps: 1
     max_steps: 20
     enable_tts_ack: false
 
-robot_command_executor_node:
+robot_command_gate_node:
   ros__parameters:
+    input_topic: "/recognized_commands"
+    command_topic: "/robot_commands"
     execution_enabled: true
-    move_mode: "twist"
-    cmd_vel_topic: "/cmd_vel"
-    behavior_mode: "topic"
-    behavior_topic: "/robot_behavior_command"
-    raise_hands_service: "/raise_hands"
-    dance_service: "/dance"
-    preempt_on_new_command: true
+    publish_per_command_topics: true
+    per_command_topic_prefix: "/robot_commands"
     enable_voice_cancel: true
     enable_risky_confirmation: true
     confirmation_timeout_s: 12.0
     risky_steps_threshold: 5
-    risky_backward_steps_threshold: 3
+    risky_turn_angle_deg: 150.0
 
 echo_canceller_node:
   ros__parameters:
