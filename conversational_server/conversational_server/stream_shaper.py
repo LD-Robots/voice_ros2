@@ -7,7 +7,6 @@ Transforms LLM tokens into a stream of complete phrases for more natural TTS:
   - Deliver at punctuation or soft_max_chars
   - Idle flush when no tokens arrive
 """
-from __future__ import annotations
 import time
 from typing import Iterable, Iterator
 

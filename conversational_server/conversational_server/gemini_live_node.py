@@ -4,7 +4,7 @@ Gemini Live Node.
 
 Streams microphone audio to Google Gemini Multimodal Live API over WebSocket
 and publishes assistant audio back into the existing ROS2 audio playback pipeline.
-Same ROS interface as OpenAIRealtimeNode.
+Provides ROS interface for bi-directional audio streaming.
 """
 import base64
 import json
@@ -21,7 +21,6 @@ from conversational_interfaces.msg import Audio, TextChunk, Transcription, Robot
 from conversational_client.conversation_utils import (
     advance_attention_focus,
     can_accept_control_action,
-    can_accept_reengagement,
     decide_attention,
     detect_control_action,
     has_direct_robot_address,
@@ -37,7 +36,6 @@ from .realtime_text_utils import (
     is_probable_assistant_echo,
     is_resume_request,
     normalize_realtime_text,
-    should_preserve_paused_transcript,
 )
 from .realtime_turn_utils import (
     can_request_realtime_response,
@@ -1075,7 +1073,7 @@ class GeminiLiveNode(Node):
                 extras.append(f'Interrupted reply to continue: "{self._pending_resume_text}"')
         return " ".join([self.base_instructions, *extras]).strip()
 
-    # ─── Response scheduling (same logic as OpenAI node) ────────────────────
+    # ─── Response scheduling ──────────────────────────────────────────────────
 
     def _schedule_response_create(self, item_id: str, *, reason: str) -> bool:
         return self._schedule_response_create_with_delay(item_id, reason=reason, delay_ms=self.response_create_delay_ms)
@@ -1373,9 +1371,6 @@ class GeminiLiveNode(Node):
 
     def _mark_response_create_pending(self):
         self._response_create_pending = True
-
-    def _clear_response_create_pending(self):
-        self._response_create_pending = False
 
     def _clear_playback_progress(self):
         self._last_playback_progress = {"stream_id": "", "item_id": "", "played_ms": 0, "stopped": False}

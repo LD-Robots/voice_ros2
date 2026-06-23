@@ -10,7 +10,6 @@ Usage:
     python dfu.py --revertfactory
 """
 
-import sys
 import time
 import usb.core
 import usb.util

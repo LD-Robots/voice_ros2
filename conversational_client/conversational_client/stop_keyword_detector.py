@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 import math
 from dataclasses import dataclass
@@ -40,9 +39,9 @@ class StopKeywordDetector:
 
     def __init__(self, cfg: dict, sample_rate: int, logger):
         if ort is None:  # pragma: no cover - defensive guard
-            raise RuntimeError(f"onnxruntime indisponibil: {_onnx_error}")  # type: ignore[arg-type]
+            raise RuntimeError(f"onnxruntime unavailable: {_onnx_error}")  # type: ignore[arg-type]
         if torch is None or torchaudio is None:  # pragma: no cover - defensive guard
-            raise RuntimeError(f"torch/torchaudio lipsesc: {_torch_error}")  # type: ignore[arg-type]
+            raise RuntimeError(f"torch/torchaudio are missing: {_torch_error}")  # type: ignore[arg-type]
 
         self.log = logger
         self.sample_rate = sample_rate
@@ -59,9 +58,9 @@ class StopKeywordDetector:
         model_path = Path(cfg.get("model_path") or default_model_path).expanduser()
 
         if self.sample_rate != 16000:
-            raise ValueError("StopKeywordDetector necesită sample_rate = 16000 Hz pentru acest model.")
+            raise ValueError("StopKeywordDetector requires sample_rate = 16000 Hz for this model.")
         if not model_path.exists():
-            raise FileNotFoundError(f"StopKeywordDetector: model absent ({model_path}).")
+            raise FileNotFoundError(f"StopKeywordDetector: model not found ({model_path}).")
 
         so = ort.SessionOptions()
         so.intra_op_num_threads = max(1, int(cfg.get("num_threads", 1)))

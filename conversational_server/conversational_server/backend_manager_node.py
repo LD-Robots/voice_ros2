@@ -3,7 +3,7 @@
 Backend Manager Node.
 
 Publishes the active conversation backend and automatically falls back to the
-legacy text pipeline when OpenAI Realtime becomes unavailable.
+legacy text pipeline when Gemini Live becomes unavailable.
 """
 import time
 
@@ -30,14 +30,8 @@ class BackendManagerNode(Node):
 
         self.active_backend = self.preferred_backend
         self.realtime_status = 'unknown'
-        self.last_realtime_status_time = time.monotonic() if self.preferred_backend in ('openai_realtime', 'gemini_live') else 0.0
+        self.last_realtime_status_time = time.monotonic() if self.preferred_backend == 'gemini_live' else 0.0
 
-        self.realtime_status_sub = self.create_subscription(
-            String,
-            '/openai_realtime_status',
-            self._openai_status_callback,
-            10,
-        )
         self.gemini_status_sub = self.create_subscription(
             String,
             '/gemini_live_status',
@@ -52,11 +46,6 @@ class BackendManagerNode(Node):
         self.get_logger().info(
             f'Backend Manager started: preferred={self.preferred_backend}, fallback={self.fallback_backend}'
         )
-
-    def _openai_status_callback(self, msg: String):
-        if self.preferred_backend != 'openai_realtime':
-            return
-        self._handle_realtime_status(msg.data.strip() or 'unknown', 'openai_realtime')
 
     def _gemini_status_callback(self, msg: String):
         if self.preferred_backend != 'gemini_live':
@@ -83,7 +72,7 @@ class BackendManagerNode(Node):
     def _timer_callback(self):
         self._publish_backend_topic()
 
-        if self.preferred_backend not in ('openai_realtime', 'gemini_live'):
+        if self.preferred_backend != 'gemini_live':
             if self.active_backend != self.preferred_backend:
                 self._publish_backend(self.preferred_backend, 'preferred_backend')
             else:
@@ -91,7 +80,7 @@ class BackendManagerNode(Node):
             return
 
         now = time.monotonic()
-        if self.active_backend in ('openai_realtime', 'gemini_live'):
+        if self.active_backend == 'gemini_live':
             stale = (
                 self.last_realtime_status_time > 0.0
                 and (now - self.last_realtime_status_time) > self.offline_timeout_s

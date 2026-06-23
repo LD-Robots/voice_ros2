@@ -31,7 +31,6 @@ setup(
             'asr_node = conversational_server.asr_node:main',
             'llm_node = conversational_server.llm_node:main',
             'tts_node = conversational_server.tts_node:main',
-            'openai_realtime_node = conversational_server.openai_realtime_node:main',
             'gemini_live_node = conversational_server.gemini_live_node:main',
             'backend_manager_node = conversational_server.backend_manager_node:main',
         ],

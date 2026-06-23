@@ -10,7 +10,6 @@ Publishes to:
   - /tts_stop (Bool) - stop TTS
   - /end_session (Bool) - end session
 """
-from __future__ import annotations
 
 import math
 from dataclasses import dataclass

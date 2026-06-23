@@ -8,9 +8,7 @@ import pyaudio
 import threading
 from collections import deque
 import time
-import sys
 import json
-import os
 
 class AudioPlaybackNode(Node):
     def __init__(self):

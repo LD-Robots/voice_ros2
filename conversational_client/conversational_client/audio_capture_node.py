@@ -13,7 +13,6 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Audio
 from std_msgs.msg import Bool
 import numpy as np
-import sys
 import wave
 import contextlib
 

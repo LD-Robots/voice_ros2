@@ -5,7 +5,7 @@ Compatibility wrapper for SpeakerManager.
 import os
 from pathlib import Path
 
-from conversational_client.speaker_manager import SpeakerManager, main  # noqa: F401
+from conversational_client.speaker_manager import SpeakerManager  # noqa: F401
 
 
 def _find_workspace_root() -> Path | None:
@@ -26,13 +26,13 @@ if __name__ == '__main__':
     )
 
     if not os.path.isdir(enrollment_path):
-        print(f"❌ Folderul de enrollment nu există: {enrollment_path}")
-        print("   Rulează mai întâi: python3 enroll_speaker.py")
+        print(f"❌ Enrollment folder does not exist: {enrollment_path}")
+        print("   Run first: python3 enroll_speaker.py")
         sys.exit(1)
 
     wav_count = len([f for f in os.listdir(enrollment_path) if f.endswith('.wav')])
     if wav_count == 0:
-        print("❌ Niciun fișier .wav în enrollment. Rulează mai întâi: python3 enroll_speaker.py")
+        print("❌ No .wav files in enrollment. Run first: python3 enroll_speaker.py")
         sys.exit(1)
 
     print(f"\n📂 Checking SpeakerManager with {wav_count} enrolled voices...\n")

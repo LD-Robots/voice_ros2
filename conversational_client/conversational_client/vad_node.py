@@ -388,13 +388,12 @@ class VADNode(Node):
                 
                 # If we cannot split evenly into 20ms frames, check if single frame matches standard sizes
                 frame_len = len(audio)
-                if frame_len in (160, 320, 480):
-                    return self.vad.is_speech(audio.tobytes(), self.sample_rate)
-                
-                # Otherwise fallback to energy-based detection
-                return self._energy_based_detection(audio)
-            except Exception as e:
-                self.get_logger().error(f"VAD classification failed: {e}")
+                if frame_len == 320:  # 20ms at 16kHz
+                    return self.vad.is_speech(audio_bytes, self.sample_rate)
+                else:
+                    # Energy fallback for non-standard lengths
+                    return self._energy_based_detection(audio)
+            except Exception:
                 return self._energy_based_detection(audio)
         else:
             # ─────────────────────────────────────────────────────

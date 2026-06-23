@@ -52,20 +52,20 @@ ENROLLMENT_DIR = os.path.join(
 def ensure_enrollment_dir():
     """Create the enrollment folder if it doesn't exist."""
     os.makedirs(ENROLLMENT_DIR, exist_ok=True)
-    print(f"📂 Folder enrollment: {ENROLLMENT_DIR}")
+    print(f"📂 Enrollment folder: {ENROLLMENT_DIR}")
 
 
 def get_speaker_name():
     """Ask the user for the speaker name."""
     print("\n" + "═" * 50)
-    print("  🎤 ENROLLMENT — Înregistrare voce nouă")
+    print("  🎤 ENROLLMENT — New voice registration")
     print("═" * 50)
 
     while True:
-        name = input("\n👤 Introdu numele (ex: Vale, Delia): ").strip()
+        name = input("\n👤 Enter name (e.g., Vale, Delia): ").strip()
 
         if not name:
-            print("   ⚠️ Numele nu poate fi gol!")
+            print("   ⚠️ Name cannot be empty!")
             continue
 
         # Normalize: lowercase for filename
@@ -74,8 +74,8 @@ def get_speaker_name():
 
         # Check if it already exists
         if os.path.exists(wav_path):
-            overwrite = input(f"   ⚠️ '{name}' există deja. Suprascrii? (d/n): ").strip().lower()
-            if overwrite != 'd':
+            overwrite = input(f"   ⚠️ '{name}' already exists. Overwrite? (y/n): ").strip().lower()
+            if overwrite != 'y':
                 continue
 
         return name, filename, wav_path
@@ -83,11 +83,11 @@ def get_speaker_name():
 
 def record_audio():
     """Record DURATION seconds of audio from the microphone."""
-    print(f"\n🎙️  Pregătește-te să vorbești {DURATION} secunde...")
-    print("   Vorbește clar și natural (poți spune orice).")
-    input("   Apasă ENTER când ești gata...")
+    print(f"\n🎙️  Get ready to speak for {DURATION} seconds...")
+    print("   Speak clearly and naturally (you can say anything).")
+    input("   Press ENTER when ready...")
 
-    print(f"\n🔴 ÎNREGISTREZ... ({DURATION} secunde)")
+    print(f"\n🔴 RECORDING... ({DURATION} seconds)")
 
     # Record audio
     audio = sd.rec(
@@ -98,7 +98,7 @@ def record_audio():
     )
     sd.wait()  # Wait for recording to finish
 
-    print("⏹️  Înregistrare completă!")
+    print("⏹️  Recording complete!")
 
     return audio
 
@@ -108,14 +108,14 @@ def check_audio_quality(audio):
     rms = np.sqrt(np.mean(audio ** 2))
 
     if rms < 0.005:
-        print("\n⚠️  ATENȚIE: Audio-ul pare foarte silențios!")
-        print("   Verifică dacă microfonul funcționează corect.")
-        retry = input("   Vrei să reînregistrezi? (d/n): ").strip().lower()
-        return retry != 'd'
+        print("\n⚠️  WARNING: Audio seems very quiet!")
+        print("   Check if the microphone is working correctly.")
+        retry = input("   Do you want to re-record? (y/n): ").strip().lower()
+        return retry != 'y'
 
     # Show audio level
     db = 20 * np.log10(max(rms, 1e-10))
-    print(f"   📊 Nivel audio: {db:.1f} dB RMS")
+    print(f"   📊 Audio level: {db:.1f} dB RMS")
     return True
 
 
@@ -123,10 +123,10 @@ def save_audio(audio, wav_path, name):
     """Save audio as a .wav file."""
     sf.write(wav_path, audio, SAMPLE_RATE)
     file_size = os.path.getsize(wav_path)
-    print(f"\n✅ Salvat: {wav_path}")
-    print(f"   📁 Dimensiune: {file_size / 1024:.1f} KB")
-    print(f"   👤 Vorbitor: {name}")
-    print(f"   ⏱️  Durată: {DURATION}s | 📻 Sample rate: {SAMPLE_RATE}Hz")
+    print(f"\n✅ Saved: {wav_path}")
+    print(f"   📁 Size: {file_size / 1024:.1f} KB")
+    print(f"   👤 Speaker: {name}")
+    print(f"   ⏱️  Duration: {DURATION}s | 📻 Sample rate: {SAMPLE_RATE}Hz")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -152,19 +152,19 @@ def main():
 
     # 5. Tips
     print("\n" + "─" * 50)
-    print("💡 Pași următori:")
-    print("   1. Pentru recunoaștere mai stabilă, poți reînregistra")
-    print("      într-un mediu mai silențios.")
-    print("   2. Acesta este scriptul corect pentru enrollment manual.")
-    print("      `speaker_manager.py` doar verifică baza de date.")
-    print("   3. După ce ai enrollment pentru toți vorbitorii,")
-    print("      pornește sistemul ROS2 și speaker_id_node va folosi")
-    print("      automat baza de date.")
+    print("💡 Next steps:")
+    print("   1. For more stable recognition, you can re-record")
+    print("      in a quieter environment.")
+    print("   2. This is the correct script for manual enrollment.")
+    print("      `speaker_manager.py` only verifies the database.")
+    print("   3. Once you have enrollment for all speakers,")
+    print("      start the ROS2 system and speaker_id_node will automatically")
+    print("      use the database.")
 
     # List existing voices
     existing = [f.replace('.wav', '').capitalize()
                 for f in os.listdir(ENROLLMENT_DIR) if f.endswith('.wav')]
-    print(f"\n📋 Voci înregistrate: {', '.join(existing)}")
+    print(f"\n📋 Enrolled voices: {', '.join(existing)}")
     print("═" * 50)
 
 
@@ -172,5 +172,5 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n⏹️  Enrollment anulat.")
+        print("\n\n⏹️  Enrollment cancelled.")
         sys.exit(0)

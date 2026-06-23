@@ -20,8 +20,6 @@ import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio
 from std_msgs.msg import Bool
-import numpy as np
-import time
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -168,7 +166,7 @@ class AudioSegmentNode(Node):
             self.ignore_segment = False  # Allow next user utterance through
 
     def barge_in_callback(self, msg: Bool):
-        """Callback pentru evenimentul de barge-in."""
+        """Callback for the barge-in event."""
         if msg.data:
             self.get_logger().warn('🚫 Barge-in detected - clearing audio buffer to prevent transcription')
             self.audio_buffer = []

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Aplica parametrii optimi pe ReSpeaker la fiecare pornire (Consolidated version)
-# Scris in sesiunea de calibrare ROS2
+# Apply optimal parameters on ReSpeaker at each startup (Consolidated version)
+# Written during the ROS2 calibration session
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 

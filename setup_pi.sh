@@ -1,8 +1,8 @@
 #!/bin/bash
 # setup_pi.sh
-# Configurare automată a sistemului Raspberry Pi pentru Voice Robot (ROS2)
+# Automatic configuration of the Raspberry Pi system for Voice Robot (ROS2)
 
-set -e  # Oprire la prima eroare
+set -e  # Stop on first error
 
 echo "🚀 Starting System Optimization for Raspberry Pi..."
 
@@ -19,30 +19,30 @@ sudo apt-get install -y \
     git
 
 # 2. Configure ZRAM (Memory Compression)
-# ZRAM este crucial pentru RPi 5 cu 4/8GB RAM rulând LLM-uri
+# ZRAM is crucial for RPi 5 with 4/8GB RAM running LLMs
 echo "💾 Configuring ZRAM (60% of RAM)..."
 
-# Asigurăm încărcarea modulului zram la boot
+# Ensure zram module is loaded at boot
 if ! grep -q "zram" /etc/modules; then
     echo "zram" | sudo tee -a /etc/modules
     echo "   ✅ Added zram to /etc/modules"
 fi
 
-# Configurare zram-tools
-# Modificăm /etc/default/zramswap pentru a aloca 60% din RAM
-# Comentăm linia veche și adăugăm cea nouă sau înlocuim valoarea
+# Configure zram-tools
+# Modify /etc/default/zramswap to allocate 60% of RAM
+# Comment out the old line and add the new one or replace the value
 if grep -q "^#PERCENT=" /etc/default/zramswap; then
-    # Dacă e comentată, o decomentăm și setăm 60
+    # If commented out, uncomment it and set to 60
     sudo sed -i 's/^#PERCENT=.*/PERCENT=60/' /etc/default/zramswap
 elif grep -q "^PERCENT=" /etc/default/zramswap; then
-    # Dacă există, o actualizăm la 60
+    # If it exists, update it to 60
     sudo sed -i 's/^PERCENT=.*/PERCENT=60/' /etc/default/zramswap
 else
-    # Dacă nu există, o adăugăm
+    # If it does not exist, add it
     echo "PERCENT=60" | sudo tee -a /etc/default/zramswap
 fi
 
-# Setăm algoritmul de compresie la zstd (balans bun CPU/viteză)
+# Set the compression algorithm to zstd (good CPU/speed balance)
 if grep -q "^#ALGO=" /etc/default/zramswap; then
     sudo sed -i 's/^#ALGO=.*/ALGO=zstd/' /etc/default/zramswap
 elif grep -q "^ALGO=" /etc/default/zramswap; then
@@ -59,7 +59,7 @@ sudo service zramswap reload || sudo service zramswap restart
 # 3. Create Python Virtual Environment
 echo "🐍 Setting up Python Virtual Environment..."
 if [ ! -d "venv" ]; then
-    # --system-site-packages este CRITIC pentru accesul la pachetele ROS2 (rclpy instalat via apt)
+    # --system-site-packages is CRITICAL for access to ROS2 packages (rclpy installed via apt)
     python3 -m venv --system-site-packages venv
     echo "   ✅ Virtual Environment created in ./venv"
 else

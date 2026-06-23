@@ -36,34 +36,6 @@ tts_node:
     rate: "+0%"
     volume: "+0%"
 
-openai_realtime_node:
-  ros__parameters:
-    model: "gpt-realtime-mini"
-    voice: "cedar"
-    api_base_url: "wss://api.openai.com/v1/realtime"
-    input_sample_rate: 16000
-    api_sample_rate: 24000
-    vad_threshold: 0.80
-    vad_prefix_padding_ms: 400
-    vad_silence_duration_ms: 600
-    response_create_delay_ms: 100
-    continued_turn_response_delay_ms: 450
-    short_transcript_dedupe_window_s: 4.0
-    playback_input_filter_enabled: true
-    playback_input_filter_post_playback_ms: 800
-    playback_input_filter_min_rms_dbfs: -35.0
-    playback_input_filter_hits_required: 3
-    assistant_echo_filter_enabled: true
-    assistant_echo_window_s: 8.0
-    assistant_echo_similarity_threshold: 84.0
-    web_search_enabled: true
-    web_search_model: "gpt-4o-mini"
-    web_search_context_size: "medium"
-    capture_during_playback: true
-    speaker_switch_hits_required: 2
-    language_switch_hits_required: 2
-    allow_known_speaker_switch_without_address: true
-    sticky_speaker_timeout_s: 180.0
 
 gemini_live_node:
   ros__parameters:
@@ -191,9 +163,9 @@ robot_command_executor_node:
 
 echo_canceller_node:
   ros__parameters:
-    filter_length_ms: 100         # Crescut pentru a acoperi reflexiile din laptop
-    step_size: 0.15              # Putin mai agresiv
-    max_delay_ms: 3000           # Crescut la 3 secunde pentru a acoperi latenta extrema
+    filter_length_ms: 100         # Increased to cover laptop reflections
+    step_size: 0.15              # A bit more aggressive
+    max_delay_ms: 3000           # Increased to 3 seconds to cover extreme latency
     debug_recording: true
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings
