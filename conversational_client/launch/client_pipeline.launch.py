@@ -296,8 +296,6 @@ def generate_launch_description():
                 'input_topic': '/recognized_commands',
                 'command_topic': '/robot_commands',
                 'execution_enabled': True,
-                'publish_per_command_topics': True,
-                'per_command_topic_prefix': '/robot_commands',
                 'enable_voice_cancel': True,
                 'enable_risky_confirmation': True,
                 'confirmation_timeout_s': 12.0,

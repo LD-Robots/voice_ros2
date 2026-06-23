@@ -48,8 +48,6 @@ class RobotCommandGateNode(Node):
         self.declare_parameter('min_command_confidence', 0.60)
         self.declare_parameter('input_topic', '/recognized_commands')
         self.declare_parameter('command_topic', '/robot_commands')
-        self.declare_parameter('per_command_topic_prefix', '/robot_commands')
-        self.declare_parameter('publish_per_command_topics', True)
         self.declare_parameter('status_topic', '/robot_command_status')
         self.declare_parameter('transcription_topic', '/attended_transcription')
 
@@ -71,8 +69,6 @@ class RobotCommandGateNode(Node):
         self.min_command_confidence = float(self.get_parameter('min_command_confidence').value)
         input_topic = str(self.get_parameter('input_topic').value)
         self.command_topic = str(self.get_parameter('command_topic').value)
-        self.per_command_topic_prefix = str(self.get_parameter('per_command_topic_prefix').value).rstrip('/')
-        self.publish_per_command_topics = bool(self.get_parameter('publish_per_command_topics').value)
         status_topic = str(self.get_parameter('status_topic').value)
         transcription_topic = str(self.get_parameter('transcription_topic').value)
 
@@ -112,12 +108,6 @@ class RobotCommandGateNode(Node):
         self.command_pub = self.create_publisher(RobotCommand, self.command_topic, 10)
         self.status_pub = self.create_publisher(String, status_topic, 10)
         self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
-
-        self.per_command_pubs = {}
-        if self.publish_per_command_topics:
-            for command_name in COMMAND_IDS:
-                topic = f'{self.per_command_topic_prefix}/{command_name}'
-                self.per_command_pubs[command_name] = self.create_publisher(RobotCommand, topic, 10)
 
         self._confirm_timer = self.create_timer(0.25, self._confirmation_timer_callback)
 
@@ -208,14 +198,10 @@ class RobotCommandGateNode(Node):
     def _dispatch(self, msg: RobotCommand):
         name = self._command_name(msg)
         self.command_pub.publish(msg)
-        per_command_pub = self.per_command_pubs.get(name)
-        if per_command_pub is not None:
-            per_command_pub.publish(msg)
         self._publish_status(f'dispatched:{name}')
         self.get_logger().info(
             f'Dispatched to motion team: id={msg.command_id}, name={name}, steps={msg.steps}, '
-            f'speaker={msg.speaker or "Unknown"}, topic={self.command_topic}, '
-            f'per_command_topic={self.per_command_topic_prefix}/{name}'
+            f'speaker={msg.speaker or "Unknown"}, topic={self.command_topic}'
         )
 
     # ------------------------------------------------------------------ safety

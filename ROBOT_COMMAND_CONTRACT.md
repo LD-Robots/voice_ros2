@@ -22,8 +22,8 @@ voice_command_node ──► /recognized_commands ──► robot_command_gate_n
 - `robot_command_gate_node` applies safety (confidence floor, spoken **stop**
   cancel, and confirmation for risky commands) and **only then** forwards the
   command to the motion team.
-- **You (motion team) subscribe to `/robot_commands`** (or the per-command topics)
-  and run the matching motion script.
+- **You (motion team) subscribe to the single topic `/robot_commands`** and switch
+  on `command_id` to run the matching motion script.
 
 ---
 
@@ -31,13 +31,12 @@ voice_command_node ──► /recognized_commands ──► robot_command_gate_n
 
 | Topic | Type | Direction | Purpose |
 |---|---|---|---|
-| `/robot_commands` | `conversational_interfaces/RobotCommand` | voice → **motion** | Approved command (all 5). **Subscribe here.** |
-| `/robot_commands/<command_name>` | `conversational_interfaces/RobotCommand` | voice → **motion** | Same payload, pre-routed per command (e.g. `/robot_commands/clap`). Use if you prefer one subscriber per script. |
+| `/robot_commands` | `conversational_interfaces/RobotCommand` | voice → **motion** | Approved command (all 5). **Subscribe here and switch on `command_id`.** |
 | `/robot_command_status` | `std_msgs/String` | both | Lifecycle. Voice publishes `dispatched:*`, `canceled`, `confirmation_*`. **Motion team should also publish progress here** (see §6). |
 | `/recognized_commands` | `conversational_interfaces/RobotCommand` | internal | Raw recognizer output, **pre-safety**. Do **not** use it to drive the robot. |
 
-> Subscribe to **either** `/robot_commands` (switch on `command_id`) **or** the
-> per-command topics — not both, or you will execute each command twice.
+> There is a single command bus: `/robot_commands`. All 5 commands arrive on it;
+> dispatch by `command_id` (see §4). (No per-command topics.)
 
 ---
 

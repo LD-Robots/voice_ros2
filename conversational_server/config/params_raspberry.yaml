@@ -123,8 +123,6 @@ robot_command_gate_node:
     input_topic: "/recognized_commands"
     command_topic: "/robot_commands"
     execution_enabled: true
-    publish_per_command_topics: true
-    per_command_topic_prefix: "/robot_commands"
     enable_voice_cancel: true
     enable_risky_confirmation: true
     confirmation_timeout_s: 12.0
