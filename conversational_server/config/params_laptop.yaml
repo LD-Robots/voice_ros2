@@ -70,7 +70,8 @@ audio_capture_node:
     respeaker_mode: false  # not needed: 1-channel firmware outputs mono natively
     respeaker_channel: 0
     stereo_mono_extract: true
-    gain: 1.0
+    gain: 1.0              # 3.0 when inside head (needs amplification), 1.0 when outside (avoid clipping)
+    # gain: 3.0            # (Uncomment this line when microphone is mounted inside the head)
     chunk_ms: 20
     debug_recording: true
     # debug_wav_path is injected by the launch file (workspace_root/gemini_debug_mic.wav)
@@ -166,7 +167,7 @@ echo_canceller_node:
   ros__parameters:
     filter_length_ms: 100         # Increased to cover laptop reflections
     step_size: 0.15              # A bit more aggressive
-    max_delay_ms: 3000           # Increased to 3 seconds to cover extreme latency
+    max_delay_ms: 400            # Real physical latency is ~100-300ms; keeping it small prevents false correlation peaks in speech
     debug_recording: true
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings

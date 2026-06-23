@@ -166,7 +166,7 @@ def build_unique_speaker_label(existing_labels) -> str:
     }
     suffix = 1
     while True:
-        candidate = f'speaker_{suffix:03d}'
+        candidate = f'user_{suffix:03d}'
         if candidate not in existing:
             return candidate
         suffix += 1
@@ -184,7 +184,7 @@ def preferred_name_from_voice_label(voice_label: str) -> str:
 
 def default_preferred_name_for_voice_label(voice_label: str) -> str:
     label = os.path.splitext((voice_label or '').strip())[0]
-    if not label or label.startswith('speaker_'):
+    if not label or label.startswith('speaker_') or label.startswith('user_'):
         return ''
     return normalize_person_name(preferred_name_from_voice_label(label))
 
@@ -286,7 +286,7 @@ def migrate_legacy_auto_voice_labels(memory: dict | None, enrollment_dir: str) -
 
     legacy_labels = sorted(
         label for label in (set(people.keys()) | wav_labels | set(sidecar_people.keys()))
-        if label.startswith('person_')
+        if label.startswith('person_') or label.startswith('speaker_')
     )
 
     changed = False

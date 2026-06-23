@@ -32,7 +32,7 @@ class EchoCancellerNode(Node):
     def __init__(self):
         super().__init__('echo_canceller_node')
         self.declare_parameter('sample_rate', 16000)
-        self.declare_parameter('max_delay_ms', 3000)
+        self.declare_parameter('max_delay_ms', 400)
         # Gain applied by AudioPlaybackNode – reference must match what actually
         # comes out of the speakers so the AEC subtraction is correct.
         self.declare_parameter('playback_gain', 0.5)
@@ -56,7 +56,7 @@ class EchoCancellerNode(Node):
         self.apm: AudioProcessor | None = None
         if WEBRTC_AVAILABLE:
             # AGC disabled per user request to avoid over-amplification
-            self.apm = AudioProcessor(enable_aec=True, enable_ns=True, ns_level=3, enable_agc=False)
+            self.apm = AudioProcessor(enable_aec=True, enable_ns=True, ns_level=4, enable_agc=False)
             self.apm.set_stream_format(16000, 1)
             self.apm.set_reverse_stream_format(16000, 1)
             self.get_logger().info("🚀 [AEC] WebRTC Engine Started (AEC+NS, AGC Disabled).")
@@ -94,6 +94,7 @@ class EchoCancellerNode(Node):
         self.robot_speaking = False
         self.tail_samples = 0
         self._lock_count = 0
+        self._drift_count = 0
         self.total_ref_samples = 0
         
         self.raw_sub = self.create_subscription(Audio, '/audio_raw', self.raw_callback, 10)
@@ -197,6 +198,7 @@ class EchoCancellerNode(Node):
                 self.current_delay = 0
                 if len(self.ref_queue) > self.sample_rate: self.ref_queue.clear()
                 self._lock_count = 0
+                self._drift_count = 0
         
         # Delay Estimation
         if (self.robot_speaking or self.tail_samples > 0):
@@ -224,9 +226,14 @@ class EchoCancellerNode(Node):
                         # Once locked, only resync if latency drifted massively (> 50ms / 800 samples)
                         # This prevents micro-jitter ("rushing") while still handling real desyncs
                         if abs(delay - self.current_delay) > 800:
-                            self.get_logger().warn(f"⚠️ AEC Drift! Resyncing delay: {self.current_delay} -> {int(delay)}")
-                            self.current_delay = int(delay)
-                            self._lock_count = 1
+                            self._drift_count += 1
+                            if self._drift_count >= 15:  # Must persist for 15 consecutive frames (~300ms)
+                                self.get_logger().warn(f"⚠️ AEC Drift! Resyncing delay: {self.current_delay} -> {int(delay)}")
+                                self.current_delay = int(delay)
+                                self._lock_count = 1
+                                self._drift_count = 0
+                        else:
+                            self._drift_count = 0
 
         # Process through WebRTC
         final_clean = d_i16
@@ -248,6 +255,7 @@ class EchoCancellerNode(Node):
                 r_frame = ref_i16[i : i + self.frame_size_10ms]
                 
                 # WebRTC API
+                self.apm.set_stream_delay(0)
                 self.apm.process_reverse_stream(r_frame.tobytes())
                 res_bytes = self.apm.process_stream(m_frame.tobytes())
                 processed_frame = np.frombuffer(res_bytes, dtype=np.int16)
