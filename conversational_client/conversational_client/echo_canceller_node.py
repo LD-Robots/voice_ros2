@@ -199,7 +199,7 @@ class EchoCancellerNode(Node):
                 self._lock_count = 0
         
         # Delay Estimation
-        if (self.robot_speaking or self.tail_samples > 0) and self._lock_count < 10:
+        if (self.robot_speaking or self.tail_samples > 0):
             footprint = np.array(self.mic_history)
             if len(footprint) >= self.sample_rate * 0.5:
                 slen = self.max_delay_samples + len(footprint)
@@ -212,17 +212,25 @@ class EchoCancellerNode(Node):
                 delay = slen - peak - len(f_norm)
                 
                 if score > 0.15:
-                    if abs(delay - self.current_delay) < 50:
-                        self._lock_count += 1
+                    if self._lock_count < 5:
+                        if abs(delay - self.current_delay) < 50:
+                            self._lock_count += 1
+                        else:
+                            self.current_delay = int(delay)
+                            self._lock_count = 1
+                        if self._lock_count == 5:
+                            self.get_logger().info(f"🔒 AEC LOCKED: {self.current_delay/self.sample_rate*1000:.1f}ms")
                     else:
-                        self.current_delay = int(delay)
-                        self._lock_count = 1
-                    if self._lock_count == 5:
-                        self.get_logger().info(f"🔒 AEC LOCKED: {self.current_delay/self.sample_rate*1000:.1f}ms")
+                        # Once locked, only resync if latency drifted massively (> 50ms / 800 samples)
+                        # This prevents micro-jitter ("rushing") while still handling real desyncs
+                        if abs(delay - self.current_delay) > 800:
+                            self.get_logger().warn(f"⚠️ AEC Drift! Resyncing delay: {self.current_delay} -> {int(delay)}")
+                            self.current_delay = int(delay)
+                            self._lock_count = 1
 
         # Process through WebRTC
         final_clean = d_i16
-        if self.apm and self.current_delay > 0:
+        if self.apm and self._lock_count >= 5:
             # Extract aligned reference
             ref_aligned = self.get_ref_slice(self.current_delay + n, n)
             if self.wav_ref_aligned:

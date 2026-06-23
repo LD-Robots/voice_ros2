@@ -48,7 +48,7 @@ gemini_live_node:
     response_create_delay_ms: 100
     continued_turn_response_delay_ms: 450
     short_transcript_dedupe_window_s: 4.0
-    playback_input_filter_enabled: false  # Gemini handles barge-in natively; AEC removes echo
+    playback_input_filter_enabled: true  # Activam filtrul software pentru a bloca ecoul rezidual
     playback_input_filter_post_playback_ms: 1200
     playback_input_filter_min_rms_dbfs: -35.0
     playback_input_filter_hits_required: 3
@@ -87,6 +87,7 @@ audio_segment_node:
   ros__parameters:
     min_segment_seconds: 0.5
     max_segment_seconds: 30.0
+    capture_during_playback: true
 
 audio_playback_node:
   ros__parameters:
