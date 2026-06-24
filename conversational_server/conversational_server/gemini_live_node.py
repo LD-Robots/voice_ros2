@@ -622,6 +622,17 @@ class GeminiLiveNode(Node):
             self._playback_guard_was_active = False
             self._playback_frames_blocked = 0
 
+        # Deferred Context Injection (Barge-in / Turn Start Guard)
+        if self._is_new_user_turn:
+            self._is_new_user_turn = False
+            current_name = self._voice_correlated_preferred_name()
+            is_speaker_diff = (self.current_speaker != "Unknown" and 
+                               self.current_speaker != self._setup_speaker)
+            is_name_diff = (current_name and current_name != self._setup_preferred_name)
+            if is_speaker_diff or is_name_diff:
+                self.get_logger().info("Gemini Live: Speaker or name mismatch detected at start of turn. Injecting context update.")
+                self._inject_context_update("new_user_turn")
+
         # Resample to API rate (Gemini expects 16kHz)
         pcm_api = self._resample_pcm16(pcm, input_sample_rate, self.api_sample_rate)
         encoded = base64.b64encode(pcm_api.tobytes()).decode("ascii")
