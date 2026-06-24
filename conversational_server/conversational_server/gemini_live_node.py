@@ -520,27 +520,19 @@ class GeminiLiveNode(Node):
         preferred_name = self._voice_correlated_preferred_name()
         if not preferred_name:
             return
-        note_parts = []
-        note_parts.append(f"*System note: The person currently speaking is named {preferred_name}.*")
 
-        preferred_language = self.person_context.get("preferred_language", "")
-        if preferred_language:
-            note_parts.append(f"*Preferred language: {preferred_language}.*")
+        preferred_language = self.person_context.get('preferred_language', '') or 'Unknown'
+        facts = self.person_context.get('facts', []) or []
+        facts_str = ', '.join(str(f) for f in facts[:5])
 
-        facts = self.person_context.get("facts", []) or []
-        if facts:
-            note_parts.append("*Known facts about this person:* " + "; ".join(str(f) for f in facts[:5]) + ".")
+        note_text = f'[SYSTEM_UPDATE: SpeakerName = {preferred_name}, PreferredLanguage = {preferred_language}, Facts = [{facts_str}]]'
 
-        if not note_parts:
-            return
-
-        note_text = "\n\n" + " ".join(note_parts) + "\n\n"
-        self.get_logger().info(f"Gemini context inject ({reason}): speaker={self.current_speaker}, name={preferred_name}")
-        self.get_logger().info(f"Injected text: {note_text.strip()}")
+        self.get_logger().info(f'Gemini context inject ({reason}): speaker={self.current_speaker}, name={preferred_name}')
+        self.get_logger().info(f'Injected text: {note_text}')
         self._send_raw({
-            "clientContent": {
-                "turns": [{"role": "user", "parts": [{"text": note_text}]}],
-                "turnComplete": False,
+            'clientContent': {
+                'turns': [{'role': 'user', 'parts': [{'text': note_text}]}],
+                'turnComplete': False,
             }
         })
         self._setup_speaker = self.current_speaker
@@ -689,27 +681,47 @@ class GeminiLiveNode(Node):
             return
 
         # Tool calls from server (Google Search or custom tools)
-        if "toolCall" in event:
-            tool_call = event.get("toolCall", {})
-            function_calls = tool_call.get("functionCalls", [])
-            self.get_logger().info(f"Gemini Live received toolCall with {len(function_calls)} functions")
-            
+        if 'toolCall' in event:
+            tool_call = event.get('toolCall', {})
+            function_calls = tool_call.get('functionCalls', [])
+            self.get_logger().info(f'Gemini Live toolCall: {len(function_calls)} calls')
+
             responses = []
             for fc in function_calls:
-                call_id = fc.get("id", "")
-                name = fc.get("name", "")
-                args = fc.get("args", {})
-                self.get_logger().info(f"  - tool: {name}, args: {args}")
-                responses.append({
-                    "id": call_id,
-                    "name": name,
-                    "response": {"result": "ok"}
-                })
-                
+                call_id = fc.get('id', '')
+                name = fc.get('name', '')
+                args = fc.get('args', {})
+                self.get_logger().info(f'  - tool: {name}, args: {args}')
+                if name == 'get_speaker_info':
+                    pref_name = self._voice_correlated_preferred_name() or 'Unknown'
+                    pref_lang = (
+                        self.person_context.get('preferred_language', '') or
+                        'Unknown'
+                    )
+                    facts = self.person_context.get('facts', []) or []
+                    responses.append({
+                        'id': call_id,
+                        'name': name,
+                        'response': {
+                            'result': {
+                                'speaker': self.current_speaker,
+                                'preferred_name': pref_name,
+                                'preferred_language': pref_lang,
+                                'facts': facts,
+                            }
+                        }
+                    })
+                else:
+                    responses.append({
+                        'id': call_id,
+                        'name': name,
+                        'response': {'result': 'ok'}
+                    })
+
             if responses:
                 self._send_raw({
-                    "toolResponse": {
-                        "functionResponses": responses
+                    'toolResponse': {
+                        'functionResponses': responses
                     }
                 })
             return
@@ -988,7 +1000,27 @@ class GeminiLiveNode(Node):
 
         instructions = self._build_instructions()
 
-        tools: list = [{"googleSearch": {}}] if self.google_search_enabled else []
+        tools: list = []
+        if self.google_search_enabled:
+            tools.append({'googleSearch': {}})
+
+        # Register get_speaker_info tool
+        tools.append({
+            'functionDeclarations': [
+                {
+                    'name': 'get_speaker_info',
+                    'description': (
+                        'Retrieve the current speaker\'s identity context, '
+                        'including their preferred spoken name, preferred language, '
+                        'and any known background facts.'
+                    ),
+                    'parameters': {
+                        'type': 'OBJECT',
+                        'properties': {}
+                    }
+                }
+            ]
+        })
 
         setup_payload: dict = {
             "model": f"models/{self.model}",
@@ -1031,9 +1063,13 @@ class GeminiLiveNode(Node):
             'Do not use any speaker preferred name as your own identity.'
         )
         extras.append(
-            "The speaker's identity, name, and background facts can be updated mid-session. "
-            "If a system note (e.g. '*System note: The person currently speaking is named X.*') is injected, "
-            "you must immediately update your context, treat them as that person, and use their preferred name."
+            'The speaker\'s identity, name, and background facts can be updated mid-session. '
+            'If a system update message (e.g. \'[SYSTEM_UPDATE: SpeakerName = X, PreferredLanguage = Y, Facts = [F1, F2...]]\') is injected, '
+            'you must immediately update your context, treat them as that person, and use their preferred name.'
+        )
+        extras.append(
+            'If the user asks who they are, whether you know their name, or if you need their facts or preferred language, '
+            'you must call the get_speaker_info tool to retrieve the current speaker context.'
         )
         if assistant_name_question:
             extras.append('The user is asking your name right now. Answer clearly with "My name is Robot."')
