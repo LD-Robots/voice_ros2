@@ -336,19 +336,7 @@ class GeminiLiveNode(Node):
             # Start capturing user audio immediately so speaker_id_node gets
             # a segment at the end of the first user turn.
             self._start_user_audio_capture()
-            
-            # Force immediate reconnect if setup is out of sync with actual speaker context
-            current_name = self._voice_correlated_preferred_name()
-            is_speaker_diff = (self.current_speaker != 'Unknown' and
-                               self.current_speaker != self._setup_speaker)
-            is_name_diff = (current_name and
-                            current_name != self._setup_preferred_name)
-            if is_speaker_diff or is_name_diff:
-                self._request_reconnect(
-                    'session_active', immediate_user_turn=True
-                )
-            else:
-                self._inject_context_update('session_active')
+            self._is_new_user_turn = True
         else:
             self.get_logger().debug("Gemini Live session INACTIVE")
             # Cache the speaker and context (do not reset current_speaker or speaker_tracker)
@@ -468,19 +456,16 @@ class GeminiLiveNode(Node):
                     str(self.person_context.get('preferred_language', ''))
                 )
 
-        # Trigger reconnection if WebSocket setup is out of sync
+        # Inject context update if WebSocket setup is out of sync
         if speaker != 'Unknown':
             current_name = self._voice_correlated_preferred_name()
             is_speaker_diff = speaker != self._setup_speaker
             is_name_diff = (current_name and
                             current_name != self._setup_preferred_name)
             if is_speaker_diff or is_name_diff:
-                self._request_reconnect(
-                    'speaker_changed', immediate_user_turn=True
-                )
-                return
+                self._inject_context_update('speaker_changed')
                 
-        if speaker_changed and speaker == 'Unknown':
+        elif speaker_changed and speaker == 'Unknown':
             self._inject_context_update('speaker_changed')
 
     def person_context_callback(self, msg: String):
@@ -510,14 +495,8 @@ class GeminiLiveNode(Node):
             str(self.person_context.get('preferred_language', ''))
         )
         
-        # Force reconnect if name doesn't match setup name
-        current_name = self._voice_correlated_preferred_name()
-        if current_name and current_name != self._setup_preferred_name:
-            self._request_reconnect(
-                'context_updated', immediate_user_turn=True
-            )
-        else:
-            self._inject_context_update('context_updated')
+        # Inject context update if context has changed
+        self._inject_context_update('context_updated')
 
     def _inject_context_update(self, reason: str):
         """Send a silent context note to Gemini mid-session.
@@ -564,6 +543,8 @@ class GeminiLiveNode(Node):
                 "turnComplete": False,
             }
         })
+        self._setup_speaker = self.current_speaker
+        self._setup_preferred_name = preferred_name
 
     def robot_command_callback(self, msg: RobotCommand):
         # Suppress assistant chatter during robot commands
