@@ -283,6 +283,8 @@ class GeminiLiveNode(Node):
         self._current_input_channels = 1
         self._goodbye_pending = False  # True after user said goodbye, waiting for Gemini to finish
         self._pending_context_update = False  # True when context inject was blocked by active response
+        self._is_new_user_turn = True
+
 
         # Publishers
         self.audio_pub = self.create_publisher(Audio, "/audio_out", 10)
@@ -393,6 +395,8 @@ class GeminiLiveNode(Node):
             self._current_user_audio = []
         elif was_speaking:
             self._last_robot_speaking_end_ms = now_ms
+            self._is_new_user_turn = True
+            self.get_logger().info("Gemini Live: robot finished speaking, turn initialized")
 
     def pause_callback(self, msg: Bool):
         self._apply_pause_state(bool(msg.data), publish=False)
@@ -654,6 +658,7 @@ class GeminiLiveNode(Node):
         self.get_logger().info("Connected to Gemini Live API")
         self._connected.set()
         self._publish_status("online")
+        self._is_new_user_turn = True
         self._send_setup()
 
     def _on_close(self, ws, status_code, msg):
@@ -769,6 +774,8 @@ class GeminiLiveNode(Node):
             self._user_speaking = False
             self._publish_captured_user_audio_segment()
             self._start_user_audio_capture()
+            self._is_new_user_turn = True
+            self.get_logger().info("Gemini Live: turn complete, turn initialized")
             if self._current_user_transcript:
                 self._handle_input_transcript(self._current_user_transcript)
                 self._current_user_transcript = ""
