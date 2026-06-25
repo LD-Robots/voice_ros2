@@ -26,9 +26,12 @@ __pycache__/
 conversational_server/models/
 __pycache__/
 
-# ROS2 artifacts (nu ar trebui în repo)
 build/
 install/
 log/
 **/__pycache__/
 *.pyc
+
+# Audio files
+*.wav
+
