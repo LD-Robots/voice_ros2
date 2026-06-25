@@ -142,7 +142,7 @@ class GeminiLiveNode(Node):
         self.declare_parameter("name_context_wait_ms", 950)
         self.declare_parameter("google_search_enabled", False)
         self.declare_parameter('doa_enabled', True)
-        self.declare_parameter('doa_focus_margin', 45.0)
+        self.declare_parameter('doa_focus_margin', 90.0)
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -238,6 +238,7 @@ class GeminiLiveNode(Node):
         self.latest_doa_angle = -1
         self.focused_doa_angle = -1
         self.current_segment_doa_angles = []
+        self.doa_history = []
 
         # WebSocket state
         self._ws_app = None
@@ -381,6 +382,7 @@ class GeminiLiveNode(Node):
         self.get_logger().info(f"Gemini: injecting greeting for wake word '{word}'")
         if self.doa_enabled and self.latest_doa_angle != -1:
             self.focused_doa_angle = self.latest_doa_angle
+            self.doa_history = [self.focused_doa_angle]
             self.get_logger().info(
                 f'Locking focused DOA angle to wake word direction: '
                 f'{self.focused_doa_angle}°'
@@ -469,6 +471,7 @@ class GeminiLiveNode(Node):
             self.pending_focus_at = time.monotonic()
             if self.doa_enabled and self.latest_doa_angle != -1:
                 self.focused_doa_angle = self.latest_doa_angle
+                self.doa_history = [self.focused_doa_angle]
                 self.get_logger().info(
                     f'Locking focused DOA angle to identified speaker: '
                     f'{self.focused_doa_angle}°'
@@ -485,17 +488,8 @@ class GeminiLiveNode(Node):
                     str(self.person_context.get('preferred_language', ''))
                 )
 
-        # Inject context update if WebSocket setup is out of sync
-        if speaker != 'Unknown':
-            current_name = self._voice_correlated_preferred_name()
-            is_speaker_diff = speaker != self._setup_speaker
-            is_name_diff = (current_name and
-                            current_name != self._setup_preferred_name)
-            if is_speaker_diff or is_name_diff:
-                self._inject_context_update('speaker_changed')
-                
-        elif speaker_changed and speaker == 'Unknown':
-            self._inject_context_update('speaker_changed')
+        # No mid-session injection needed. The model uses get_speaker_info tool CALL.
+        pass
 
     def person_context_callback(self, msg: String):
         try:
@@ -524,49 +518,8 @@ class GeminiLiveNode(Node):
             str(self.person_context.get('preferred_language', ''))
         )
         
-        # Inject context update if context has changed
-        self._inject_context_update('context_updated')
-
-    def _inject_context_update(self, reason: str):
-        """
-        Send a silent context note to Gemini mid-session.
-
-        Instead of closing and reopening the WebSocket (which causes a 3-second
-        silence gap), we push a brief system note as a user turn with
-        turnComplete=False so Gemini updates its working context immediately
-        without generating an audio response.
-        """
-        if not self._connected.is_set() or not self._setup_sent:
-            return
-        if self.current_backend != "gemini_live":
-            return
-        if self._response_active:
-            # Don't inject while Gemini is speaking. We CAN inject while the user
-            # is mid-sentence, which allows the model to know who is speaking before it responds!
-            # Schedule a deferred inject for when the response finishes.
-            self._pending_context_update = True
-            return
-
-        preferred_name = self._voice_correlated_preferred_name()
-        if not preferred_name:
-            return
-
-        preferred_language = self.person_context.get('preferred_language', '') or 'Unknown'
-        facts = self.person_context.get('facts', []) or []
-        facts_str = ', '.join(str(f) for f in facts[:5])
-
-        note_text = f'[SYSTEM_UPDATE: SpeakerName = {preferred_name}, PreferredLanguage = {preferred_language}, Facts = [{facts_str}]]'
-
-        self.get_logger().info(f'Gemini context inject ({reason}): speaker={self.current_speaker}, name={preferred_name}')
-        self.get_logger().info(f'Injected text: {note_text}')
-        self._send_raw({
-            'clientContent': {
-                'turns': [{'role': 'user', 'parts': [{'text': note_text}]}],
-                'turnComplete': False,
-            }
-        })
-        self._setup_speaker = self.current_speaker
-        self._setup_preferred_name = preferred_name
+        # No mid-session injection needed. The model uses get_speaker_info tool CALL.
+        pass
 
     def robot_command_callback(self, msg: RobotCommand):
         # Suppress assistant chatter during robot commands
@@ -592,6 +545,9 @@ class GeminiLiveNode(Node):
         self.latest_doa_angle = msg.data
         if self.session_active and not self.robot_speaking:
             self.current_segment_doa_angles.append(msg.data)
+            self.doa_history.append(msg.data)
+            if len(self.doa_history) > 10:
+                self.doa_history.pop(0)
 
     def audio_callback(self, msg: Audio):
         if not self.session_active:
@@ -632,30 +588,29 @@ class GeminiLiveNode(Node):
             self._playback_guard_was_active = False
             self._playback_frames_blocked = 0
 
-        # Deferred Context Injection (Barge-in / Turn Start Guard)
+        # Deferred Context Injection disabled. The model uses get_speaker_info tool CALL.
         if self._is_new_user_turn:
             self._is_new_user_turn = False
-            current_name = self._voice_correlated_preferred_name()
-            is_speaker_diff = (self.current_speaker != "Unknown" and 
-                               self.current_speaker != self._setup_speaker)
-            is_name_diff = (current_name and current_name != self._setup_preferred_name)
-            if is_speaker_diff or is_name_diff:
-                self.get_logger().info("Gemini Live: Speaker or name mismatch detected at start of turn. Injecting context update.")
-                self._inject_context_update("new_user_turn")
 
         # Spatial DOA Gating
         if (self.doa_enabled and self.focused_doa_angle != -1 and
                 self.latest_doa_angle != -1):
-            dist = self._angular_distance(
-                self.latest_doa_angle, self.focused_doa_angle
+            gating_doa = (
+                self._get_circular_average(self.doa_history)
+                if self.doa_history
+                else self.latest_doa_angle
             )
-            if dist > self.doa_focus_margin:
-                pcm = np.zeros_like(pcm)
-                if self._audio_chunks_sent % 50 == 0:
-                    self.get_logger().info(
-                        f'🚫 DOA Gating: mute (DOA={self.latest_doa_angle}°, '
-                        f'focus={self.focused_doa_angle}°, diff={dist:.1f}°)'
-                    )
+            if gating_doa != -1:
+                dist = self._angular_distance(
+                    gating_doa, self.focused_doa_angle
+                )
+                if dist > self.doa_focus_margin:
+                    pcm = np.zeros_like(pcm)
+                    if self._audio_chunks_sent % 50 == 0:
+                        self.get_logger().info(
+                            f'🚫 DOA Gating: mute (gating_DOA={gating_doa}°, '
+                            f'focus={self.focused_doa_angle}°, diff={dist:.1f}°)'
+                        )
 
         # Resample to API rate (Gemini expects 16kHz)
         pcm_api = self._resample_pcm16(pcm, input_sample_rate, self.api_sample_rate)
@@ -1149,11 +1104,7 @@ class GeminiLiveNode(Node):
             'If the user asks your name, answer "Robot". '
             'Do not use any speaker preferred name as your own identity.'
         )
-        extras.append(
-            'The speaker\'s identity, name, and background facts can be updated mid-session. '
-            'If a system update message (e.g. \'[SYSTEM_UPDATE: SpeakerName = X, PreferredLanguage = Y, Facts = [F1, F2...]]\') is injected, '
-            'you must immediately update your context, treat them as that person, and use their preferred name.'
-        )
+
         extras.append(
             'At the start of every user turn, you must call the '
             'get_speaker_info tool to check who is speaking. If the '
@@ -1486,6 +1437,8 @@ class GeminiLiveNode(Node):
         self.playback_input_filter.reset()
         self._clear_deferred_response()
         self._mark_response_inactive()
+        self.focused_doa_angle = -1
+        self.doa_history = []
 
     def _mark_response_active(self, response_id: str = ""):
         self._response_create_pending = False
@@ -1494,10 +1447,7 @@ class GeminiLiveNode(Node):
     def _mark_response_inactive(self, response_id: str = ""):
         self._response_create_pending = False
         self._response_active = False
-        # Fire any context injection that was deferred while the response was active
-        if self._pending_context_update:
-            self._pending_context_update = False
-            self._inject_context_update("deferred_after_response")
+        pass
 
     def _mark_response_create_pending(self):
         self._response_create_pending = True
