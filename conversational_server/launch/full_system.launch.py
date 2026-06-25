@@ -3,10 +3,10 @@ Minimalist Launch file for the full system (server + client).
 Relies on YAML configuration profiles for most parameters.
 """
 from launch import LaunchDescription
-from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node, PushRosNamespace
 from ament_index_python.packages import get_package_share_directory
 import os
 from pathlib import Path
@@ -51,14 +51,30 @@ def generate_launch_description():
 
     return LaunchDescription([
         # ========== LAUNCH ARGUMENTS (CORE OVERRIDES) ==========
+        # ROS_DOMAIN_ID isolates this system on the DDS network. Defaults to 11,
+        # but respects an already-exported ROS_DOMAIN_ID and can be overridden with
+        # `ros_domain_id:=<N>`. Set before any node so every process shares the domain.
+        DeclareLaunchArgument(
+            'ros_domain_id',
+            default_value=EnvironmentVariable('ROS_DOMAIN_ID', default_value='11'),
+            description='DDS domain id shared by all nodes (default 11)'
+        ),
+        SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('ros_domain_id')),
+
         DeclareLaunchArgument('config', default_value='raspberry', description='Profile (raspberry/laptop)'),
         DeclareLaunchArgument('conversation_backend', default_value='gemini_live', description='Backend (legacy/gemini_live)'),
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
         DeclareLaunchArgument('audio_device_index', default_value='3', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
         DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
-        
+        DeclareLaunchArgument('namespace', default_value='voice', description='ROS namespace for all nodes (default voice)'),
+
+        # Every node runs under `namespace` (default /voice). Node topic names are
+        # relative, so they resolve under this namespace too (e.g. /voice/robot_commands).
+        GroupAction([
+            PushRosNamespace(LaunchConfiguration('namespace')),
+
         # ========== SERVER NODES ==========
-        
+
         Node(
             package='conversational_server',
             executable='backend_manager_node',
@@ -95,7 +111,7 @@ def generate_launch_description():
             name='gemini_live_node',
             condition=IfCondition(PythonExpression(["'", LaunchConfiguration('conversation_backend'), "' == 'gemini_live'"])),
             parameters=[config_file_path],
-            remappings=[('/audio_raw', '/audio_clean')]
+            remappings=[('audio_raw', 'audio_clean')]
         ),
         
         # ========== CLIENT NODES ==========
@@ -115,7 +131,7 @@ def generate_launch_description():
             executable='vad_node',
             name='vad_node',
             parameters=[config_file_path],
-            remappings=[('/audio_raw', '/audio_clean')]
+            remappings=[('audio_raw', 'audio_clean')]
         ),
 
         Node(
@@ -123,7 +139,7 @@ def generate_launch_description():
             executable='audio_segment_node',
             name='audio_segment_node',
             parameters=[config_file_path],
-            remappings=[('/audio_raw', '/audio_clean')]
+            remappings=[('audio_raw', 'audio_clean')]
         ),
         
         Node(
@@ -193,7 +209,7 @@ def generate_launch_description():
             parameters=[config_file_path, {
                 'custom_models': ','.join([f'{hello_model_path}:wake', f'{goodbye_model_path}:stop']),
             }],
-            remappings=[('/audio_raw', '/audio_clean')]
+            remappings=[('audio_raw', 'audio_clean')]
         ),
 
         Node(
@@ -212,8 +228,9 @@ def generate_launch_description():
 
         Node(
             package='conversational_client',
-            executable='robot_command_executor_node',
-            name='robot_command_executor_node',
+            executable='robot_command_gate_node',
+            name='robot_command_gate_node',
             parameters=[config_file_path]
         ),
+        ]),  # end GroupAction(namespace)
     ])

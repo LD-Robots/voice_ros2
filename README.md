@@ -97,6 +97,10 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
+> **DDS domain:** the launch files put every node on `ROS_DOMAIN_ID=11` by default.
+> For CLI tools in a separate terminal (`ros2 topic echo`, `ros2 node list`, …) to
+> see those nodes, export the same value first: `export ROS_DOMAIN_ID=11`.
+
 ### 5. ReSpeaker Microphone Tuning (Optional)
 If you are using the ReSpeaker USB 4-Mic Array, apply the optimized hardware parameters (such as noise reduction and VAD registers) before starting the system:
 ```bash
@@ -167,6 +171,35 @@ After enrollment, `speaker_id_node` will automatically identify the speaker when
 ## ⚙️ Configuration
 
 ### Launch Parameters
+
+#### Network Domain (ROS_DOMAIN_ID)
+All launch files isolate the system on a DDS domain, defaulting to **11**. The default
+respects an already-exported `ROS_DOMAIN_ID`, and can be overridden per launch:
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    ros_domain_id:=11
+```
+Use the same id (`export ROS_DOMAIN_ID=11`) in any terminal running `ros2` CLI tools.
+
+#### ROS Namespace
+All nodes run under the **`voice`** namespace by default. All topics therefore live
+at `/voice/<topic>` (e.g. `/voice/robot_commands`, `/voice/transcription`).
+
+To use a different namespace:
+```bash
+ros2 launch conversational_server full_system.launch.py \
+    namespace:=my_robot
+```
+
+CLI tools in a separate terminal also need the namespace:
+```bash
+export ROS_DOMAIN_ID=11
+ros2 topic echo /voice/robot_commands
+ros2 node list   # shows /voice/robot_command_gate_node etc.
+```
+
+The motion team must subscribe to `/voice/robot_commands` and `/voice/robot_command_status`.
+See `ROBOT_COMMAND_CONTRACT.md` for the full integration spec.
 
 #### ASR Configuration
 ```bash

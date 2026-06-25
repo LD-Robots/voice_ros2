@@ -1,29 +1,53 @@
 from conversational_client.robot_command_utils import looks_like_robot_command, parse_robot_command
 
 
-def test_parse_move_and_turn_commands():
+def test_parse_motion_team_commands():
     move = parse_robot_command(
-        'Robot, move back 3 steps',
+        'Robot, move forward 3 steps',
         default_steps=1,
         max_steps=20,
         require_direct_robot_address=True,
     )
-    turn = parse_robot_command(
-        'Robot, turn left 90 degrees',
+    raise_hand = parse_robot_command(
+        'Robot, raise your hand',
+        require_direct_robot_address=True,
+    )
+    turn_arround = parse_robot_command(
+        'Robot, turn around',
+        require_direct_robot_address=True,
+    )
+    clap = parse_robot_command(
+        'Robot, clap',
+        require_direct_robot_address=True,
+    )
+    say_hi = parse_robot_command(
+        'Robot, say hi',
         default_steps=1,
         max_steps=20,
         require_direct_robot_address=True,
     )
 
     assert move is not None
-    assert move['intent'] == 'move'
-    assert move['direction'] == 'backward'
+    assert move['command_id'] == 1
+    assert move['command_name'] == 'move_forward'
     assert move['steps'] == 3
 
-    assert turn is not None
-    assert turn['intent'] == 'turn'
-    assert turn['direction'] == 'left'
-    assert turn['parameters']['angle_deg'] == 90
+    assert raise_hand is not None
+    assert raise_hand['command_id'] == 2
+    assert raise_hand['command_name'] == 'raise_hand'
+
+    assert turn_arround is not None
+    assert turn_arround['command_id'] == 3
+    assert turn_arround['command_name'] == 'turn_arround'
+    assert turn_arround['parameters']['angle_deg'] == 180
+
+    assert clap is not None
+    assert clap['command_id'] == 4
+    assert clap['command_name'] == 'clap'
+
+    assert say_hi is not None
+    assert say_hi['command_id'] == 5
+    assert say_hi['command_name'] == 'say_hi'
 
 
 def test_parse_short_addressed_direction_command():
@@ -35,8 +59,7 @@ def test_parse_short_addressed_direction_command():
     )
 
     assert parsed is not None
-    assert parsed['intent'] == 'move'
-    assert parsed['direction'] == 'forward'
+    assert parsed['command_name'] == 'move_forward'
     assert parsed['steps'] == 1
 
 

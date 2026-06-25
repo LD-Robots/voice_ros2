@@ -106,7 +106,7 @@ class ASRNode(Node):
         # Audio subscriber
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            'audio_raw',
             self.audio_callback,
             10
         )
@@ -114,13 +114,13 @@ class ASRNode(Node):
         # VAD subscriber
         self.vad_sub = self.create_subscription(
             Bool,
-            '/voice_activity',
+            'voice_activity',
             self.vad_callback,
             10
         )
         self.backend_sub = self.create_subscription(
             String,
-            '/conversation_backend',
+            'conversation_backend',
             self.backend_callback,
             10
         )
@@ -128,7 +128,7 @@ class ASRNode(Node):
         # LLM response subscriber (anti-echo)
         self.llm_response_sub = self.create_subscription(
             Transcription,
-            '/llm_response',
+            'llm_response',
             self.llm_response_callback,
             10
         )
@@ -136,7 +136,7 @@ class ASRNode(Node):
         # Transcription publisher
         self.transcription_pub = self.create_publisher(
             Transcription,
-            '/transcription',
+            'transcription',
             10
         )
         

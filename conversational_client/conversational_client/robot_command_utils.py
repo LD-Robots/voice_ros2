@@ -17,6 +17,14 @@ NUMBER_WORDS = {
     'saptesprezece': 17, 'optsprezece': 18, 'nouasprezece': 19, 'douazeci': 20,
 }
 
+COMMAND_IDS = {
+    'move_forward': 1,
+    'raise_hand': 2,
+    'turn_arround': 3,
+    'clap': 4,
+    'say_hi': 5,
+}
+
 PREFIXES = (
     'hey robot',
     'hello robot',
@@ -33,71 +41,39 @@ PREFIXES = (
     'hai sa',
 )
 
-STOP_PHRASES = (
-    'stop',
-    'stop now',
-    'halt',
-    'freeze',
-    'cancel',
-    'opreste',
-    'anuleaza',
+MOVE_FORWARD_PATTERNS = (
+    r'^(move|go|walk|step|take|head|advance)\b.*\b(forward|ahead)\b',
+    r'^(forward|ahead)\b',
+    r'^(mergi|du te|du|inainteaza)\b.*\b(inainte|in fata)\b',
+    r'^(inainte|in fata)\b',
 )
 
-MOVE_VERBS = (
-    'move',
-    'go',
-    'walk',
-    'step',
-    'take',
-    'head',
-    'advance',
-    'move forward',
-    'move backward',
-    'mergi',
-    'du te',
-    'du',
-    'inainteaza',
-    'retrage te',
-)
-
-TURN_VERBS = (
-    'turn',
-    'rotate',
-    'spin',
-    'intoarce',
-    'roteste',
-)
-
-RAISE_HANDS_PATTERNS = (
-    r'^(hands|arms) up\b',
+RAISE_HAND_PATTERNS = (
+    r'^(hand|hands|arm|arms) up\b',
     r'^(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b',
-    r'^ridica\b.*\b(mainile|mana|bratele|brat)\b',
+    r'^ridica\b.*\b(mainile|mana|bratul|bratele|brat)\b',
     r'^mainile sus\b',
 )
 
-LOWER_HANDS_PATTERNS = (
-    r'^(lower|drop|put)\b.*\b(hand|hands|arm|arms)\b',
-    r'^(hands|arms) down\b',
-    r'^coboara\b.*\b(mainile|mana|bratele|brat)\b',
-    r'^mainile jos\b',
+TURN_ARROUND_PATTERNS = (
+    r'^(turn|rotate|spin)\b.*\b(around|arround|back)\b',
+    r'^(turn|rotate|spin)\b.*\b(180|one hundred eighty)\b',
+    r'^(turn around|turn arround|spin around|spin arround)\b',
+    r'^(intoarce|roteste)\b.*\b(inapoi|180|o suta optzeci)\b',
 )
 
-WAVE_PATTERNS = (
-    r'^(wave|saluta)\b',
-    r'^wave your hand\b',
-    r'^fa cu mana\b',
+CLAP_PATTERNS = (
+    r'^clap\b',
+    r'^clap\b.*\b(hand|hands)\b',
+    r'^bate\b.*\b(palma|palmele|din palme)\b',
+    r'^aplauda\b',
 )
 
-DANCE_PATTERNS = (
-    r'^(dance|danseaza)\b',
-    r'^(do a|fa un) dans\b',
+SAY_HI_PATTERNS = (
+    r'^(say|tell)\b.*\b(hi|hello|hello there)\b',
+    r'^(say hi|say hello|hello|hi)\b',
+    r'^(saluta|spune salut|zi salut)\b',
 )
-
-FORWARD_PATTERNS = ('forward', 'ahead', 'inainte', 'in fata')
-BACKWARD_PATTERNS = ('backward', 'backwards', 'back', 'inapoi', 'spate')
-LEFT_PATTERNS = ('left', 'stanga')
-RIGHT_PATTERNS = ('right', 'dreapta')
-
 
 def normalize_command_text(text: str) -> str:
     text = text.lower().strip()
@@ -128,10 +104,11 @@ def parse_robot_command(
         return None
 
     parsed = (
-        _parse_stop(body, direct_address)
-        or _parse_behavior(body)
-        or _parse_turn(body)
-        or _parse_move(body, default_steps=default_steps, max_steps=max_steps, direct_address=direct_address)
+        _parse_move_forward(body, default_steps=default_steps, max_steps=max_steps)
+        or _parse_raise_hand(body)
+        or _parse_turn_arround(body)
+        or _parse_clap(body)
+        or _parse_say_hi(body)
     )
     return parsed
 
@@ -156,14 +133,6 @@ def _strip_prefixes(normalized: str) -> str:
                 changed = True
                 break
     return text
-
-
-def _starts_with_phrase(text: str, phrases) -> bool:
-    return any(text == phrase or text.startswith(phrase + ' ') for phrase in phrases)
-
-
-def _contains_phrase(text: str, phrases) -> bool:
-    return any(re.search(rf'\b{re.escape(phrase)}\b', text) for phrase in phrases)
 
 
 def _extract_steps(text: str) -> int:
@@ -193,149 +162,74 @@ def _extract_steps(text: str) -> int:
     return 0
 
 
-def _extract_move_direction(text: str):
-    has_forward = _contains_phrase(text, FORWARD_PATTERNS)
-    has_backward = _contains_phrase(text, BACKWARD_PATTERNS)
-    if has_forward and not has_backward:
-        return 'forward'
-    if has_backward and not has_forward:
-        return 'backward'
-    return None
-
-
-def _extract_turn_direction(text: str):
-    has_left = _contains_phrase(text, LEFT_PATTERNS)
-    has_right = _contains_phrase(text, RIGHT_PATTERNS)
-    if has_left and not has_right:
-        return 'left'
-    if has_right and not has_left:
-        return 'right'
-    return None
-
-
-def _extract_turn_angle(text: str) -> int:
-    match = re.search(r'\b(\d+)\s*(degrees?|deg|grade)\b', text)
-    if match:
-        try:
-            return max(5, min(360, int(match.group(1))))
-        except ValueError:
-            return 90
-
-    words = text.split()
-    for idx, word in enumerate(words):
-        value = NUMBER_WORDS.get(word)
-        if value is None:
-            continue
-        next_word = words[idx + 1] if idx + 1 < len(words) else ''
-        if next_word in ('degree', 'degrees', 'deg', 'grade'):
-            return max(5, min(360, value))
-    return 90
-
-
-def _parse_stop(body: str, direct_address: bool):
-    if not _starts_with_phrase(body, STOP_PHRASES):
-        return None
-    word_count = len(body.split())
-    if word_count > 4 and not direct_address:
-        return None
+def _make_command(command_name: str, *, steps=0, confidence=0.90, parameters=None):
     return {
-        'intent': 'stop',
-        'direction': 'none',
-        'steps': 0,
-        'confidence': 0.98,
-        'parameters': {'reason': 'voice_stop'},
+        'command_id': COMMAND_IDS[command_name],
+        'command_name': command_name,
+        'steps': int(steps),
+        'confidence': float(confidence),
+        'parameters': parameters or {},
     }
 
 
-def _parse_behavior(body: str):
-    for pattern in RAISE_HANDS_PATTERNS:
-        if re.match(pattern, body):
-            return {
-                'intent': 'raise_hands',
-                'direction': 'none',
-                'steps': 0,
-                'confidence': 0.95,
-                'parameters': {'motion': 'upper_body', 'style': 'default'},
-            }
-    for pattern in LOWER_HANDS_PATTERNS:
-        if re.match(pattern, body):
-            return {
-                'intent': 'lower_hands',
-                'direction': 'none',
-                'steps': 0,
-                'confidence': 0.93,
-                'parameters': {'motion': 'upper_body', 'style': 'default'},
-            }
-    for pattern in DANCE_PATTERNS:
-        if re.match(pattern, body):
-            return {
-                'intent': 'dance',
-                'direction': 'none',
-                'steps': 0,
-                'confidence': 0.90,
-                'parameters': {'style': 'default', 'duration_s': 8.0},
-            }
-    for pattern in WAVE_PATTERNS:
-        if re.match(pattern, body):
-            return {
-                'intent': 'wave',
-                'direction': 'none',
-                'steps': 0,
-                'confidence': 0.91,
-                'parameters': {'style': 'greeting'},
-            }
-    return None
+def _matches_any(text: str, patterns) -> bool:
+    return any(re.match(pattern, text) for pattern in patterns)
 
 
-def _parse_turn(body: str):
-    direction = _extract_turn_direction(body)
-    if direction is None:
-        return None
-
-    has_turn_verb = _starts_with_phrase(body, TURN_VERBS)
-    short_directional_turn = len(body.split()) <= 4 and _starts_with_phrase(body, LEFT_PATTERNS + RIGHT_PATTERNS)
-    if not has_turn_verb and not short_directional_turn:
-        return None
-
-    return {
-        'intent': 'turn',
-        'direction': direction,
-        'steps': 0,
-        'confidence': 0.90,
-        'parameters': {
-            'angle_deg': _extract_turn_angle(body),
-            'speed_scale': 1.0,
-        },
-    }
-
-
-def _parse_move(body: str, *, default_steps: int, max_steps: int, direct_address: bool):
-    direction = _extract_move_direction(body)
-    if direction is None:
+def _parse_move_forward(body: str, *, default_steps: int, max_steps: int):
+    if not _matches_any(body, MOVE_FORWARD_PATTERNS):
         return None
 
     steps = _extract_steps(body)
-    word_count = len(body.split())
-    has_move_verb = _starts_with_phrase(body, MOVE_VERBS)
-    short_directional_command = word_count <= 4 and (
-        _starts_with_phrase(body, FORWARD_PATTERNS + BACKWARD_PATTERNS)
-    )
-
-    if not has_move_verb and not short_directional_command:
-        return None
-    if not direct_address and not has_move_verb and steps == 0:
-        return None
-
     if steps <= 0:
         steps = default_steps
     steps = max(1, min(int(steps), max_steps))
-    return {
-        'intent': 'move',
-        'direction': direction,
-        'steps': steps,
-        'confidence': 0.88,
-        'parameters': {
+    return _make_command(
+        'move_forward',
+        steps=steps,
+        confidence=0.94,
+        parameters={
             'step_mode': 'discrete',
             'speed_scale': 1.0,
         },
-    }
+    )
+
+
+def _parse_raise_hand(body: str):
+    if not _matches_any(body, RAISE_HAND_PATTERNS):
+        return None
+    return _make_command(
+        'raise_hand',
+        confidence=0.95,
+        parameters={'motion': 'upper_body', 'style': 'default'},
+    )
+
+
+def _parse_turn_arround(body: str):
+    if not _matches_any(body, TURN_ARROUND_PATTERNS):
+        return None
+    return _make_command(
+        'turn_arround',
+        confidence=0.93,
+        parameters={'angle_deg': 180, 'speed_scale': 1.0},
+    )
+
+
+def _parse_clap(body: str):
+    if not _matches_any(body, CLAP_PATTERNS):
+        return None
+    return _make_command(
+        'clap',
+        confidence=0.95,
+        parameters={'motion': 'upper_body', 'style': 'default'},
+    )
+
+
+def _parse_say_hi(body: str):
+    if not _matches_any(body, SAY_HI_PATTERNS):
+        return None
+    return _make_command(
+        'say_hi',
+        confidence=0.95,
+        parameters={'motion': 'greeting', 'style': 'default'},
+    )

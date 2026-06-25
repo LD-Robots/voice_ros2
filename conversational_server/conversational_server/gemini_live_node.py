@@ -285,30 +285,30 @@ class GeminiLiveNode(Node):
         self._pending_context_update = False  # True when context inject was blocked by active response
 
         # Publishers
-        self.audio_pub = self.create_publisher(Audio, "/audio_out", 10)
-        self.user_audio_segment_pub = self.create_publisher(Audio, "/realtime_user_audio_segment", 10)
-        self.transcription_pub = self.create_publisher(Transcription, "/transcription", 10)
-        self.stream_pub = self.create_publisher(TextChunk, "/llm_stream", 10)
-        self.response_pub = self.create_publisher(Transcription, "/llm_response", 10)
-        self.pause_state_pub = self.create_publisher(Bool, "/conversation_pause", 10)
-        self.tts_stop_pub = self.create_publisher(Bool, "/stop_playback", 10)
-        self.status_pub = self.create_publisher(String, "/gemini_live_status", 10)
-        self.session_pub = self.create_publisher(Bool, "/session_active", 10)
-        self.end_session_pub = self.create_publisher(Bool, "/end_session_external", 10)
+        self.audio_pub = self.create_publisher(Audio, "audio_out", 10)
+        self.user_audio_segment_pub = self.create_publisher(Audio, "realtime_user_audio_segment", 10)
+        self.transcription_pub = self.create_publisher(Transcription, "transcription", 10)
+        self.stream_pub = self.create_publisher(TextChunk, "llm_stream", 10)
+        self.response_pub = self.create_publisher(Transcription, "llm_response", 10)
+        self.pause_state_pub = self.create_publisher(Bool, "conversation_pause", 10)
+        self.tts_stop_pub = self.create_publisher(Bool, "stop_playback", 10)
+        self.status_pub = self.create_publisher(String, "gemini_live_status", 10)
+        self.session_pub = self.create_publisher(Bool, "session_active", 10)
+        self.end_session_pub = self.create_publisher(Bool, "end_session_external", 10)
 
         # Subscriptions
-        self.audio_sub = self.create_subscription(Audio, "/audio_clean", self.audio_callback, 10)
-        self.session_sub = self.create_subscription(Bool, "/session_active", self.session_callback, 10)
-        self.speaking_sub = self.create_subscription(Bool, "/is_speaking", self.speaking_callback, 10)
-        self.stop_sub = self.create_subscription(Bool, "/stop_playback", self.stop_callback, 10)
-        self.progress_sub = self.create_subscription(String, "/audio_playback_progress", self.playback_progress_callback, 10)
-        self.speaker_sub = self.create_subscription(String, "/speaker_id", self.speaker_callback, 10)
-        self.robot_command_sub = self.create_subscription(RobotCommand, "/robot_command", self.robot_command_callback, 10)
-        self.robot_status_sub = self.create_subscription(String, "/robot_command_status", self.robot_status_callback, 10)
-        self.backend_sub = self.create_subscription(String, "/conversation_backend", self.backend_callback, 10)
-        self.person_context_sub = self.create_subscription(String, "/person_context", self.person_context_callback, 10)
-        self.pause_sub = self.create_subscription(Bool, "/conversation_pause", self.pause_callback, 10)
-        self.wake_word_sub = self.create_subscription(WakeWord, "/wake_word", self.wake_word_callback, 10)
+        self.audio_sub = self.create_subscription(Audio, "audio_clean", self.audio_callback, 10)
+        self.session_sub = self.create_subscription(Bool, "session_active", self.session_callback, 10)
+        self.speaking_sub = self.create_subscription(Bool, "is_speaking", self.speaking_callback, 10)
+        self.stop_sub = self.create_subscription(Bool, "stop_playback", self.stop_callback, 10)
+        self.progress_sub = self.create_subscription(String, "audio_playback_progress", self.playback_progress_callback, 10)
+        self.speaker_sub = self.create_subscription(String, "speaker_id", self.speaker_callback, 10)
+        self.robot_command_sub = self.create_subscription(RobotCommand, "robot_commands", self.robot_command_callback, 10)
+        self.robot_status_sub = self.create_subscription(String, "robot_command_status", self.robot_status_callback, 10)
+        self.backend_sub = self.create_subscription(String, "conversation_backend", self.backend_callback, 10)
+        self.person_context_sub = self.create_subscription(String, "person_context", self.person_context_callback, 10)
+        self.pause_sub = self.create_subscription(Bool, "conversation_pause", self.pause_callback, 10)
+        self.wake_word_sub = self.create_subscription(WakeWord, "wake_word", self.wake_word_callback, 10)
 
         self._ws_thread.start()
         self._publish_status("connecting")
@@ -739,13 +739,14 @@ class GeminiLiveNode(Node):
         # Input transcription (user speech)
         input_transcription = server_content.get("inputTranscription")
         if input_transcription:
-            transcript = str(input_transcription.get("text", "") or "").strip()
+            # Gemini streams the input transcription as incremental chunks that already
+            # carry their own spacing (a new word arrives with a leading space, a word
+            # continuation without one). Concatenate raw — do NOT strip per chunk or
+            # insert spaces, otherwise single words get split apart ("robot" -> "ro bot").
+            transcript = str(input_transcription.get("text", "") or "")
             if transcript:
-                if self._current_user_transcript:
-                    self._current_user_transcript += " " + transcript
-                else:
-                    self._current_user_transcript = transcript
-                self.get_logger().debug(f"Gemini Live intermediate word: '{transcript}' (accumulated: '{self._current_user_transcript}')")
+                self._current_user_transcript += transcript
+                self.get_logger().debug(f"Gemini Live intermediate chunk: '{transcript}' (accumulated: '{self._current_user_transcript}')")
 
         # Model turn (assistant response)
         model_turn = server_content.get("modelTurn")
@@ -769,9 +770,10 @@ class GeminiLiveNode(Node):
             self._user_speaking = False
             self._publish_captured_user_audio_segment()
             self._start_user_audio_capture()
-            if self._current_user_transcript:
-                self._handle_input_transcript(self._current_user_transcript)
-                self._current_user_transcript = ""
+            accumulated = self._current_user_transcript.strip()
+            if accumulated:
+                self._handle_input_transcript(accumulated)
+            self._current_user_transcript = ""
             self._handle_turn_complete()
 
     def _handle_output_audio(self, inline_data: dict):

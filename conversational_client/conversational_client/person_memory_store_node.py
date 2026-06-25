@@ -92,33 +92,33 @@ class PersonMemoryStoreNode(Node):
         self.latest_segment = None
         self.pending_enrollment_paths = set()
 
-        self.speaker_sub = self.create_subscription(String, '/speaker_id', self._speaker_callback, 10)
+        self.speaker_sub = self.create_subscription(String, 'speaker_id', self._speaker_callback, 10)
         self.audio_segment_sub = self.create_subscription(
             Audio,
-            '/audio_segment',
+            'audio_segment',
             self._remember_latest_segment,
             10,
         )
         self.realtime_audio_segment_sub = self.create_subscription(
             Audio,
-            '/realtime_user_audio_segment',
+            'realtime_user_audio_segment',
             self._remember_latest_segment,
             10,
         )
         self.transcription_sub = self.create_subscription(
             Transcription,
-            '/attended_transcription',
+            'attended_transcription',
             self._transcription_callback,
             10,
         )
         self.enrollment_status_sub = self.create_subscription(
             String,
-            '/speaker_enrollment_status',
+            'speaker_enrollment_status',
             self._enrollment_status_callback,
             10,
         )
-        self.context_pub = self.create_publisher(String, '/person_context', 10)
-        self.enrollment_request_pub = self.create_publisher(String, '/speaker_enrollment_request', 10)
+        self.context_pub = self.create_publisher(String, 'person_context', 10)
+        self.enrollment_request_pub = self.create_publisher(String, 'speaker_enrollment_request', 10)
 
         self.get_logger().info(f'Person Memory Store started: {self.memory_file}')
 

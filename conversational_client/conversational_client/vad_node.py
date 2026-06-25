@@ -138,7 +138,7 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            'audio_raw',
             self.audio_callback,
             10
         )
@@ -146,14 +146,14 @@ class VADNode(Node):
         # TTS state - when the robot is speaking, ignore VAD
         self.robot_speaking_sub = self.create_subscription(
             Bool,
-            '/is_speaking',
+            'is_speaking',
             self.robot_speaking_callback,
             10
         )
 
         self.wake_word_sub = self.create_subscription(
             WakeWord,
-            '/wake_word',
+            'wake_word',
             self.wake_word_callback,
             10
         )
@@ -161,7 +161,7 @@ class VADNode(Node):
         # Subscriber for session state (from wake_word_node)
         self.session_sub = self.create_subscription(
             Bool,
-            '/session_active',
+            'session_active',
             self.session_callback,
             10
         )
@@ -169,8 +169,8 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         # PUBLISHER
         # ─────────────────────────────────────────────────────────
-        self.vad_pub = self.create_publisher(Bool, '/voice_activity', 10)
-        self.end_session_pub = self.create_publisher(Bool, '/end_session_external', 10)
+        self.vad_pub = self.create_publisher(Bool, 'voice_activity', 10)
+        self.end_session_pub = self.create_publisher(Bool, 'end_session_external', 10)
         
         # ─────────────────────────────────────────────────────────
         # WEBRTC VAD INITIALIZATION

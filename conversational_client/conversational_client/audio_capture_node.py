@@ -54,7 +54,7 @@ class AudioCaptureNode(Node):
         # Calculate block size (frames per chunk)
         self.block_size = int(self.sample_rate * self.chunk_ms / 1000)
         
-        self.audio_pub = self.create_publisher(Audio, '/audio_raw', 10)
+        self.audio_pub = self.create_publisher(Audio, 'audio_raw', 10)
         
         self.stream = None
         self.frame_count = 0

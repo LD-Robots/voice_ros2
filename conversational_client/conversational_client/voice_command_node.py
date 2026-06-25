@@ -2,13 +2,20 @@
 """
 Voice Command Node - Extract robot action intents from speech transcription.
 
+Recognizes one of the 5 supported commands and publishes it to the safety gate.
+It does NOT talk to the motion team directly; the gate
+(robot_command_gate_node) validates and forwards approved commands.
+
+Topic names are relative; under the default `voice` namespace they resolve
+to /voice/... (e.g. /voice/recognized_commands).
+
 Subscribes to:
-  - /transcription (Transcription)
-  - /speaker_id (String)
+  - attended_transcription (Transcription)
+  - speaker_id (String)
 
 Publishes to:
-  - /robot_command (RobotCommand)
-  - /tts_command (String, optional acknowledgement)
+  - recognized_commands (RobotCommand, raw recognizer output -> gate input)
+  - tts_command (String, optional acknowledgement)
 """
 import json
 
@@ -27,10 +34,11 @@ class VoiceCommandNode(Node):
         self.declare_parameter('min_transcription_confidence', 0.40)
         self.declare_parameter('default_steps', 1)
         self.declare_parameter('max_steps', 20)
-        self.declare_parameter('enable_tts_ack', True)
+        self.declare_parameter('enable_tts_ack', False)
         self.declare_parameter('tts_ack_en', 'ack_en')
         self.declare_parameter('tts_ack_ro', 'ack_ro')
-        self.declare_parameter('transcription_topic', '/attended_transcription')
+        self.declare_parameter('transcription_topic', 'attended_transcription')
+        self.declare_parameter('command_topic', 'recognized_commands')
         self.declare_parameter('require_direct_robot_address', True)
 
         self.min_transcription_confidence = float(
@@ -42,6 +50,7 @@ class VoiceCommandNode(Node):
         self.tts_ack_en = str(self.get_parameter('tts_ack_en').value)
         self.tts_ack_ro = str(self.get_parameter('tts_ack_ro').value)
         transcription_topic = str(self.get_parameter('transcription_topic').value)
+        command_topic = str(self.get_parameter('command_topic').value)
         self.require_direct_robot_address = bool(
             self.get_parameter('require_direct_robot_address').value
         )
@@ -56,23 +65,27 @@ class VoiceCommandNode(Node):
         )
         self.speaker_sub = self.create_subscription(
             String,
-            '/speaker_id',
+            'speaker_id',
             self._speaker_callback,
             10
         )
 
         self.command_pub = self.create_publisher(
             RobotCommand,
-            '/robot_command',
+            command_topic,
             10
         )
         self.tts_cmd_pub = self.create_publisher(
             String,
-            '/tts_command',
+            'tts_command',
             10
         )
 
-        self.get_logger().info('Voice Command Node started. Publishing intents to /robot_command')
+        self.command_topic = command_topic
+        self.get_logger().info(
+            f'Voice Command Node started. Publishing recognized commands to {self.command_topic} '
+            f'(safety gate forwards approved commands to /robot_commands).'
+        )
 
     def _speaker_callback(self, msg: String):
         speaker = msg.data.strip()
@@ -84,7 +97,16 @@ class VoiceCommandNode(Node):
             return
 
         if msg.confidence < self.min_transcription_confidence:
+            self.get_logger().debug(
+                f'Ignoring low-confidence transcript from speaker={self.current_speaker}: '
+                f'confidence={msg.confidence:.2f}, text="{text}"'
+            )
             return
+
+        self.get_logger().info(
+            f'Speaker speaking: speaker={self.current_speaker}, text="{text}", '
+            f'confidence={msg.confidence:.2f}'
+        )
 
         parsed = parse_robot_command(
             text,
@@ -97,8 +119,8 @@ class VoiceCommandNode(Node):
 
         cmd = RobotCommand()
         cmd.header.stamp = self.get_clock().now().to_msg()
-        cmd.intent = parsed['intent']
-        cmd.direction = parsed['direction']
+        cmd.command_id = int(parsed['command_id'])
+        cmd.command_name = parsed['command_name']
         cmd.steps = int(parsed['steps'])
         cmd.confidence = float(parsed['confidence'])
         cmd.source_text = text
@@ -113,7 +135,9 @@ class VoiceCommandNode(Node):
             self.tts_cmd_pub.publish(ack)
 
         self.get_logger().info(
-            f'Command detected: intent={cmd.intent}, direction={cmd.direction}, steps={cmd.steps}, speaker={cmd.speaker}'
+            f'Robot command recognized: id={cmd.command_id}, name={cmd.command_name}, '
+            f'steps={cmd.steps}, speaker={cmd.speaker}, topic={self.command_topic}, '
+            f'source="{cmd.source_text}"'
         )
 
 
