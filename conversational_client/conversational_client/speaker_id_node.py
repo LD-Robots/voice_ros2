@@ -34,7 +34,22 @@ from .person_profile_utils import (
     build_unique_speaker_label,
     default_preferred_name_for_voice_label,
     migrate_legacy_auto_voice_labels,
+    write_speaker_profile_sidecar,
 )
+
+import time
+import soundfile as sf
+import torch
+
+class SpeakerCandidate:
+    """Represents a temporary speaker voice candidate for unsupervised enrollment."""
+
+    def __init__(self, candidate_id: str, embedding: torch.Tensor, first_audio: np.ndarray, sample_rate: int):
+        self.candidate_id = candidate_id
+        self.embedding = embedding  # The initial embedding (torch.Tensor)
+        self.audio_segments = [first_audio]  # Stored float32 arrays
+        self.hits = 1
+        self.last_seen = time.monotonic()
 
 try:
     from .speaker_manager import SpeakerManager
@@ -91,6 +106,10 @@ class SpeakerIdNode(Node):
         self.declare_parameter('adaptation_enabled', True)
         self.declare_parameter('adaptation_threshold', 0.60)
         self.declare_parameter('adaptation_rate', 0.90)
+        self.declare_parameter('unsupervised_enrollment_enabled', True)
+        self.declare_parameter('unsupervised_match_threshold', 0.50)
+        self.declare_parameter('min_unsupervised_hits', 3)
+        self.declare_parameter('unsupervised_candidate_timeout', 600.0)
 
         self.enrollment_dir = self.get_parameter('enrollment_dir').value
         self.similarity_threshold = self.get_parameter('similarity_threshold').value
@@ -101,6 +120,12 @@ class SpeakerIdNode(Node):
         self.adaptation_enabled = bool(self.get_parameter('adaptation_enabled').value)
         self.adaptation_threshold = float(self.get_parameter('adaptation_threshold').value)
         self.adaptation_rate = float(self.get_parameter('adaptation_rate').value)
+        self.unsupervised_enrollment_enabled = bool(self.get_parameter('unsupervised_enrollment_enabled').value)
+        self.unsupervised_match_threshold = float(self.get_parameter('unsupervised_match_threshold').value)
+        self.min_unsupervised_hits = int(self.get_parameter('min_unsupervised_hits').value)
+        self.unsupervised_candidate_timeout = float(self.get_parameter('unsupervised_candidate_timeout').value)
+        
+        self.candidates = {}
         self.memory_file = os.path.join(
             str(workspace_root) if workspace_root else os.getcwd(),
             'voices',
@@ -169,16 +194,27 @@ class SpeakerIdNode(Node):
 
         # Check if enrollment folder exists and has files
         if not os.path.isdir(self.enrollment_dir):
-            self.get_logger().warn(
-                f'⚠️ Enrollment folder does not exist: {self.enrollment_dir}'
-            )
-            return
+            try:
+                os.makedirs(self.enrollment_dir, exist_ok=True)
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to create enrollment dir: {e}')
+                return
 
         wav_files = [f for f in os.listdir(self.enrollment_dir) if f.endswith('.wav')]
         if not wav_files:
             self.get_logger().warn(
-                f'⚠️ Enrollment folder is empty: {self.enrollment_dir}'
+                f'⚠️ Enrollment folder is empty: {self.enrollment_dir}. '
+                'Initializing empty SpeakerManager for dynamic/unsupervised enrollment.'
             )
+            try:
+                self.speaker_manager = SpeakerManager(
+                    self.enrollment_dir,
+                    threshold=self.similarity_threshold,
+                    min_margin=self.similarity_margin,
+                )
+                self.db_loaded = False
+            except Exception as e:
+                self.get_logger().error(f'❌ Error initializing SpeakerManager: {e}')
             return
 
         # Initialize SpeakerManager
@@ -237,36 +273,52 @@ class SpeakerIdNode(Node):
         # Speaker identification
         # ─────────────────────────────────────────────────────────
         speaker_name = "Unknown"
+        new_embedding = None
 
-        if self.db_loaded and self.speaker_manager is not None:
+        if self.speaker_manager is not None:
             try:
                 # Identify the speaker (optionally retrieval of embedding for adaptation)
-                if self.adaptation_enabled:
-                    match, new_embedding = self.speaker_manager.identify_and_get_embedding(audio_float)
+                if self.db_loaded:
+                    if self.adaptation_enabled or self.unsupervised_enrollment_enabled:
+                        match, new_embedding = self.speaker_manager.identify_and_get_embedding(audio_float)
+                    else:
+                        match = self.speaker_manager.identify_with_details(audio_float)
+                        new_embedding = None
+                    speaker_name = match.speaker_name
+
+                    # Adapt speaker template if confidence is high
+                    if (self.adaptation_enabled and speaker_name != "Unknown" and
+                            match.best_score >= self.adaptation_threshold and new_embedding is not None):
+                        if self.speaker_manager.adapt_speaker(speaker_name, new_embedding, self.adaptation_rate):
+                            self.get_logger().info(
+                                f'🔄 Adapted voice template for {speaker_name} '
+                                f'(score={match.best_score:.3f}, rate={self.adaptation_rate:.2f})'
+                            )
                 else:
-                    match = self.speaker_manager.identify_with_details(audio_float)
-                    new_embedding = None
+                    # Database is empty. Compute embedding for candidate tracking
+                    if self.unsupervised_enrollment_enabled:
+                        new_embedding = self.speaker_manager._compute_embedding_from_array(audio_float)
+                    match = None
 
-                speaker_name = match.speaker_name
-
-                # Adapt speaker template if confidence is high
-                if (self.adaptation_enabled and speaker_name != "Unknown" and
-                        match.best_score >= self.adaptation_threshold and new_embedding is not None):
-                    if self.speaker_manager.adapt_speaker(speaker_name, new_embedding, self.adaptation_rate):
-                        self.get_logger().info(
-                            f'🔄 Adapted voice template for {speaker_name} '
-                            f'(score={match.best_score:.3f}, rate={self.adaptation_rate:.2f})'
+                # Perform dynamic unsupervised enrollment if enabled and speaker is Unknown
+                if self.unsupervised_enrollment_enabled and speaker_name == "Unknown" and new_embedding is not None:
+                    # Ignore short noise segments
+                    if duration >= 1.0:
+                        promoted_label = self._process_unsupervised_candidate(
+                            audio_float, new_embedding, msg.sample_rate
                         )
-                
+                        if promoted_label:
+                            speaker_name = promoted_label
+
                 # SMART LOGGING:
                 # - Show INFO only if someone is known
                 # - If Unknown, show only DEBUG (to avoid console spam)
-                if speaker_name != "Unknown":
+                if speaker_name != "Unknown" and match is not None:
                     self.get_logger().info(
                         f'🗣️ Speaker identified: {speaker_name} '
                         f'(score={match.best_score:.3f}, reason={match.reason})'
                     )
-                else:
+                elif match is not None:
                     margin = (
                         match.best_score - match.second_best_score
                         if match.second_best_score > -1.0
@@ -284,7 +336,7 @@ class SpeakerIdNode(Node):
                         )
 
             except Exception as e:
-                self.get_logger().error(f'❌ Identification error: {e}')
+                self.get_logger().error(f'❌ Identification/unsupervised error: {e}')
                 speaker_name = "Unknown"
         else:
             self.get_logger().debug(
@@ -500,6 +552,147 @@ class SpeakerIdNode(Node):
             self.get_logger().info(
                 f'Migrated {len(mapping)} legacy auto-enrolled speaker labels to neutral IDs'
             )
+
+    def _process_unsupervised_candidate(self, audio_float, new_embedding, sample_rate) -> str | None:
+        # First, prune expired candidates to avoid memory leaks
+        now = time.monotonic()
+        expired = [
+            cid for cid, cand in self.candidates.items()
+            if (now - cand.last_seen) > self.unsupervised_candidate_timeout
+        ]
+        for cid in expired:
+            del self.candidates[cid]
+
+        # Match against active candidates
+        best_candidate_id = None
+        best_candidate_score = -1.0
+        
+        for cid, candidate in self.candidates.items():
+            score = self.speaker_manager._cosine_similarity(new_embedding, candidate.embedding)
+            if score > best_candidate_score:
+                best_candidate_score = score
+                best_candidate_id = cid
+
+        if best_candidate_id is not None and best_candidate_score >= self.unsupervised_match_threshold:
+            # Match found: update candidate
+            candidate = self.candidates[best_candidate_id]
+            candidate.hits += 1
+            candidate.last_seen = now
+            # Update embedding with moving average
+            candidate.embedding = 0.8 * candidate.embedding + 0.2 * new_embedding
+            candidate.embedding = candidate.embedding / torch.norm(candidate.embedding)
+            
+            # Save audio segment (limit to last 5 segments)
+            candidate.audio_segments.append(audio_float)
+            if len(candidate.audio_segments) > 5:
+                candidate.audio_segments.pop(0)
+
+            self.get_logger().info(
+                f"👤 Unsupervised candidate {best_candidate_id} matched: "
+                f"hits={candidate.hits}, score={best_candidate_score:.3f}"
+            )
+
+            if candidate.hits >= self.min_unsupervised_hits:
+                return self._promote_candidate(candidate, sample_rate)
+        else:
+            # No match: create new candidate
+            candidate_id = f"candidate_{len(self.candidates) + 1:03d}"
+            # Ensure unique ID if somehow collision happens (e.g. after pruning)
+            while candidate_id in self.candidates:
+                candidate_id = f"candidate_{int(time.time() * 1000) % 1000:03d}"
+                
+            self.candidates[candidate_id] = SpeakerCandidate(
+                candidate_id, new_embedding, audio_float, sample_rate
+            )
+            self.get_logger().info(
+                f"👤 Created new unsupervised candidate {candidate_id} from unknown voice"
+            )
+        
+        return None
+
+    def _promote_candidate(self, candidate, sample_rate) -> str:
+        # 1. Build unique speaker label
+        existing_labels = set(self.speaker_manager.get_speakers()) if self.speaker_manager else set()
+        if os.path.isdir(self.enrollment_dir):
+            existing_labels.update(
+                os.path.splitext(name)[0]
+                for name in os.listdir(self.enrollment_dir)
+                if name.endswith('.wav')
+            )
+        voice_label = build_unique_speaker_label(existing_labels)
+
+        # 2. Build and save the wav file
+        os.makedirs(self.enrollment_dir, exist_ok=True)
+        target_wav = os.path.join(self.enrollment_dir, f"{voice_label}.wav")
+        
+        combined_audio = np.concatenate(candidate.audio_segments)
+        # Limit total duration to 15 seconds
+        max_samples = 15 * sample_rate
+        if len(combined_audio) > max_samples:
+            combined_audio = combined_audio[-max_samples:]
+            
+        # Convert float32 back to int16
+        audio_int16 = (combined_audio * 32768.0).astype(np.int16)
+        try:
+            sf.write(target_wav, audio_int16, sample_rate, subtype='PCM_16')
+        except Exception as e:
+            self.get_logger().error(f"❌ Failed to write wav file during promotion: {e}")
+
+        # 3. Save .emb.npy cache
+        target_emb = os.path.join(self.enrollment_dir, f"{voice_label}.emb.npy")
+        try:
+            np.save(target_emb, candidate.embedding.detach().cpu().numpy())
+        except Exception as e:
+            self.get_logger().error(f"❌ Failed to write emb.npy file during promotion: {e}")
+
+        # 4. Save sidecar .profile.json
+        try:
+            write_speaker_profile_sidecar(
+                self.enrollment_dir,
+                voice_label,
+                {
+                    'preferred_name': '',
+                    'preferred_language': '',
+                    'facts': [],
+                    'last_seen': ''
+                }
+            )
+        except Exception as e:
+            self.get_logger().error(f"❌ Failed to write profile sidecar during promotion: {e}")
+
+        # 5. Reload SpeakerManager
+        if self.speaker_manager is None:
+            self.speaker_manager = SpeakerManager(
+                self.enrollment_dir,
+                threshold=self.similarity_threshold,
+                min_margin=self.similarity_margin,
+            )
+        else:
+            self.speaker_manager.reload()
+        self.db_loaded = True
+
+        # 6. Publish enrollment status to notify memory store (to register in person_memory.json)
+        self._publish_enrollment_status(
+            success=True,
+            reason='',
+            request_id=f"unsupervised_{int(time.time())}",
+            preferred_name='',
+            preferred_language='',
+            facts=[],
+            source_wav='',
+            voice_label=voice_label,
+            target_wav=target_wav,
+        )
+
+        # Remove candidate from candidates
+        if candidate.candidate_id in self.candidates:
+            del self.candidates[candidate.candidate_id]
+
+        self.get_logger().info(
+            f"🎉 Promoted unsupervised candidate {candidate.candidate_id} "
+            f"to registered speaker: {voice_label}!"
+        )
+        return voice_label
 
 
 # ═══════════════════════════════════════════════════════════════════
