@@ -59,6 +59,98 @@ except ImportError:
     WHISPER_AVAILABLE = False
     print("⚠️ faster-whisper not installed. Run: pip install faster-whisper")
 
+# OpenVINO GenAI for ASR
+try:
+    import openvino_genai as ov_genai
+    OPENVINO_AVAILABLE = True
+except ImportError:
+    OPENVINO_AVAILABLE = False
+    print("⚠️ openvino-genai not installed. OpenVINO ASR disabled.")
+
+def _find_workspace_root():
+    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+        for parent in [base] + list(base.parents):
+            if parent.name == 'voice_ros2':
+                return parent
+    return None
+
+
+ENGLISH_WORDS = {
+    'the', 'be', 'to', 'of', 'and', 'a', 'in', 'that', 'have', 'i', 'it', 'for', 'not', 
+    'on', 'with', 'he', 'as', 'you', 'do', 'at', 'this', 'but', 'his', 'by', 'from', 
+    'they', 'we', 'say', 'her', 'she', 'or', 'an', 'will', 'my', 'one', 'all', 'would', 
+    'there', 'their', 'what', 'so', 'up', 'out', 'if', 'about', 'who', 'get', 'which', 
+    'go', 'me', 'when', 'make', 'can', 'like', 'time', 'no', 'just', 'him', 'know', 
+    'take', 'people', 'into', 'year', 'your', 'good', 'some', 'could', 'them', 'see', 
+    'other', 'than', 'then', 'now', 'look', 'only', 'come', 'its', 'over', 'think', 
+    'also', 'back', 'after', 'use', 'two', 'how', 'our', 'work', 'first', 'well', 
+    'way', 'even', 'new', 'want', 'because', 'any', 'these', 'give', 'day', 'most', 
+    'us', 'hello', 'robot', 'bye', 'goodbye', 'okay', 'are', 'am', 'is', 'was', 'were', 
+    'been', 'has', 'had', 'does', 'did', 'doing', 'shall', 'should', 'may', 'might', 
+    'must', 'please', 'thanks', 'thank'
+}
+
+ROMANIAN_WORDS = {
+    'de', 'si', 'la', 'o', 'un', 'in', 'sa', 'se', 'pe', 'cu', 'mai', 'ca', 'este', 
+    'pentru', 'sunt', 'am', 'au', 'oameni', 'care', 'ce', 'din', 'dar', 'nu', 'da', 
+    'va', 'fi', 'fost', 'sau', 'prin', 'ne', 'este', 'era', 'cum', 'cand', 'unde', 
+    'cine', 'de ce', 'poti', 'salut', 'buna', 'bine', 'multumesc', 'merci', 'gata', 
+    'acum', 'deocamdata', 'robotul', 'robotule', 'pa', 'stai', 'opreste', 'anuleaza', 
+    'ajut', 'vreau', 'vei', 'fac', 'faci', 'revedere', 'vedem', 'mult', 'multumesc', 
+    'frumos', 'noi', 'voi', 'ei', 'ele', 'mie', 'tine', 'lui', 'ei', 'noua', 'vouam', 'lor'
+}
+
+
+def remove_consecutive_repetitions(text: str, max_repeats: int = 3) -> str:
+    """
+    Remove consecutive repeating patterns (1 to 4 words) from text.
+    E.g. 'am dat, am dat, am dat, am dat' -> 'am dat, am dat, am dat'
+    """
+    # Clean up multiple spaces
+    text = re.sub(r'\s+', ' ', text).strip()
+    words = text.split()
+    if not words:
+        return text
+
+    n = len(words)
+    cleaned = []
+    i = 0
+    while i < n:
+        matched = False
+        # Try pattern lengths from 4 down to 1
+        for pattern_len in range(4, 0, -1):
+            if i + pattern_len > n:
+                continue
+            pattern = words[i : i + pattern_len]
+            
+            # Check how many times this pattern repeats consecutively
+            repeats = 1
+            while True:
+                next_start = i + repeats * pattern_len
+                next_end = next_start + pattern_len
+                if next_end > n:
+                    break
+                if words[next_start:next_end] == pattern:
+                    repeats += 1
+                else:
+                    break
+            
+            if repeats > max_repeats:
+                cleaned.extend(pattern * max_repeats)
+                i += repeats * pattern_len
+                matched = True
+                break
+        
+        if not matched:
+            cleaned.append(words[i])
+            i += 1
+            
+    return " ".join(cleaned)
+
+
+
+
+
 
 class ASRNode(Node):
     def __init__(self):
@@ -76,6 +168,8 @@ class ASRNode(Node):
         self.declare_parameter('beam_size', 5)
         self.declare_parameter('vad_min_silence_ms', 300)
         self.declare_parameter('warmup_enabled', True)
+        self.declare_parameter('repetition_penalty', 1.0)
+        self.declare_parameter('initial_prompt', '')
         self.declare_parameter('eleven_api_key_env', 'ELEVENLABS_API_KEY')
         self.declare_parameter('eleven_model_id', 'scribe_v2')
         self.declare_parameter('eleven_language_code', '')
@@ -87,6 +181,10 @@ class ASRNode(Node):
         self.declare_parameter('eleven_prefer_raw_pcm', True)
         self.declare_parameter('eleven_min_diarized_words', 2)
         self.declare_parameter('eleven_allowed_language_codes', 'en,eng,ro,ron,rum')
+        
+        self.declare_parameter('cpu_threads', 4)
+        self.declare_parameter('openvino_model', 'voices/whisper-base-int8-ov')
+        self.declare_parameter('openvino_device', 'CPU')
         
         # Anti-echo textual parameters
         self.declare_parameter('echo_threshold', 85)  # Similarity % to consider as echo
@@ -101,7 +199,10 @@ class ASRNode(Node):
         self.language = self.get_parameter('language').value or None
         self.beam_size = self.get_parameter('beam_size').value
         self.vad_min_silence_ms = self.get_parameter('vad_min_silence_ms').value
+        self.repetition_penalty = float(self.get_parameter('repetition_penalty').value or 1.0)
+        self.initial_prompt = self.get_parameter('initial_prompt').value or None
         self.warmup_enabled = self.get_parameter('warmup_enabled').value
+        self.cpu_threads = int(self.get_parameter('cpu_threads').value or 4)
         self.eleven_api_key_env = str(self.get_parameter('eleven_api_key_env').value)
         self.eleven_model_id = str(self.get_parameter('eleven_model_id').value)
         self.eleven_language_code = str(self.get_parameter('eleven_language_code').value or '')
@@ -132,7 +233,20 @@ class ASRNode(Node):
         self.echo_min_length = self.get_parameter('echo_min_length').value
         self.echo_enabled = self.get_parameter('echo_enabled').value and RAPIDFUZZ_AVAILABLE
         
+        self.openvino_model = str(self.get_parameter('openvino_model').value or 'voices/whisper-base-int8-ov')
+        self.openvino_device = str(self.get_parameter('openvino_device').value or 'CPU')
+        
+        workspace_root = _find_workspace_root()
+        voices_dir = workspace_root / 'voices' if workspace_root else Path.cwd() / 'voices'
+        
+        if os.path.isabs(self.openvino_model):
+            self.openvino_model_path = self.openvino_model
+        else:
+            self.openvino_model_path = str(voices_dir / os.path.basename(self.openvino_model))
+        
         self.model = None
+        self.ov_pipeline = None
+        
         if self.provider == 'elevenlabs':
             if not REQUESTS_AVAILABLE:
                 self.get_logger().error('requests not installed - required for ElevenLabs STT!')
@@ -148,16 +262,29 @@ class ASRNode(Node):
                 f'✅ ASR initialized with ElevenLabs STT: model={self.eleven_model_id}, '
                 f'diarize={self.eleven_diarize}'
             )
-        elif not WHISPER_AVAILABLE:
-            self.get_logger().error('faster-whisper not installed!')
-            raise RuntimeError('faster-whisper not available')
+        elif self.provider == 'openvino':
+            if not OPENVINO_AVAILABLE:
+                self.get_logger().error('openvino-genai not installed!')
+                raise RuntimeError('openvino-genai not available')
+            self.get_logger().info(f'⏳ Loading OpenVINO Whisper model from {self.openvino_model_path} on {self.openvino_device}...')
+            self.ov_pipeline = ov_genai.WhisperPipeline(self.openvino_model_path, self.openvino_device)
+            self.get_logger().info('✅ OpenVINO Whisper model loaded!')
+            
+            # Warmup on startup
+            self._warmed_up = False
+            self._ensure_warm()
         else:
+            if not WHISPER_AVAILABLE:
+                self.get_logger().error('faster-whisper not installed!')
+                raise RuntimeError('faster-whisper not available')
+            
             # Initialize Whisper model
-            self.get_logger().debug(f'Loading Whisper model: {model_size} on {device}...')
+            self.get_logger().debug(f'Loading Whisper model: {model_size} on {device} (threads={self.cpu_threads})...')
             self.model = WhisperModel(
                 model_size,
                 device=device,
-                compute_type=compute_type
+                compute_type=compute_type,
+                cpu_threads=self.cpu_threads
             )
             self.get_logger().debug('✅ Whisper model loaded!')
 
@@ -371,7 +498,9 @@ class ASRNode(Node):
             # Reset cursor to the beginning of the buffer
             wav_io.seek(0)
             
-            if self.provider == 'elevenlabs':
+            if self.provider == 'openvino':
+                text, lang, confidence = self._transcribe_openvino(audio_data, self.language)
+            elif self.provider == 'elevenlabs':
                 result = self._run_elevenlabs(wav_io, audio_data)
                 text = result["text"]
                 lang = result["lang"]
@@ -398,6 +527,7 @@ class ASRNode(Node):
                         raise
             
             if text:
+                text = remove_consecutive_repetitions(text)
                 self.get_logger().info(f'🧏 [{lang}] {text}')
 
                 if self.provider == 'elevenlabs' and not self._is_allowed_eleven_language(lang):
@@ -444,8 +574,17 @@ class ASRNode(Node):
                 wav.writeframes(silence.tobytes())
             wav_io.seek(0)
 
-            # Dummy transcription to force full model load
-            self.model.transcribe(wav_io, language="en", beam_size=1)
+            if self.provider == 'openvino':
+                # Warm up OpenVINO
+                config = self.ov_pipeline.get_generation_config()
+                config.language = "<|en|>"
+                config.task = "transcribe"
+                # Generate on 0.5s of silence
+                raw_speech = [0.0] * 8000
+                self.ov_pipeline.generate(raw_speech, config)
+            else:
+                # Dummy transcription to force full model load
+                self.model.transcribe(wav_io, language="en", beam_size=1)
             
             elapsed = time.perf_counter() - start
             self._warmed_up = True
@@ -458,6 +597,9 @@ class ASRNode(Node):
         Audio source can be a path (str) or file-like object (BytesIO).
         Returns: (text, lang_out, lang_prob, score)
         """
+        if not language or str(language).strip() == "":
+            language = None
+
         # If it is a stream, make sure it is at the beginning
         if hasattr(audio_source, 'seek'):
             audio_source.seek(0)
@@ -472,12 +614,31 @@ class ASRNode(Node):
             no_speech_threshold=0.5,
             log_prob_threshold=-0.7,
             condition_on_previous_text=False,
+            repetition_penalty=self.repetition_penalty,
+            initial_prompt=self.initial_prompt,
         )
         segs = list(segments)
-        text = "".join(s.text for s in segs).strip()
+        filtered_segs = []
+        for s in segs:
+            s_text = (s.text or "").strip()
+            s_avg_lp = getattr(s, "avg_logprob", -5.0)
+            if s_avg_lp is None:
+                s_avg_lp = -5.0
+            s_no_speech = getattr(s, "no_speech_prob", 0.0)
+            if s_no_speech is None:
+                s_no_speech = 0.0
+            
+            self.get_logger().info(f'🔍 Segment: "{s_text}" | avg_logprob={s_avg_lp:.3f} | no_speech_prob={s_no_speech:.3f}')
+            
+            if s_no_speech > 0.45 or s_avg_lp < -1.15:
+                self.get_logger().warn(f'🚫 Ignored low-confidence segment/hallucination: "{s_text}"')
+                continue
+            filtered_segs.append(s)
+
+        text = "".join(s.text for s in filtered_segs).strip()
         
-        if segs:
-            vals = [getattr(s, "avg_logprob", -5.0) if getattr(s, "avg_logprob", None) is not None else -5.0 for s in segs]
+        if filtered_segs:
+            vals = [getattr(s, "avg_logprob", -5.0) if getattr(s, "avg_logprob", None) is not None else -5.0 for s in filtered_segs]
             avg_lp = sum(vals) / len(vals)
         else:
             avg_lp = -9.0
@@ -485,6 +646,132 @@ class ASRNode(Node):
         out_lang = info.language or (language or "en")
         prob = float(getattr(info, "language_probability", 0.0) or 0.0)
         return text, out_lang, prob, score
+
+    def _transcribe_openvino(self, audio_data: np.ndarray, language: str):
+        """Transcribe audio using OpenVINO GenAI WhisperPipeline."""
+        if self.ov_pipeline is None:
+            raise RuntimeError("OpenVINO pipeline is not initialized")
+
+        # Convert int16 numpy array to float32 normalized [-1.0, 1.0]
+        audio_float32 = audio_data.astype(np.float32) / 32768.0
+        raw_speech = audio_float32.tolist()
+
+        config = self.ov_pipeline.get_generation_config()
+        
+        # Apply configured beam size (num_beams)
+        if hasattr(self, 'beam_size') and self.beam_size is not None:
+            config.num_beams = self.beam_size
+        else:
+            config.num_beams = 1
+        
+        # repetition_penalty is only supported when num_beams == 1 (greedy search) in OpenVINO GenAI
+        if config.num_beams == 1 and hasattr(self, 'repetition_penalty') and self.repetition_penalty is not None:
+            config.repetition_penalty = self.repetition_penalty
+        else:
+            config.repetition_penalty = 1.0
+        
+        # OpenVINO Whisper expects language in "<|lang|>" format
+        config.task = "transcribe"
+        if hasattr(self, 'initial_prompt') and self.initial_prompt:
+            config.initial_prompt = self.initial_prompt
+
+        if not language or language == 'ro_en':
+            # 1. Run a fast auto-detect pass first
+            config.language = None
+            start_first = time.perf_counter()
+            res_first = self.ov_pipeline.generate(raw_speech, config)
+            duration_first = time.perf_counter() - start_first
+            first_text = (res_first.texts[0] if hasattr(res_first, "texts") and res_first.texts else "").strip()
+            
+            detected_lang = getattr(res_first, "language", "en") or "en"
+            detected_lang = detected_lang.strip("<|>")
+            
+            self.get_logger().info(f"⚡ [OpenVINO Fast Pass] Transcribed in {duration_first*1000:.1f}ms: '{first_text}' (detected language: '{detected_lang}')")
+
+            # Check if we can trust this first pass
+            lang_heuristic = self._detect_text_language(first_text, detected_lang)
+            if lang_heuristic in ['en', 'ro'] and first_text:
+                first_words = re.findall(r'\b\w+\b', first_text.lower())
+                word_matches = sum(1 for w in set(first_words) if w in (ENGLISH_WORDS if lang_heuristic == 'en' else ROMANIAN_WORDS))
+                
+                # If we have matches, accept it immediately (Fast Path)
+                if word_matches > 0:
+                    self.get_logger().info(f"🚀 [OpenVINO Fast Path] Language '{lang_heuristic}' confirmed with {word_matches} dictionary matches. Skipping fallbacks!")
+                    return first_text, lang_heuristic, 1.0
+
+            # 2. If first pass did not confirm target language with dictionary matches, run bilingual fallbacks
+            self.get_logger().info("⚠️ [OpenVINO] Fast pass language check failed. Running bilingual fallbacks...")
+            
+            # 2a. Force English
+            config.language = "<|en|>"
+            start_en = time.perf_counter()
+            res_en = self.ov_pipeline.generate(raw_speech, config)
+            duration_en = time.perf_counter() - start_en
+            en_text = (res_en.texts[0] if hasattr(res_en, "texts") and res_en.texts else "").strip()
+            self.get_logger().info(f"⚡ [OpenVINO Fallback EN] Transcribed in {duration_en*1000:.1f}ms: '{en_text}'")
+
+            # 2b. Force Romanian
+            config.language = "<|ro|>"
+            start_ro = time.perf_counter()
+            res_ro = self.ov_pipeline.generate(raw_speech, config)
+            duration_ro = time.perf_counter() - start_ro
+            ro_text = (res_ro.texts[0] if hasattr(res_ro, "texts") and res_ro.texts else "").strip()
+            self.get_logger().info(f"⚡ [OpenVINO Fallback RO] Transcribed in {duration_ro*1000:.1f}ms: '{ro_text}'")
+
+            # Match and decide using the exact same logic as legacy _transcribe_ro_en
+            if not en_text and ro_text:
+                text = ro_text
+                lang = self._detect_text_language(ro_text, "ro")
+            elif not ro_text and en_text:
+                text = en_text
+                lang = self._detect_text_language(en_text, "en")
+            elif not en_text and not ro_text:
+                text = ""
+                lang = "en"
+            else:
+                en_lang_detected = self._detect_text_language(en_text, "en")
+                ro_lang_detected = self._detect_text_language(ro_text, "ro")
+                
+                # If both agree on English, use English
+                if en_lang_detected == "en" and ro_lang_detected == "en":
+                    text = en_text
+                    lang = "en"
+                # If both agree on Romanian, use Romanian
+                elif en_lang_detected == "ro" and ro_lang_detected == "ro":
+                    text = ro_text
+                    lang = "ro"
+                else:
+                    en_words = re.findall(r'\b\w+\b', en_text.lower())
+                    ro_words = re.findall(r'\b\w+\b', ro_text.lower())
+                    en_count = sum(1 for w in set(en_words) if w in ENGLISH_WORDS)
+                    ro_count = sum(1 for w in set(ro_words) if w in ROMANIAN_WORDS)
+                    
+                    self.get_logger().info(f"📊 Dictionary matches: EN={en_count}, RO={ro_count}")
+                    
+                    if ro_count > en_count:
+                        text = ro_text
+                        lang = "ro"
+                    else:
+                        text = en_text
+                        lang = "en"
+        else:
+            config.language = f"<|{language}|>"
+            start_time = time.perf_counter()
+            result = self.ov_pipeline.generate(raw_speech, config)
+            duration = time.perf_counter() - start_time
+
+            text = result.texts[0] if hasattr(result, "texts") and result.texts else ""
+            text = (text or "").strip()
+            
+            detected_lang = getattr(result, "language", language) or language
+            detected_lang = detected_lang.strip("<|>")
+            
+            self.get_logger().info(
+                f"⚡ [OpenVINO] Transcribed in {duration*1000:.1f}ms: '{text}' (detected language: '{detected_lang}')"
+            )
+            lang = self._detect_text_language(text, language)
+
+        return text, lang, 1.0
 
     def _run_elevenlabs(self, audio_source, audio_pcm: np.ndarray | None = None):
         """Transcribe one utterance with ElevenLabs Scribe v2."""
@@ -634,6 +921,27 @@ class ASRNode(Node):
             f'speakers={speaker_count}, share={dominant_share:.2f}'
         )
 
+    def _detect_text_language(self, text: str, default_lang: str) -> str:
+        """Heuristic language detection based on common vocabulary."""
+        text_lower = (text or '').lower()
+        normalized = ''.join(
+            c for c in unicodedata.normalize('NFD', text_lower)
+            if unicodedata.category(c) != 'Mn'
+        )
+        
+        words = re.findall(r'\b\w+\b', normalized)
+        if not words:
+            return default_lang
+            
+        en_count = sum(1 for w in words if w in ENGLISH_WORDS)
+        ro_count = sum(1 for w in words if w in ROMANIAN_WORDS)
+        
+        if en_count > ro_count:
+            return 'en'
+        elif ro_count > en_count:
+            return 'ro'
+        return default_lang
+
     def _transcribe_ro_en(self, audio_source):
         """
         Strict EN/RO transcription -> select the best result.
@@ -651,9 +959,34 @@ class ASRNode(Node):
         en_text, _, _, en_score = safe("en")
         ro_text, _, _, ro_score = safe("ro")
         
-        if (ro_score > en_score) and ro_text:
+        if not en_text and ro_text:
+            lang = self._detect_text_language(ro_text, "ro")
+            return {"text": ro_text, "lang": lang, "language_probability": 1.0}
+        if not ro_text and en_text:
+            lang = self._detect_text_language(en_text, "en")
+            return {"text": en_text, "lang": lang, "language_probability": 1.0}
+        if not en_text and not ro_text:
+            return {"text": "", "lang": "en", "language_probability": 0.0}
+
+        en_lang_detected = self._detect_text_language(en_text, "en")
+        ro_lang_detected = self._detect_text_language(ro_text, "ro")
+        
+        # If both agree on English, use English
+        if en_lang_detected == "en" and ro_lang_detected == "en":
+            return {"text": en_text, "lang": "en", "language_probability": 1.0}
+            
+        # If both agree on Romanian, use Romanian
+        if en_lang_detected == "ro" and ro_lang_detected == "ro":
+            return {"text": ro_text, "lang": "ro", "language_probability": 1.0}
+            
+        # Fallback to score comparison with cross-check
+        if ro_score > en_score:
+            if self._detect_text_language(ro_text, "ro") == "en":
+                return {"text": en_text, "lang": "en", "language_probability": 1.0}
             return {"text": ro_text, "lang": "ro", "language_probability": 1.0}
         else:
+            if self._detect_text_language(en_text, "en") == "ro":
+                return {"text": ro_text, "lang": "ro", "language_probability": 1.0}
             return {"text": en_text, "lang": "en", "language_probability": 1.0}
 
 

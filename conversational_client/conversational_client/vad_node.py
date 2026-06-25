@@ -320,6 +320,10 @@ class VADNode(Node):
         
         audio = np.array(msg.data, dtype=np.int16)
         
+        # Remove DC offset to improve VAD accuracy
+        if len(audio) > 0:
+            audio = audio - int(np.mean(audio))
+            
         # Detect voice
         has_voice = self._detect_voice(audio)
         
@@ -364,6 +368,13 @@ class VADNode(Node):
         Detect whether audio contains voice.
         Uses ReSpeaker Hardware, WebRTC VAD, or falls back to energy.
         """
+        # Calculate RMS energy first
+        rms = np.sqrt(np.mean(audio.astype(np.float32) ** 2))
+        
+        # If the energy is below the threshold, it cannot be speech.
+        # This prevents WebRTC VAD from falsely triggering on background hum/static.
+        if rms < self.energy_threshold:
+            return False
         
         # ─────────────────────────────────────────────────────
         # METHOD 0: Hardware VAD (most efficient)
@@ -385,15 +396,14 @@ class VADNode(Node):
                 if frame_len == 320:  # 20ms la 16kHz
                     return self.vad.is_speech(audio_bytes, self.sample_rate)
                 else:
-                    # Energy fallback for non-standard lengths
-                    return self._energy_based_detection(audio)
+                    return True # Energy is already verified > threshold
             except Exception:
-                return self._energy_based_detection(audio)
+                return True
         else:
             # ─────────────────────────────────────────────────────
             # METHOD 2: RMS Energy (simple fallback)
             # ─────────────────────────────────────────────────────
-            return self._energy_based_detection(audio)
+            return True
     
     def _energy_based_detection(self, audio: np.ndarray) -> bool:
         """Simple detection based on audio energy (RMS)."""

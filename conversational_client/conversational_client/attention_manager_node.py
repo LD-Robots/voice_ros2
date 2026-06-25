@@ -729,61 +729,119 @@ class AttentionManagerNode(Node):
             'not for the robot. For corrections like "you ignored that" or "it did not respond", respond. '
             'Return compact JSON. Do not include hidden chain-of-thought; provide a concise professional rationale.'
         )
-        body = {
-            'model': self.llm_address_router_model,
-            'instructions': instructions,
-            'input': [{
-                'role': 'user',
-                'content': json.dumps(router_input, ensure_ascii=False),
-            }],
-            'max_output_tokens': 700,
-            'store': False,
-            'text': {
-                'format': {
-                    'type': 'json_schema',
-                    'name': 'address_router_decision',
-                    'strict': True,
-                    'schema': {
-                        'type': 'object',
-                        'properties': {
-                            'respond': {'type': 'boolean'},
-                            'confidence': {'type': 'number'},
-                            'category': {
-                                'type': 'string',
-                                'enum': [
-                                    'direct_request',
-                                    'implicit_address',
-                                    'answer_to_assistant',
-                                    'router_correction',
-                                    'robot_control',
-                                    'side_conversation',
-                                    'fragment_or_noise',
-                                    'uncertain',
-                                ],
+        is_reasoning_model = str(self.llm_address_router_model).startswith(('gpt-5', 'o'))
+        if is_reasoning_model:
+            url = 'https://api.openai.com/v1/responses'
+            body = {
+                'model': self.llm_address_router_model,
+                'instructions': instructions,
+                'input': [{
+                    'role': 'user',
+                    'content': json.dumps(router_input, ensure_ascii=False),
+                }],
+                'max_output_tokens': 700,
+                'store': False,
+                'text': {
+                    'format': {
+                        'type': 'json_schema',
+                        'name': 'address_router_decision',
+                        'strict': True,
+                        'schema': {
+                            'type': 'object',
+                            'properties': {
+                                'respond': {'type': 'boolean'},
+                                'confidence': {'type': 'number'},
+                                'category': {
+                                    'type': 'string',
+                                    'enum': [
+                                        'direct_request',
+                                        'implicit_address',
+                                        'answer_to_assistant',
+                                        'router_correction',
+                                        'robot_control',
+                                        'side_conversation',
+                                        'fragment_or_noise',
+                                        'uncertain',
+                                    ],
+                                },
+                                'rationale': {'type': 'string'},
+                                'evidence': {'type': 'string'},
+                                'suggested_handling': {'type': 'string'},
                             },
-                            'rationale': {'type': 'string'},
-                            'evidence': {'type': 'string'},
-                            'suggested_handling': {'type': 'string'},
+                            'required': [
+                                'respond',
+                                'confidence',
+                                'category',
+                                'rationale',
+                                'evidence',
+                                'suggested_handling',
+                            ],
+                            'additionalProperties': False,
                         },
-                        'required': [
-                            'respond',
-                            'confidence',
-                            'category',
-                            'rationale',
-                            'evidence',
-                            'suggested_handling',
-                        ],
-                        'additionalProperties': False,
                     },
                 },
-            },
-        }
-        if self.llm_address_router_reasoning_effort:
-            body['reasoning'] = {'effort': self.llm_address_router_reasoning_effort}
+            }
+            if self.llm_address_router_reasoning_effort:
+                body['reasoning'] = {'effort': self.llm_address_router_reasoning_effort}
+        else:
+            url = 'https://api.openai.com/v1/chat/completions'
+            body = {
+                'model': self.llm_address_router_model,
+                'messages': [
+                    {
+                        'role': 'system',
+                        'content': instructions,
+                    },
+                    {
+                        'role': 'user',
+                        'content': json.dumps(router_input, ensure_ascii=False),
+                    }
+                ],
+                'max_tokens': 700,
+                'response_format': {
+                    'type': 'json_schema',
+                    'json_schema': {
+                        'name': 'address_router_decision',
+                        'strict': True,
+                        'schema': {
+                            'type': 'object',
+                            'properties': {
+                                'respond': {'type': 'boolean'},
+                                'confidence': {'type': 'number'},
+                                'category': {
+                                    'type': 'string',
+                                    'enum': [
+                                        'direct_request',
+                                        'implicit_address',
+                                        'answer_to_assistant',
+                                        'router_correction',
+                                        'robot_control',
+                                        'side_conversation',
+                                        'fragment_or_noise',
+                                        'uncertain',
+                                    ],
+                                },
+                                'rationale': {'type': 'string'},
+                                'evidence': {'type': 'string'},
+                                'suggested_handling': {'type': 'string'},
+                            },
+                            'required': [
+                                'respond',
+                                'confidence',
+                                'category',
+                                'rationale',
+                                'evidence',
+                                'suggested_handling',
+                            ],
+                            'additionalProperties': False,
+                        },
+                    },
+                },
+            }
 
         try:
             response = requests.post(
-                'https://api.openai.com/v1/responses',
+                url,
                 headers={
                     'Authorization': f'Bearer {self.openai_api_key}',
                     'Content-Type': 'application/json',
@@ -861,6 +919,11 @@ class AttentionManagerNode(Node):
 
     @staticmethod
     def _extract_response_text(payload: dict) -> str:
+        if 'choices' in payload:
+            try:
+                return str(payload['choices'][0]['message']['content'] or '').strip()
+            except (KeyError, IndexError):
+                pass
         output_text = str(payload.get('output_text', '') or '').strip()
         if output_text:
             return output_text

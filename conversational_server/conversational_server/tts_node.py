@@ -19,6 +19,7 @@ from conversational_interfaces.msg import Transcription, TextChunk, Audio
 from std_msgs.msg import Bool, String
 import asyncio
 import os
+import subprocess
 import numpy as np
 import threading
 import queue
@@ -34,6 +35,12 @@ try:
     DOTENV_AVAILABLE = True
 except ImportError:
     DOTENV_AVAILABLE = False
+
+try:
+    from kokoro_onnx import Kokoro
+    KOKORO_AVAILABLE = True
+except ImportError:
+    KOKORO_AVAILABLE = False
 
 try:
     import requests
@@ -100,6 +107,17 @@ class TTSNode(Node):
         self.declare_parameter('eleven_style', 0.35)
         self.declare_parameter('eleven_use_speaker_boost', True)
         self.declare_parameter('fallback_to_edge', True)
+        self.declare_parameter('use_static_audio', True)
+        self.declare_parameter('piper_model_en', 'en_US-lessac-medium.onnx')
+        self.declare_parameter('piper_model_ro', 'ro_RO-mihai-medium.onnx')
+        self.declare_parameter('piper_length_scale', 1.0)
+        self.declare_parameter('piper_sentence_silence', 0.2)
+        self.declare_parameter('piper_noise_scale', 0.667)
+        self.declare_parameter('piper_noise_w', 0.8)
+        self.declare_parameter('kokoro_model', 'voices/kokoro-v1.0.onnx')
+        self.declare_parameter('kokoro_voices', 'voices/voices-v1.0.bin')
+        self.declare_parameter('kokoro_voice_en', 'af_sarah')
+        self.declare_parameter('kokoro_speed', 1.0)
         
         self.provider = str(self.get_parameter('provider').value or 'edge').strip().lower()
         self.voice_en = self.get_parameter('voice_en').value
@@ -132,6 +150,42 @@ class TTSNode(Node):
             self.get_parameter('eleven_use_speaker_boost').value
         )
         self.fallback_to_edge = bool(self.get_parameter('fallback_to_edge').value)
+        self.use_static_audio = bool(self.get_parameter('use_static_audio').value)
+        
+        self.piper_model_en = str(self.get_parameter('piper_model_en').value or 'en_US-lessac-medium.onnx')
+        self.piper_model_ro = str(self.get_parameter('piper_model_ro').value or 'ro_RO-mihai-medium.onnx')
+        self.piper_length_scale = float(self.get_parameter('piper_length_scale').value or 1.0)
+        self.piper_sentence_silence = float(self.get_parameter('piper_sentence_silence').value or 0.2)
+        self.piper_noise_scale = float(self.get_parameter('piper_noise_scale').value or 0.667)
+        self.piper_noise_w = float(self.get_parameter('piper_noise_w').value or 0.8)
+        
+        self.kokoro_model = str(self.get_parameter('kokoro_model').value or 'voices/kokoro-v1.0.onnx')
+        self.kokoro_voices = str(self.get_parameter('kokoro_voices').value or 'voices/voices-v1.0.bin')
+        self.kokoro_voice_en = str(self.get_parameter('kokoro_voice_en').value or 'af_sarah')
+        self.kokoro_speed = float(self.get_parameter('kokoro_speed').value or 1.0)
+        
+        workspace_root = _find_workspace_root()
+        voices_dir = workspace_root / 'voices' if workspace_root else Path.cwd() / 'voices'
+        
+        if os.path.isabs(self.piper_model_en):
+            self.piper_model_en_path = self.piper_model_en
+        else:
+            self.piper_model_en_path = str(voices_dir / self.piper_model_en)
+            
+        if os.path.isabs(self.piper_model_ro):
+            self.piper_model_ro_path = self.piper_model_ro
+        else:
+            self.piper_model_ro_path = str(voices_dir / self.piper_model_ro)
+
+        if os.path.isabs(self.kokoro_model):
+            self.kokoro_model_path = self.kokoro_model
+        else:
+            self.kokoro_model_path = str(voices_dir / os.path.basename(self.kokoro_model))
+            
+        if os.path.isabs(self.kokoro_voices):
+            self.kokoro_voices_path = self.kokoro_voices
+        else:
+            self.kokoro_voices_path = str(voices_dir / os.path.basename(self.kokoro_voices))
         
         if not SOUNDFILE_AVAILABLE:
             self.get_logger().error('soundfile not installed - required for TTS decoding!')
@@ -199,6 +253,36 @@ class TTSNode(Node):
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
+        # Pre-load Kokoro models
+        self.kokoro_voice = None
+        if self.provider == 'kokoro':
+            try:
+                if KOKORO_AVAILABLE:
+                    self.get_logger().info(f"⏳ Pre-loading Kokoro model: {self.kokoro_model_path}...")
+                    self.kokoro_voice = Kokoro(self.kokoro_model_path, self.kokoro_voices_path)
+                    self.get_logger().info("✅ Kokoro model pre-loaded successfully!")
+                else:
+                    self.get_logger().error("❌ kokoro-onnx package is not available!")
+            except Exception as e:
+                self.get_logger().error(f"❌ Failed to pre-load Kokoro: {e}")
+
+        # Pre-load Piper models
+        self.piper_voice_en = None
+        self.piper_voice_ro = None
+        if self.provider == 'piper' or self.provider == 'kokoro' or self.fallback_to_edge:
+            try:
+                from piper import PiperVoice
+                # Only load English Piper model if not using Kokoro
+                if self.provider != 'kokoro':
+                    self.get_logger().info(f"⏳ Pre-loading English Piper model: {self.piper_model_en_path}...")
+                    self.piper_voice_en = PiperVoice.load(self.piper_model_en_path)
+                
+                self.get_logger().info(f"⏳ Pre-loading Romanian Piper model: {self.piper_model_ro_path}...")
+                self.piper_voice_ro = PiperVoice.load(self.piper_model_ro_path)
+                self.get_logger().info("✅ Piper models pre-loaded successfully!")
+            except Exception as e:
+                self.get_logger().error(f"❌ Failed to pre-load Piper voices: {e}")
+
         # Pre-generate the cache in the background
         self.cache_thread = threading.Thread(target=self._precache, daemon=True, name="TTS-Cache")
         self.cache_thread.start()
@@ -283,6 +367,8 @@ class TTSNode(Node):
         self.consumer_thread = threading.Thread(target=self._consumer_loop, daemon=True, name="TTS-Consumer")
         self.consumer_thread.start()
         
+
+
         self.get_logger().debug('TTS Node started with DOUBLE BUFFER + CACHE! Listening on /llm_stream')
 
     def _load_env(self):
@@ -333,7 +419,7 @@ class TTSNode(Node):
             try:
                 # 1. Check if a static version exists (OpenAI Cedar)
                 static_file = None
-                if static_dir and not key.startswith('filler_'):
+                if self.use_static_audio and static_dir and not key.startswith('filler_'):
                     static_file = static_dir / f"{key}.wav"
                 
                 if static_file and static_file.exists():
@@ -396,6 +482,10 @@ class TTSNode(Node):
             if lang.startswith('ro'):
                 return self.eleven_voice_id_ro
             return self.eleven_voice_id_en
+        if self.provider == 'kokoro':
+            if lang.startswith('ro'):
+                return self.piper_model_ro
+            return self.kokoro_voice_en
         if lang.startswith('ro'):
             return self.voice_ro
         # Any other language -> English
@@ -412,12 +502,15 @@ class TTSNode(Node):
 
         # 1. Replace common math symbols (with surrounding spaces)
         math_symbols = {
-            'en': {' + ': ' plus ', ' - ': ' minus ', ' = ': ' equals ', ' * ': ' times ', ' / ': ' divided by '},
-            'ro': {' + ': ' plus ', ' - ': ' minus ', ' = ': ' egal ', ' * ': ' înmulțit cu ', ' / ': ' împărțit la '}
+            'en': {' + ': ' plus ', ' = ': ' equals ', ' * ': ' times ', ' / ': ' divided by '},
+            'ro': {' + ': ' plus ', ' = ': ' egal ', ' * ': ' înmulțit cu ', ' / ': ' împărțit la '}
         }
         
         for symbol, word in math_symbols[base_lang].items():
             text = text.replace(symbol, word)
+            
+        # Replace minus sign between numbers: e.g. "5 - 3" -> "5 minus 3"
+        text = re.sub(r'(\d+)\s+-\s+(\d+)', r'\1 minus \2', text)
             
         # Also handle minus sign directly attached to a number (e.g. -50 -> minus 50)
         text = re.sub(r'(?<!\w)-(?=\d)', 'minus ', text)
@@ -445,6 +538,24 @@ class TTSNode(Node):
                 return match.group(0)
 
         return re.sub(r'\b\d+(?:[.,]\d+)*\b', replace_match, text)
+
+    def _clean_text_for_tts(self, text: str) -> str:
+        """Replace non-standard quotes/punctuation and strip emojis to prevent TTS reading them aloud."""
+        replacements = {
+            '‼': '!', '❗': '!', '¡': '!',
+            '❓': '?', '❔': '?', '¿': '?',
+            '…': '...', '“': '"', '”': '"',
+            '‘': "'", '’': "'", '–': '-', '—': '-'
+        }
+        for k, v in replacements.items():
+            text = text.replace(k, v)
+            
+        allowed_symbols = set(".,!?;:()-\"'+=*%$&/<>@[]\\_{}|~")
+        cleaned = []
+        for c in text:
+            if c.isalnum() or c.isspace() or c in allowed_symbols:
+                cleaned.append(c)
+        return "".join(cleaned)
     
     def stream_callback(self, msg: TextChunk):
         """Process streaming text chunks."""
@@ -514,11 +625,26 @@ class TTSNode(Node):
                 if text:
                     voice = self._pick_voice(lang)
                     
-                    # Convert numbers to words before synthesis
+                    # Clean text and convert numbers to words before synthesis
                     original_text = text
-                    text = self._preprocess_numbers(text, lang)
-                    if text != original_text:
-                        self.get_logger().info(f'🔢 Numbers replaced: "{original_text}" -> "{text}"')
+                    
+                    # Detect punctuation at the end of the chunk to append silence padding
+                    silence_duration = 0.0
+                    clean_orig = original_text.strip()
+                    if clean_orig:
+                        last_char = clean_orig[-1]
+                        if last_char in ('.', '!', '?'):
+                            silence_duration = 0.45  # 450ms pause for sentence endings
+                        elif last_char in (',', ';', ':', '-'):
+                            silence_duration = 0.20  # 200ms pause for clause boundaries
+                    
+                    text = self._clean_text_for_tts(text)
+                    if not any(c.isalnum() for c in text):
+                        text = ""
+                    else:
+                        text = self._preprocess_numbers(text, lang)
+                        if text != original_text:
+                            self.get_logger().debug(f'🔢 Text cleaned/normalized: "{original_text}" -> "{text}"')
                     # ----------------------------------------------------
                     
                     self.get_logger().debug(f'🔧 Pre-synthesizing: "{text[:30]}..."')
@@ -534,7 +660,12 @@ class TTSNode(Node):
                             )
                             continue
 
-                        audio_data, sample_rate = self._synthesize(text, voice, lang)
+                        if not text:
+                            # Avoid calling TTS engines on empty/punctuation-only strings
+                            audio_data = np.array([], dtype=np.int16)
+                            sample_rate = self.target_sample_rate
+                        else:
+                            audio_data, sample_rate = self._synthesize(text, voice, lang)
                         
                         # Resample to target rate (16kHz)
                         if sample_rate != self.target_sample_rate:
@@ -544,6 +675,13 @@ class TTSNode(Node):
                         # Ensure mono audio
                         if len(audio_data.shape) > 1:
                             audio_data = audio_data[:, 0]
+                            
+                        # Append trailing silence if punctuation was detected
+                        if silence_duration > 0:
+                            silence_samples = int(sample_rate * silence_duration)
+                            silence = np.zeros(silence_samples, dtype=np.int16)
+                            audio_data = np.concatenate((audio_data, silence))
+                            self.get_logger().debug(f"🔇 Appended {silence_duration}s of silence for punctuation")
                         
                         # Put in audio_queue WITH EPOCH (will block if full = double buffer full)
                         current_epoch = self.stop_epoch
@@ -622,18 +760,170 @@ class TTSNode(Node):
         
         return audio_data
     
+    def _synthesize_kokoro(self, text: str):
+        """Synthesize text using the pre-loaded Kokoro ONNX model."""
+        if self.kokoro_voice is None:
+            if not os.path.exists(self.kokoro_model_path):
+                raise FileNotFoundError(f"Kokoro model missing: {self.kokoro_model_path}")
+            if not KOKORO_AVAILABLE:
+                raise ImportError("kokoro-onnx is not installed")
+            self.get_logger().info(f"⏳ Loading Kokoro model on the fly: {self.kokoro_model_path}...")
+            self.kokoro_voice = Kokoro(self.kokoro_model_path, self.kokoro_voices_path)
+
+        self.get_logger().debug(f"🎙️ Synthesizing offline with Kokoro: voice={self.kokoro_voice_en}")
+        samples, sample_rate = self.kokoro_voice.create(
+            text,
+            voice=self.kokoro_voice_en,
+            speed=self.kokoro_speed,
+            lang="en-us"
+        )
+        
+        # Convert float32 [-1.0, 1.0] to int16
+        audio_int16 = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16)
+        return audio_int16, sample_rate
+
+    def _synthesize_piper(self, text: str, lang: str):
+        """Synthesize text using the pre-loaded Piper Python library, falling back to subprocess if needed."""
+        is_ro = str(lang).lower().startswith('ro')
+        voice = self.piper_voice_ro if is_ro else self.piper_voice_en
+        model_path = self.piper_model_ro_path if is_ro else self.piper_model_en_path
+
+        # 1. Try to synthesize using Python API
+        try:
+            # If not pre-loaded, try loading on the fly
+            if voice is None:
+                if not os.path.exists(model_path):
+                    raise FileNotFoundError(f"Piper model missing: {model_path}")
+                from piper import PiperVoice
+                self.get_logger().info(f"⏳ Loading Piper model on the fly: {model_path}...")
+                voice = PiperVoice.load(model_path)
+                if is_ro:
+                    self.piper_voice_ro = voice
+                else:
+                    self.piper_voice_en = voice
+
+            from piper.config import SynthesisConfig
+            syn_config = SynthesisConfig(
+                length_scale=self.piper_length_scale,
+                noise_scale=self.piper_noise_scale,
+                noise_w_scale=self.piper_noise_w
+            )
+            
+            self.get_logger().debug(f"🎙️ Synthesizing offline with Piper Python API: model={os.path.basename(model_path)}")
+            chunks = list(voice.synthesize(text, syn_config=syn_config))
+            if not chunks:
+                raise RuntimeError("Piper Python API returned no audio chunks")
+                
+            sample_rate = chunks[0].sample_rate
+            audio_data = np.concatenate([chunk.audio_int16_array for chunk in chunks])
+            return audio_data, sample_rate
+
+        except Exception as api_err:
+            self.get_logger().warn(f"⚠️ Piper Python API synthesis failed ({api_err}), falling back to subprocess...")
+            
+            # 2. Subprocess fallback (original logic)
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Piper model missing: {model_path}")
+                
+            sample_rate = 22050
+            try:
+                import json
+                json_path = f"{model_path}.json"
+                if os.path.exists(json_path):
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                        sample_rate = config.get("audio", {}).get("sample_rate", 22050)
+            except Exception as e:
+                self.get_logger().warn(f"Failed to read Piper sample rate from JSON: {e}")
+
+            try:
+                cmd = ['piper', '--model', model_path, '--output_raw']
+                if self.piper_length_scale != 1.0:
+                    cmd.extend(['--length_scale', str(self.piper_length_scale)])
+                if self.piper_sentence_silence != 0.2:
+                    cmd.extend(['--sentence_silence', str(self.piper_sentence_silence)])
+                if self.piper_noise_scale != 0.667:
+                    cmd.extend(['--noise_scale', str(self.piper_noise_scale)])
+                if self.piper_noise_w != 0.8:
+                    cmd.extend(['--noise_w', str(self.piper_noise_w)])
+                
+                process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                stdout_data, stderr_data = process.communicate(input=text.encode('utf-8'), timeout=15.0)
+                
+                if process.returncode != 0:
+                    error_msg = stderr_data.decode('utf-8', errors='ignore')
+                    raise RuntimeError(f"Piper subprocess failed (code {process.returncode}): {error_msg}")
+                    
+                audio_data = np.frombuffer(stdout_data, dtype=np.int16)
+                if len(audio_data) == 0:
+                    raise RuntimeError("Piper subprocess returned empty audio data")
+                    
+                return audio_data, sample_rate
+            except FileNotFoundError:
+                raise RuntimeError("Piper executable not found in PATH")
+            except Exception as sub_err:
+                self.get_logger().error(f"Piper subprocess fallback failed: {sub_err}")
+                raise
+
     def _synthesize(self, text: str, voice: str, lang: str = ''):
-        """Synthesize text to audio using the configured provider."""
+        """Synthesize text to audio using the configured provider, falling back on failure."""
         if self.provider == 'elevenlabs':
             try:
                 return self._synthesize_elevenlabs(text, voice, lang)
             except Exception as exc:
-                if not self.fallback_to_edge:
-                    raise
-                self.get_logger().warn(f'ElevenLabs TTS failed, falling back to Edge: {exc}')
-                edge_voice = self.voice_ro if str(lang).lower().startswith('ro') else self.voice_en
-                return self._synthesize_edge(text, edge_voice)
-        return self._synthesize_edge(text, voice)
+                self.get_logger().warn(f'ElevenLabs TTS failed: {exc}')
+                if self.fallback_to_edge:
+                    try:
+                        self.get_logger().info('🔄 Falling back to Edge TTS (Online)...')
+                        edge_voice = self.voice_ro if str(lang).lower().startswith('ro') else self.voice_en
+                        return self._synthesize_edge(text, edge_voice)
+                    except Exception as edge_exc:
+                        self.get_logger().warn(f'Edge TTS fallback failed: {edge_exc}')
+                
+                # Ultimate offline fallback
+                try:
+                    self.get_logger().info('🔌 Falling back to local Piper TTS (Offline)...')
+                    return self._synthesize_piper(text, lang)
+                except Exception as piper_exc:
+                    self.get_logger().error(f'Piper TTS fallback failed: {piper_exc}')
+                    raise RuntimeError(f"All TTS backends failed. Piper error: {piper_exc}")
+                    
+        elif self.provider == 'edge':
+            try:
+                return self._synthesize_edge(text, voice)
+            except Exception as exc:
+                self.get_logger().warn(f'Edge TTS failed: {exc}')
+                try:
+                    self.get_logger().info('🔌 Falling back to local Piper TTS (Offline)...')
+                    return self._synthesize_piper(text, lang)
+                except Exception as piper_exc:
+                    self.get_logger().error(f'Piper TTS fallback failed: {piper_exc}')
+                    raise RuntimeError(f"All TTS backends failed. Piper error: {piper_exc}")
+                    
+        elif self.provider == 'piper':
+            return self._synthesize_piper(text, lang)
+            
+        elif self.provider == 'kokoro':
+            try:
+                # Fallback to Piper for Romanian language (Kokoro doesn't support RO)
+                if str(lang).lower().startswith('ro'):
+                    self.get_logger().debug("🇷🇴 Romanian detected: Routing to local Piper TTS...")
+                    return self._synthesize_piper(text, lang)
+                else:
+                    return self._synthesize_kokoro(text)
+            except Exception as exc:
+                self.get_logger().error(f"Kokoro synthesis failed ({exc}), falling back to Piper...")
+                try:
+                    return self._synthesize_piper(text, lang)
+                except Exception as piper_exc:
+                    raise RuntimeError(f"All local TTS backends failed. Piper error: {piper_exc}")
+            
+        raise ValueError(f"Unknown TTS provider: {self.provider}")
 
     def _synthesize_elevenlabs(self, text: str, voice_id: str, lang: str = ''):
         """Synthesize with ElevenLabs TTS stream endpoint."""
@@ -862,12 +1152,21 @@ class TTSNode(Node):
     def destroy_node(self):
         """Cleanup on exit."""
         self.running = False
+        self._clear_queues()
+        
+        # Join threads
+        for t_name in ['cache_thread', 'producer_thread', 'consumer_thread']:
+            if hasattr(self, t_name):
+                t = getattr(self, t_name)
+                if t.is_alive():
+                    t.join(timeout=1.0)
+                    
         super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
-    
+    node = None
     try:
         node = TTSNode()
         rclpy.spin(node)
@@ -876,6 +1175,11 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        if node:
+            try:
+                node.destroy_node()
+            except Exception:
+                pass
         try:
             rclpy.shutdown()
         except Exception:

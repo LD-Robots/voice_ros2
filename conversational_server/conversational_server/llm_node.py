@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 import requests
 from conversational_client.robot_command_utils import looks_like_robot_command
+from conversational_client.session_text_utils import detect_goodbye_keyword
 from .openai_web_search import (
     DEFAULT_BRAVE_SEARCH_COUNT,
     DEFAULT_BRAVE_SEARCH_COUNTRY,
@@ -81,6 +82,7 @@ class LLMNode(Node):
         self.declare_parameter('reasoning_effort', 'low')
         self.declare_parameter('openai_api_key_env', 'OPENAI_API_KEY')
         self.declare_parameter('openai_timeout_s', 45.0)
+        self.declare_parameter('openai_api_base', 'https://api.openai.com/v1')
         self.declare_parameter('min_chunk_chars', 40)  # Min chars per chunk
         self.declare_parameter('transcription_topic', '/attended_transcription')
         
@@ -120,9 +122,13 @@ class LLMNode(Node):
         self.system_prompt = self.get_parameter('system_prompt').value
         self.transcription_topic = str(self.get_parameter('transcription_topic').value)
 
-        if self.provider != 'openai':
+        self.openai_api_base = str(self.get_parameter('openai_api_base').value or 'https://api.openai.com/v1').strip()
+        if self.provider == 'ollama' and self.openai_api_base == 'https://api.openai.com/v1':
+            self.openai_api_base = 'http://localhost:11434/v1'
+
+        if self.provider not in ('openai', 'ollama'):
             raise RuntimeError(
-                f"Unsupported llm provider '{self.provider}'. Only 'openai' is implemented."
+                f"Unsupported llm provider '{self.provider}'. Only 'openai' and 'ollama' are implemented."
             )
         
         # Web search
@@ -193,8 +199,11 @@ class LLMNode(Node):
         # Check API keys
         self.api_key = os.environ.get(self.openai_api_key_env)
         if not self.api_key:
-            self.get_logger().error(f'{self.openai_api_key_env} environment variable not set!')
-            raise RuntimeError(f'{self.openai_api_key_env} not set')
+            if self.provider == 'ollama':
+                self.api_key = 'ollama'
+            else:
+                self.get_logger().error(f'{self.openai_api_key_env} environment variable not set!')
+                raise RuntimeError(f'{self.openai_api_key_env} not set')
         self.brave_search_api_key = os.environ.get('BRAVE_SEARCH_API_KEY', '')
         if self.websearch_enabled and self.websearch_provider == 'brave' and not self.brave_search_api_key:
             self.get_logger().warn(
@@ -302,7 +311,43 @@ class LLMNode(Node):
             f'LLM Node started with OpenAI reasoning + Brave Search! '
             f'websearch={self.websearch_enabled}'
         )
+        
+        # Warm up Ollama model
+        self._warmup_ollama()
     
+    def _warmup_ollama(self):
+        """Asynchronously warm up the Ollama model on startup to prevent first-call latency."""
+        if self.provider != 'ollama':
+            return
+        
+        def run_warmup():
+            self.get_logger().info("🔥 Warming up Ollama model to prevent first-call latency...")
+            try:
+                url = f"{self.openai_api_base}/chat/completions"
+                body = {
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 1
+                }
+                response = requests.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json=body,
+                    timeout=15.0
+                )
+                if response.ok:
+                    self.get_logger().info("✅ Ollama model warmed up and loaded in memory!")
+                else:
+                    self.get_logger().warn(f"⚠️ Ollama warmup request returned status {response.status_code}")
+            except Exception as e:
+                self.get_logger().warn(f"⚠️ Ollama warmup failed: {e}")
+
+        import threading
+        threading.Thread(target=run_warmup, daemon=True).start()
+
     def _get_system_prompt_with_date(self) -> str:
         """Return system prompt with the current date injected."""
         date_str = datetime.now().strftime("%A, %B %d, %Y")
@@ -413,41 +458,77 @@ class LLMNode(Node):
                 '\n\nA deterministic rule has already decided that search is required. '
                 'Return search=true and focus on rewriting the best possible query.'
             )
-        body = {
-            'model': self.search_router_model,
-            'instructions': instructions,
-            'input': [
-                {
-                    'role': 'user',
-                    'content': json.dumps(router_input, ensure_ascii=False),
-                }
-            ],
-            'max_output_tokens': 160,
-            'store': False,
-            'text': {
-                'format': {
-                    'type': 'json_schema',
-                    'name': 'search_router_decision',
-                    'strict': True,
-                    'schema': {
-                        'type': 'object',
-                        'properties': {
-                            'search': {'type': 'boolean'},
-                            'reason': {'type': 'string'},
-                            'query': {'type': 'string'},
+        is_reasoning_model = str(self.search_router_model).startswith(('gpt-5', 'o'))
+        if is_reasoning_model:
+            url = f'{self.openai_api_base}/responses'
+            body = {
+                'model': self.search_router_model,
+                'instructions': instructions,
+                'input': [
+                    {
+                        'role': 'user',
+                        'content': json.dumps(router_input, ensure_ascii=False),
+                    }
+                ],
+                'max_output_tokens': 160,
+                'store': False,
+                'text': {
+                    'format': {
+                        'type': 'json_schema',
+                        'name': 'search_router_decision',
+                        'strict': True,
+                        'schema': {
+                            'type': 'object',
+                            'properties': {
+                                'search': {'type': 'boolean'},
+                                'reason': {'type': 'string'},
+                                'query': {'type': 'string'},
+                            },
+                            'required': ['search', 'reason', 'query'],
+                            'additionalProperties': False,
                         },
-                        'required': ['search', 'reason', 'query'],
-                        'additionalProperties': False,
                     },
                 },
-            },
-        }
-        if self.search_router_reasoning_effort:
-            body['reasoning'] = {'effort': self.search_router_reasoning_effort}
+            }
+            if self.search_router_reasoning_effort:
+                body['reasoning'] = {'effort': self.search_router_reasoning_effort}
+        else:
+            url = f'{self.openai_api_base}/chat/completions'
+            body = {
+                'model': self.search_router_model,
+                'messages': [
+                    {
+                        'role': 'system',
+                        'content': instructions,
+                    },
+                    {
+                        'role': 'user',
+                        'content': json.dumps(router_input, ensure_ascii=False),
+                    }
+                ],
+                'max_tokens': 160,
+                'response_format': {
+                    'type': 'json_schema',
+                    'json_schema': {
+                        'name': 'search_router_decision',
+                        'strict': True,
+                        'schema': {
+                            'type': 'object',
+                            'properties': {
+                                'search': {'type': 'boolean'},
+                                'reason': {'type': 'string'},
+                                'query': {'type': 'string'},
+                            },
+                            'required': ['search', 'reason', 'query'],
+                            'additionalProperties': False,
+                        },
+                    },
+                },
+            }
 
         try:
             response = requests.post(
-                'https://api.openai.com/v1/responses',
+                url,
                 headers={
                     'Authorization': f'Bearer {self.api_key}',
                     'Content-Type': 'application/json',
@@ -615,6 +696,10 @@ class LLMNode(Node):
             self.get_logger().info(f'🔇 Ignored robot command: {user_text}')
             return
 
+        if detect_goodbye_keyword(user_text):
+            self.get_logger().info(f'🔇 Ignored goodbye command to prevent LLM chatter: {user_text}')
+            return
+
         # If we are waiting for a safety confirmation (e.g. they said "yes" or "no")
         # we want the LLM to ignore it completely so it doesn't chat.
         if self.waiting_for_robot_confirmation:
@@ -744,6 +829,12 @@ class LLMNode(Node):
                 'content': user_message_with_lang
             })
             
+            lang_system_instruction = (
+                "CRITICAL: The user is speaking in English. You MUST respond entirely in English."
+                if not user_lang.startswith('ro') else
+                "CRITIC: Utilizatorul vorbește în română. Trebuie să răspunzi obligatoriu în limba română."
+            )
+            
             system_instructions = ' '.join(filter(None, [
                 self._get_system_prompt_with_date(),
                 self._get_person_context_prompt(),
@@ -752,6 +843,7 @@ class LLMNode(Node):
                     'Do not claim you searched online unless web results were provided. '
                     'For stable knowledge, answer directly without web search.'
                 ),
+                lang_system_instruction,
             ]))
             
             # Detect if the question needs web search
@@ -782,32 +874,19 @@ class LLMNode(Node):
             
             # OpenAI Responses API call.
             start_time = time.time()
-            full_response = self._call_openai_response(
+            token_stream = self._call_openai_response(
                 instructions=system_instructions,
                 messages=messages,
                 max_tokens=max_tokens_to_use,
                 model=model_to_use,
                 reasoning_effort=reasoning_to_use,
+                stream=True,
             )
-            if start_epoch != self.stop_epoch:
-                self.get_logger().info('⏹️ LLM response discarded because the user interrupted')
-                return
-            first_token_time = time.time()
-            ttft_ms = (first_token_time - start_time) * 1000
-            self.get_logger().debug(f'⏱️ OpenAI response time: {ttft_ms:.0f}ms')
-            
-            # Buffer and state for stream shaper
-            chunk_count = 0
-
-            if self.backchannel_enabled and ttft_ms > self.backchannel_delay_ms:
-                cmd = String()
-                cmd.data = 'filler_ro' if user_lang.startswith('ro') else 'filler_en'
-                self.tts_cmd_pub.publish(cmd)
             
             # Process tokens with stream shaper logic
             from .stream_shaper import shape_stream
             shaped_tokens = shape_stream(
-                self._word_token_generator(full_response),
+                token_stream,
                 prebuffer_chars=self.prebuffer_chars,
                 min_chunk_chars=self.min_chunk_chars,
                 soft_max_chars=self.soft_max_chars,
@@ -816,10 +895,24 @@ class LLMNode(Node):
             
             # Publish smoothed chunks
             published_response = ""
+            chunk_count = 0
+            first_token_time = None
             for shaped_chunk in shaped_tokens:
+                if first_token_time is None:
+                    first_token_time = time.time()
+                    ttft_ms = (first_token_time - start_time) * 1000
+                    self.get_logger().debug(f'⏱️ OpenAI first chunk time: {ttft_ms:.0f}ms')
+                    
+                    if self.backchannel_enabled and ttft_ms > self.backchannel_delay_ms:
+                        cmd = String()
+                        cmd.data = 'filler_ro' if user_lang.startswith('ro') else 'filler_en'
+                        self.tts_cmd_pub.publish(cmd)
+
                 if start_epoch != self.stop_epoch:
                     self.get_logger().info('⏹️ LLM stream stopped because the user interrupted')
                     return
+                if published_response and not published_response.endswith((" ", "\n")) and not shaped_chunk.startswith(" "):
+                    published_response += " "
                 published_response += shaped_chunk
                 self._publish_chunk(shaped_chunk.strip(), user_lang, False, session_id)
                 chunk_count += 1
@@ -867,41 +960,74 @@ class LLMNode(Node):
         max_tokens: int,
         model: str | None = None,
         reasoning_effort: str | None = None,
-    ) -> str:
+        stream: bool = False,
+    ):
         model = model or self.model
         reasoning_effort = self.reasoning_effort if reasoning_effort is None else reasoning_effort
+        
+        formatted_messages = []
+        if instructions:
+            formatted_messages.append({
+                'role': 'system',
+                'content': instructions,
+            })
+        formatted_messages.extend(messages)
+
         body = {
             'model': model,
-            'instructions': instructions,
-            'input': messages,
-            'max_output_tokens': int(max_tokens),
-            'store': False,
+            'messages': formatted_messages,
         }
-        if reasoning_effort:
-            body['reasoning'] = {'effort': reasoning_effort}
-        # Some newer reasoning models ignore temperature; keep it only for classic models.
-        if not str(model).startswith(('gpt-5', 'o')):
+        if str(model).startswith(('gpt-5', 'o')):
+            body['max_completion_tokens'] = int(max_tokens)
+            if reasoning_effort:
+                body['reasoning_effort'] = reasoning_effort
+        else:
+            body['max_tokens'] = int(max_tokens)
             body['temperature'] = float(self.temperature)
 
+        if stream:
+            body['stream'] = True
+
         response = requests.post(
-            'https://api.openai.com/v1/responses',
+            f'{self.openai_api_base}/chat/completions',
             headers={
                 'Authorization': f'Bearer {self.api_key}',
                 'Content-Type': 'application/json',
             },
             json=body,
             timeout=max(1.0, self.openai_timeout_s),
+            stream=stream,
         )
         if not response.ok:
             try:
                 payload = response.json()
             except ValueError:
                 payload = response.text.strip()
-            raise RuntimeError(f'OpenAI Responses HTTP {response.status_code}: {payload}')
+            raise RuntimeError(f'OpenAI Chat Completions HTTP {response.status_code}: {payload}')
 
-        text = extract_response_text(response.json()).strip()
+        if stream:
+            def token_generator():
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    line_str = line.decode('utf-8').strip()
+                    if line_str.startswith('data: '):
+                        data_content = line_str[6:]
+                        if data_content == '[DONE]':
+                            break
+                        try:
+                            chunk_data = json.loads(data_content)
+                            delta = chunk_data.get('choices', [{}])[0].get('delta', {})
+                            if 'content' in delta:
+                                yield delta['content']
+                        except Exception:
+                            pass
+            return token_generator()
+
+        payload = response.json()
+        text = extract_response_text(payload).strip()
         if not text:
-            raise RuntimeError('OpenAI response did not contain output text')
+            raise RuntimeError(f'OpenAI response did not contain output text. Payload: {payload}')
         return text
 
     def _run_brave_web_search(self, query: str, reason: str) -> str:

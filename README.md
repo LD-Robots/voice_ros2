@@ -136,6 +136,36 @@ ros2 launch conversational_server server_pipeline.launch.py \
     realtime_capture_during_playback:=true
 ```
 
+### 🔌 Running in 100% Offline Local Mode
+
+The system supports a completely local, offline voice pipeline using:
+- **ASR**: Faster-Whisper running locally on CPU/GPU.
+- **LLM**: Ollama hosting `qwen2.5:3b` on `localhost:11434`.
+- **TTS**: Piper TTS running locally via ONNX models.
+
+#### 1. Setup Local Models & Engines
+First, make sure you have Ollama installed and the model downloaded:
+```bash
+# Start Ollama and download the model
+ollama run qwen2.5:3b
+```
+
+Install Piper system-wide (or download the pre-compiled binary and add it to your PATH):
+```bash
+sudo apt install piper
+```
+
+Download the English and Romanian ONNX models (along with their `.json` configuration files) for Piper, and save them in the `voices/` directory inside your workspace root:
+* English: [en_US-amy-medium.onnx](https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.onnx) and [en_US-amy-medium.onnx.json](https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.onnx.json)
+* Romanian: [ro_RO-mihai-medium.onnx](https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/ro/ro_RO/mihai/medium/ro_RO-mihai-medium.onnx) and [ro_RO-mihai-medium.onnx.json](https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/ro/ro_RO/mihai/medium/ro_RO-mihai-medium.onnx.json)
+
+#### 2. Run the offline pipeline
+Specify the `offline` config name when launching the system:
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch conversational_server full_system.launch.py config:=offline
+```
+
 ### Client Only (on robot hardware)
 ```bash
 ros2 launch conversational_client client_pipeline.launch.py

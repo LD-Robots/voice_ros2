@@ -43,7 +43,7 @@ class SessionManagerNode(Node):
         )
 
         tts_cmd = String()
-        tts_cmd.data = goodbye_tts_command(msg.language)
+        tts_cmd.data = goodbye_tts_command(msg.language, detected_keyword)
         self.tts_cmd_pub.publish(tts_cmd)
 
         end_msg = Bool()

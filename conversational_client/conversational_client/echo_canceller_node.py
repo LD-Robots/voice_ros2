@@ -211,7 +211,7 @@ class EchoCancellerNode(Node):
             if self.tail_samples > 0:
                 self.tail_samples -= n
             else:
-                self.current_delay = 0
+                # Keep last locked delay to immediately apply AEC on the next playback start
                 if len(self.ref_queue) > self.sample_rate: self.ref_queue.clear()
                 self._lock_count = 0
         

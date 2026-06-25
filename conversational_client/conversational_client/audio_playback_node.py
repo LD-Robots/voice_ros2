@@ -38,8 +38,14 @@ class AudioPlaybackNode(Node):
         self.stop_sub = self.create_subscription(Bool, '/stop_playback', self.stop_callback, 10)
         
         # PyAudio Setup
-        self.audio_p = pyaudio.PyAudio()
+        # Suppress ALSA/JACK warnings from pyaudio using file descriptor redirection
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        old_stderr = os.dup(2)
+        sys.stderr.flush()
+        os.dup2(devnull, 2)
+        os.close(devnull)
         try:
+            self.audio_p = pyaudio.PyAudio()
             self.stream = self.audio_p.open(
                 format=pyaudio.paInt16,
                 channels=self.channels,
@@ -51,6 +57,9 @@ class AudioPlaybackNode(Node):
         except Exception as e:
             self.get_logger().error(f'❌ Failed to open speaker: {e}')
             self.stream = None
+        finally:
+            os.dup2(old_stderr, 2)
+            os.close(old_stderr)
         
         self.running = True
         self.playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
@@ -91,12 +100,17 @@ class AudioPlaybackNode(Node):
             self.speaking_pub.publish(Bool(data=True))
             
             if self.gain != 1.0:
-                chunk_data = (chunk_data.astype(np.float32) * self.gain).astype(np.int16)
+                scaled = chunk_data.astype(np.float32) * self.gain
+                chunk_data = np.clip(scaled, -32768, 32767).astype(np.int16)
 
             ptr = 0
-            while ptr < len(chunk_data) and not self._stop_requested:
+            while ptr < len(chunk_data) and not self._stop_requested and self.running:
                 sub = chunk_data[ptr : ptr + self._playback_chunk_size]
-                if self.stream: self.stream.write(sub.tobytes())
+                if self.stream and self.running:
+                    try:
+                        self.stream.write(sub.tobytes())
+                    except Exception:
+                        break
                 ptr += len(sub)
                 self._played_samples_current_item += len(sub)
                 
@@ -106,10 +120,18 @@ class AudioPlaybackNode(Node):
 
     def destroy_node(self):
         self.running = False
+        if hasattr(self, 'playback_thread') and self.playback_thread.is_alive():
+            self.playback_thread.join(timeout=1.0)
         if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        self.audio_p.terminate()
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception:
+                pass
+        try:
+            self.audio_p.terminate()
+        except Exception:
+            pass
         super().destroy_node()
 
 def main(args=None):

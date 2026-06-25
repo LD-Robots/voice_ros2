@@ -91,6 +91,17 @@ class SpeakerManager:
         self._ensure_placeholder_custom_module()
 
         # ─────────────────────────────────────────────────────────
+        # Limit PyTorch threads to avoid CPU starvation/contention with other ROS2 nodes
+        # ─────────────────────────────────────────────────────────
+        try:
+            torch.set_num_threads(2)
+            if hasattr(torch, 'set_num_interop_threads'):
+                torch.set_num_interop_threads(2)
+            print("🧵 PyTorch thread limit set to 2")
+        except Exception as e:
+            print(f"⚠️ Failed to set PyTorch thread limit: {e}")
+
+        # ─────────────────────────────────────────────────────────
         # Load SpeechBrain ECAPA-TDNN model
         # ─────────────────────────────────────────────────────────
         print("🔄 Se încarcă modelul SpeechBrain ECAPA-TDNN...")

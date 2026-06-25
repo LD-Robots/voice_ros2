@@ -1,0 +1,190 @@
+# Offline Configuration (100% Local Backup)
+# Uses Faster-Whisper (ASR), Ollama with Qwen2.5:3b (LLM), and Piper TTS (TTS)
+
+# ========== SERVER NODES ==========
+
+backend_manager_node:
+  ros__parameters:
+    preferred_backend: "legacy"
+    fallback_backend: "legacy"
+    offline_timeout_s: 1000.0
+    auto_return_to_preferred: true
+
+asr_node:
+  ros__parameters:
+    provider: "openvino"
+    openvino_model: "voices/whisper-small-int8-ov"
+    openvino_device: "CPU"
+    model_size: "small"
+    device: "cpu"
+    compute_type: "int8"
+    language: "ro_en"
+    beam_size: 1
+    cpu_threads: 2
+    repetition_penalty: 1.2
+    initial_prompt: "A multilingual conversational interaction. Hello robot, goodbye robot, robotule, robotul, pa pa. Ce mai faci? How are you?"
+
+llm_node:
+  ros__parameters:
+    provider: "ollama"
+    model: "qwen2.5:3b"
+    system_prompt: "You are Robot, a helpful voice assistant. The user is a human; never address the user as Robot. Answer in the language the user speaks (Romanian or English). Keep answers extremely concise, usually 1 to 2 spoken sentences, but allow more detail when the user asks for a story or explanation. Do not use markdown, lists, or emojis. As a local assistant running offline without internet access, you cannot retrieve real-time data, current weather, news, or live events. If the user asks about these topics, politely state in their language that you are running offline and cannot access this information (e.g., in Romanian: 'Ca asistent offline, nu am acces la internet sau informații în timp real'). Do not guess or make up facts."
+    openai_api_base: "http://localhost:11434/v1"
+    fast_model_enabled: false
+    fast_model: "qwen2.5:3b"
+    max_tokens: 150
+    temperature: 0.7
+    min_chunk_chars: 40
+    prebuffer_chars: 80
+    soft_max_chars: 150
+    max_idle_ms: 1200
+    backchannel_enabled: false
+    websearch_enabled: false
+    websearch_provider: "brave"
+    search_router_enabled: false
+    search_router_model: "qwen2.5:3b"
+
+tts_node:
+  ros__parameters:
+    provider: "kokoro"
+    kokoro_model: "voices/kokoro-v1.0.onnx"
+    kokoro_voices: "voices/voices-v1.0.bin"
+    kokoro_voice_en: "af_sarah"
+    kokoro_speed: 1.0
+    piper_model_en: "en_US-lessac-high.onnx"
+    piper_model_ro: "ro_RO-lili-high.onnx"
+    piper_length_scale: 0.92
+    piper_sentence_silence: 0.2
+    piper_noise_scale: 0.667
+    piper_noise_w: 0.95
+    use_static_audio: false
+    fallback_to_edge: false
+    voice_en: "en-IE-EmilyNeural"
+    voice_ro: "ro-RO-AlinaNeural"
+    buffer_size: 1
+    rate: "+0%"
+    volume: "+0%"
+
+# ========== CLIENT NODES ==========
+
+audio_capture_node:
+  ros__parameters:
+    device_index: -1       # -1 = auto-detect
+    respeaker_mode: false
+    respeaker_channel: 0
+    stereo_mono_extract: false
+    gain: 1.0
+    chunk_ms: 20
+    debug_recording: true
+
+vad_node:
+  ros__parameters:
+    wake_word_enabled: true
+    session_timeout: 30.0
+    min_silence_frames: 20
+    aggressiveness: 3
+    capture_during_playback: false
+    use_hardware_vad: false
+    energy_threshold: 1200  # Filter baseline room noise floor (typically 800-900 RMS on user laptop)
+
+audio_segment_node:
+  ros__parameters:
+    min_segment_seconds: 0.5
+    max_segment_seconds: 30.0
+    pre_buffer_seconds: 0.4
+    capture_during_playback: false
+    stop_playback_on_voice_start: false
+
+audio_playback_node:
+  ros__parameters:
+    sample_rate: 16000
+    gain: 0.5
+    force_os_volume_percent: 80
+
+barge_in_node:
+  ros__parameters:
+    stop_enabled: false
+    stop_prob_threshold: 0.80
+    stop_logit_margin: 0.5
+    stop_hits_required: 2
+    voice_enabled: true
+    min_voice_ms: 600
+    min_rms_dbfs: -28.0
+    highpass_hz: 300.0
+    zcr_min: 0.05
+    zcr_max: 0.35
+
+speaker_id_node:
+  ros__parameters:
+    similarity_threshold: 0.45
+    similarity_margin: 0.12
+    enrollment_reuse_threshold: 0.58
+    enrollment_reuse_margin: 0.16
+
+attention_manager_node:
+  ros__parameters:
+    speaker_switch_hits_required: 2
+    allow_known_speaker_switch_without_address: true
+    llm_address_router_enabled: false
+    llm_address_router_model: "qwen2.5:3b"
+    llm_address_router_timeout_s: 8.0
+    llm_address_router_fail_closed: true
+    llm_address_router_recent_turns: 8
+    assistant_question_reply_window_s: 25.0
+    initial_session_reply_grace_s: 30.0
+    attention_learning_enabled: true
+    attention_learning_rate: 0.08
+    attention_learning_threshold: 0.58
+    attention_learning_min_confidence: 0.18
+    attention_learning_path: "voices/attention_policy.json"
+    attention_learning_llm_teacher_scale: 0.25
+    attention_learning_route_enabled: false
+
+person_memory_store_node:
+  ros__parameters:
+    auto_enroll_unknown_speakers: true
+    min_enrollment_segment_seconds: 1.2
+    speaker_switch_hits_required: 2
+
+conversation_control_node:
+  ros__parameters:
+    speaker_switch_hits_required: 2
+
+wake_word_node:
+  ros__parameters:
+    threshold: 0.5
+    cooldown_ms: 1500
+    model_thresholds: "hello_robot:0.15,goodbye_robot:0.75"
+
+voice_command_node:
+  ros__parameters:
+    min_transcription_confidence: 0.45
+    default_steps: 1
+    max_steps: 20
+    enable_tts_ack: false
+
+robot_command_executor_node:
+  ros__parameters:
+    execution_enabled: true
+    move_mode: "twist"
+    cmd_vel_topic: "/cmd_vel"
+    behavior_mode: "topic"
+    behavior_topic: "/robot_behavior_command"
+    handshake_service: "/handshake"
+    raise_hands_service: "/raise_hands"
+    dance_service: "/dance"
+    preempt_on_new_command: true
+    enable_voice_cancel: true
+    enable_risky_confirmation: true
+    confirmation_timeout_s: 12.0
+    risky_steps_threshold: 5
+    risky_backward_steps_threshold: 3
+
+echo_canceller_node:
+  ros__parameters:
+    filter_length_ms: 100
+    step_size: 0.15
+    max_delay_ms: 3000
+    debug_recording: true
+    deep_filter_enabled: true
+    deep_filter_attenuation: 100

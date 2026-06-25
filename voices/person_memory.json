@@ -14,7 +14,7 @@
       "facts": [
         "this one can you tell me another one"
       ],
-      "last_seen": "2026-06-09T08:09:03.781833+00:00"
+      "last_seen": "2026-06-25T08:20:59.018558+00:00"
     },
     "speaker_002": {
       "voice_label": "speaker_002",
@@ -55,10 +55,10 @@
     },
     "speaker_007": {
       "voice_label": "speaker_007",
-      "preferred_name": "Alex",
+      "preferred_name": "Mario",
       "preferred_language": "",
       "facts": [],
-      "last_seen": "2026-03-06T12:54:47.506368+00:00"
+      "last_seen": "2026-06-24T12:52:45.536097+00:00"
     },
     "valee": {
       "voice_label": "valee",

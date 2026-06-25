@@ -7,6 +7,12 @@ GOODBYE_KEYWORDS = (
     'bye bye',
     'la revedere',
     'goodbye',
+    'good bye',
+    'good by',
+    'goodbuy',
+    'good pie',
+    'good boy',
+    'good pair',
     'see you',
     'ne vedem',
     'pa pa',
@@ -16,7 +22,20 @@ GOODBYE_KEYWORDS = (
 GOODBYE_CONTEXT_WORDS = {
     'ok',
     'okay',
+    'oke',
     'robot',
+    'robert',
+    'rowboat',
+    'robotul',
+    'robotule',
+    'roboter',
+    'of',
+    'both',
+    'pair',
+    'pie',
+    'boy',
+    'by',
+    'buy',
     'for',
     'now',
     'thanks',
@@ -31,6 +50,7 @@ GOODBYE_CONTEXT_WORDS = {
     'right',
     'bye',
     'goodbye',
+    'good',
     'bine',
     'pa',
     'robotule',
@@ -80,8 +100,16 @@ def detect_goodbye_keyword(text: str) -> str:
     return ''
 
 
-def goodbye_tts_command(language: str) -> str:
-    normalized = (language or '').strip().lower()
-    if normalized.startswith('ro'):
+def goodbye_tts_command(language: str, keyword: str = '') -> str:
+    # First priority: check if the matched keyword is explicitly English or Romanian
+    keyword_norm = (keyword or '').strip().lower()
+    if keyword_norm in ('la revedere', 'ne vedem', 'pa pa', 'pa', 'robotule', 'robotul'):
+        return 'goodbye_ro'
+    elif keyword_norm in ('goodbye', 'good bye', 'good by', 'goodbuy', 'good pie', 'good boy', 'good pair', 'see you later', 'see you', 'bye bye', 'bye'):
+        return 'goodbye_en'
+
+    # Fallback to the ASR detected language
+    normalized_lang = (language or '').strip().lower()
+    if normalized_lang.startswith('ro'):
         return 'goodbye_ro'
     return 'goodbye_en'

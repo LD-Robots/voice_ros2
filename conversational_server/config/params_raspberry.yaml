@@ -31,23 +31,23 @@ asr_node:
 llm_node:
   ros__parameters:
     provider: "openai"
-    model: "gpt-5.5"
+    model: "o3-mini"
     fast_model_enabled: true
-    fast_model: "gpt-5-mini"
-    fast_reasoning_effort: "minimal"
+    fast_model: "o3-mini"
+    fast_reasoning_effort: "low"
     reasoning_effort: "low"
     max_tokens: 150
     temperature: 0.7
-    min_chunk_chars: 20
-    prebuffer_chars: 45
+    min_chunk_chars: 8
+    prebuffer_chars: 10
     soft_max_chars: 95
     max_idle_ms: 120
     backchannel_enabled: false
     websearch_enabled: true
     websearch_provider: "brave"
     search_router_enabled: true
-    search_router_model: "gpt-5-mini"
-    search_router_reasoning_effort: "minimal"
+    search_router_model: "gpt-4o-mini"
+    search_router_reasoning_effort: "low"
     brave_search_country: "ALL"
     brave_search_lang: "en"
     brave_search_count: 5
@@ -58,11 +58,11 @@ llm_node:
 tts_node:
   ros__parameters:
     provider: "elevenlabs"
-    eleven_model_id: "eleven_v3"
+    eleven_model_id: "eleven_multilingual_v2"
     eleven_voice_id_en: "vBKc2FfBKJfcZNyEt1n6"
     eleven_voice_id_ro: "vBKc2FfBKJfcZNyEt1n6"
     eleven_output_format: "pcm_16000"
-    eleven_latency_optimization: -1
+    eleven_latency_optimization: 3
     eleven_stream_pcm_chunks: true
     eleven_stream_chunk_ms: 100
     eleven_stability: 0.42
@@ -122,7 +122,7 @@ vad_node:
   ros__parameters:
     wake_word_enabled: true
     session_timeout: 30.0
-    min_silence_frames: 10
+    min_silence_frames: 8
     capture_during_playback: true
 
 audio_segment_node:
@@ -131,7 +131,7 @@ audio_segment_node:
     max_segment_seconds: 30.0
     pre_buffer_seconds: 0.4
     capture_during_playback: true
-    stop_playback_on_voice_start: true
+    stop_playback_on_voice_start: false
 
 audio_playback_node:
   ros__parameters:
@@ -163,8 +163,8 @@ attention_manager_node:
     speaker_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
     llm_address_router_enabled: true
-    llm_address_router_model: "gpt-5-mini"
-    llm_address_router_reasoning_effort: "medium"
+    llm_address_router_model: "gpt-4o-mini"
+    llm_address_router_reasoning_effort: "low"
     llm_address_router_timeout_s: 8.0
     llm_address_router_fail_closed: true
     llm_address_router_recent_turns: 8

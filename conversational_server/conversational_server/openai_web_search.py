@@ -279,7 +279,13 @@ def call_brave_llm_context(
 
 
 def extract_response_text(payload: dict[str, Any]) -> str:
-    """Extract the assistant text from a Responses API payload."""
+    """Extract the assistant text from a Responses or Chat Completions API payload."""
+    if 'choices' in payload:
+        try:
+            return str(payload['choices'][0]['message']['content'] or '').strip()
+        except (KeyError, IndexError):
+            pass
+
     output_text = str(payload.get('output_text', '') or '').strip()
     if output_text:
         return output_text
