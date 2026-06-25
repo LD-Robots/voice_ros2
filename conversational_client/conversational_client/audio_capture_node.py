@@ -237,7 +237,7 @@ class AudioCaptureNode(Node):
                 if self.frame_count % 50 == 0:  # Log every ~3 seconds
                     chunk_f32 = np.array(chunk_data, dtype=np.float32)
                     rms = np.sqrt(np.mean(chunk_f32**2))
-                    self.get_logger().info(f"📊 Audio Level (RMS): {rms:.2f}")
+                    self.get_logger().debug(f'📊 Audio Level (RMS): {rms:.2f}')
                 
         except Exception as e:
             if self.running and rclpy.ok():

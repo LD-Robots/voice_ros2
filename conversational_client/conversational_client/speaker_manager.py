@@ -130,11 +130,19 @@ class SpeakerManager:
             # Person name = file name without extension
             speaker_name = os.path.splitext(wav_file)[0]
             wav_path = os.path.join(self.enrollment_dir, wav_file)
+            emb_path = os.path.join(self.enrollment_dir, f"{speaker_name}.emb.npy")
 
             try:
-                embedding = self._compute_embedding_from_file(wav_path)
-                self.speaker_db[speaker_name] = embedding
-                print(f"  ✅ {speaker_name} — embedding calculated ({wav_file})")
+                if os.path.exists(emb_path):
+                    embedding_np = np.load(emb_path)
+                    embedding = torch.from_numpy(embedding_np).float()
+                    self.speaker_db[speaker_name] = embedding
+                    print(f"  ✅ {speaker_name} — loaded cached embedding ({speaker_name}.emb.npy)")
+                else:
+                    embedding = self._compute_embedding_from_file(wav_path)
+                    self.speaker_db[speaker_name] = embedding
+                    np.save(emb_path, embedding.detach().cpu().numpy())
+                    print(f"  ✅ {speaker_name} — embedding calculated and cached ({wav_file})")
             except Exception as e:
                 print(f"  ❌ Error at {wav_file}: {e}")
 
@@ -266,6 +274,55 @@ class SpeakerManager:
             scores[name] = self._cosine_similarity(new_embedding, stored_embedding)
 
         return select_speaker_match(scores, threshold, min_margin)
+
+    def identify_and_get_embedding(self, audio_float, threshold=None, min_margin=None) -> tuple[SpeakerMatchResult, torch.Tensor]:
+        """Identify the speaker and also return the computed embedding for adaptation."""
+        if min_margin is None:
+            min_margin = self.min_margin
+        else:
+            min_margin = max(0.0, float(min_margin))
+        if threshold is None:
+            threshold = self.threshold
+
+        new_embedding = self._compute_embedding_from_array(audio_float)
+
+        if not self.speaker_db:
+            return select_speaker_match({}, threshold, min_margin), new_embedding
+
+        scores = {}
+        for name, stored_embedding in self.speaker_db.items():
+            scores[name] = self._cosine_similarity(new_embedding, stored_embedding)
+
+        match = select_speaker_match(scores, threshold, min_margin)
+        return match, new_embedding
+
+    def adapt_speaker(self, speaker_name, embedding, adaptation_rate=0.90) -> bool:
+        """
+        Adapt the speaker's voice template embedding in-memory and persist it as a .npy file.
+        """
+        if speaker_name not in self.speaker_db:
+            return False
+
+        old_emb = self.speaker_db[speaker_name]
+
+        # Calculate moving average
+        updated_emb = adaptation_rate * old_emb + (1.0 - adaptation_rate) * embedding
+        # Normalize to keep on the unit hypersphere
+        norm = torch.norm(updated_emb)
+        if norm > 0:
+            updated_emb = updated_emb / norm
+
+        # Update in memory
+        self.speaker_db[speaker_name] = updated_emb
+
+        # Persist as .npy file in the enrollment folder
+        try:
+            emb_path = os.path.join(self.enrollment_dir, f"{speaker_name}.emb.npy")
+            np.save(emb_path, updated_emb.detach().cpu().numpy())
+            return True
+        except Exception as e:
+            print(f"❌ Error persisting adapted embedding for {speaker_name}: {e}")
+            return False
 
     def identify_file(self, wav_path, threshold=None, min_margin=None):
         signal, sr = self._load_audio_file(wav_path)

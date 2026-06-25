@@ -88,6 +88,9 @@ class SpeakerIdNode(Node):
         self.declare_parameter('enrollment_reuse_threshold', 0.58)
         self.declare_parameter('enrollment_reuse_margin', 0.16)
         self.declare_parameter('sample_rate', 16000)
+        self.declare_parameter('adaptation_enabled', True)
+        self.declare_parameter('adaptation_threshold', 0.60)
+        self.declare_parameter('adaptation_rate', 0.90)
 
         self.enrollment_dir = self.get_parameter('enrollment_dir').value
         self.similarity_threshold = self.get_parameter('similarity_threshold').value
@@ -95,6 +98,9 @@ class SpeakerIdNode(Node):
         self.enrollment_reuse_threshold = self.get_parameter('enrollment_reuse_threshold').value
         self.enrollment_reuse_margin = self.get_parameter('enrollment_reuse_margin').value
         self.sample_rate = self.get_parameter('sample_rate').value
+        self.adaptation_enabled = bool(self.get_parameter('adaptation_enabled').value)
+        self.adaptation_threshold = float(self.get_parameter('adaptation_threshold').value)
+        self.adaptation_rate = float(self.get_parameter('adaptation_rate').value)
         self.memory_file = os.path.join(
             str(workspace_root) if workspace_root else os.getcwd(),
             'voices',
@@ -234,9 +240,23 @@ class SpeakerIdNode(Node):
 
         if self.db_loaded and self.speaker_manager is not None:
             try:
-                # Identify the speaker
-                match = self.speaker_manager.identify_with_details(audio_float)
+                # Identify the speaker (optionally retrieval of embedding for adaptation)
+                if self.adaptation_enabled:
+                    match, new_embedding = self.speaker_manager.identify_and_get_embedding(audio_float)
+                else:
+                    match = self.speaker_manager.identify_with_details(audio_float)
+                    new_embedding = None
+
                 speaker_name = match.speaker_name
+
+                # Adapt speaker template if confidence is high
+                if (self.adaptation_enabled and speaker_name != "Unknown" and
+                        match.best_score >= self.adaptation_threshold and new_embedding is not None):
+                    if self.speaker_manager.adapt_speaker(speaker_name, new_embedding, self.adaptation_rate):
+                        self.get_logger().info(
+                            f'🔄 Adapted voice template for {speaker_name} '
+                            f'(score={match.best_score:.3f}, rate={self.adaptation_rate:.2f})'
+                        )
                 
                 # SMART LOGGING:
                 # - Show INFO only if someone is known
@@ -253,13 +273,13 @@ class SpeakerIdNode(Node):
                         else -1.0
                     )
                     if match.best_name != 'Unknown':
-                        self.get_logger().info(
+                        self.get_logger().debug(
                             f'👤 Unidentified speaker (reason={match.reason}, '
                             f'top={match.best_name}:{match.best_score:.3f}, '
                             f'margin={margin:.3f})'
                         )
                     else:
-                        self.get_logger().info(
+                        self.get_logger().debug(
                             f'👤 Unidentified speaker (reason={match.reason})'
                         )
 
@@ -284,7 +304,7 @@ class SpeakerIdNode(Node):
                 f'📤 /speaker_id: "{speaker_name}" (segment: {duration:.2f}s)'
             )
         else:
-            self.get_logger().info(
+            self.get_logger().debug(
                 f'📤 /speaker_id: "Unknown" (segment: {duration:.2f}s)'
             )
 
@@ -367,6 +387,13 @@ class SpeakerIdNode(Node):
                 voice_label = target_voice_label or build_unique_speaker_label(existing_labels)
             target_wav = os.path.join(self.enrollment_dir, f'{voice_label}.wav')
             shutil.copy2(source_wav, target_wav)
+
+            target_emb = os.path.join(self.enrollment_dir, f'{voice_label}.emb.npy')
+            if os.path.exists(target_emb):
+                try:
+                    os.remove(target_emb)
+                except Exception as exc:
+                    self.get_logger().warning(f"Could not remove old cached embedding: {exc}")
 
             if self.speaker_manager is None:
                 self.speaker_manager = SpeakerManager(
