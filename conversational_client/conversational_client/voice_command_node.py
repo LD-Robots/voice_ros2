@@ -34,7 +34,7 @@ class VoiceCommandNode(Node):
         self.declare_parameter('min_transcription_confidence', 0.40)
         self.declare_parameter('default_steps', 1)
         self.declare_parameter('max_steps', 20)
-        self.declare_parameter('enable_tts_ack', True)
+        self.declare_parameter('enable_tts_ack', False)
         self.declare_parameter('tts_ack_en', 'ack_en')
         self.declare_parameter('tts_ack_ro', 'ack_ro')
         self.declare_parameter('transcription_topic', 'attended_transcription')

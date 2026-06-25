@@ -99,13 +99,15 @@ class TTSNode(Node):
             'goodbye_en': ('Goodbye. I will be here when you need me again.', 'en'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
             'confirm_en': ('Are you sure? Please say yes or no.', 'en'),
+            'confirm_ro': ('Esti sigur? Te rog spune da sau nu.', 'ro'),
         }
+        # Only safety-critical prompts may speak in ANY backend (e.g. the risky-command
+        # confirmation, which the gate needs even in Gemini mode). Greetings / acks /
+        # fillers / goodbyes are legacy-only and are suppressed automatically in Gemini
+        # mode by the `current_backend != 'legacy'` guard in command_callback().
         self.system_commands = {
-            'ack_en',
-            'goodbye_en',
-            'error_en',
             'confirm_en',
-            'filler_en',
+            'confirm_ro',
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
