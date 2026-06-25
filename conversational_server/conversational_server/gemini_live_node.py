@@ -8,6 +8,7 @@ Provides ROS interface for bi-directional audio streaming.
 """
 import base64
 import json
+import math
 import os
 import threading
 import time
@@ -26,7 +27,7 @@ from conversational_client.conversation_utils import (
     has_direct_robot_address,
     is_reengagement_phrase,
 )
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, Int32
 from .language_utils import ConversationLanguageTracker
 from .prompt_config import load_prompt_defaults
 from .realtime_audio_filter import PlaybackInputFilter, PlaybackInputFilterConfig
@@ -140,6 +141,8 @@ class GeminiLiveNode(Node):
         self.declare_parameter("utterance_capture_min_ms", 800)
         self.declare_parameter("name_context_wait_ms", 950)
         self.declare_parameter("google_search_enabled", False)
+        self.declare_parameter('doa_enabled', True)
+        self.declare_parameter('doa_focus_margin', 45.0)
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -184,6 +187,10 @@ class GeminiLiveNode(Node):
         self.utterance_capture_min_ms = int(self.get_parameter("utterance_capture_min_ms").value)
         self.name_context_wait_ms = max(0, int(self.get_parameter("name_context_wait_ms").value))
         self.google_search_enabled = bool(self.get_parameter("google_search_enabled").value)
+        self.doa_enabled = bool(self.get_parameter('doa_enabled').value)
+        self.doa_focus_margin = float(
+            self.get_parameter('doa_focus_margin').value
+        )
         self.base_instructions = str(self.get_parameter("instructions").value)
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter("sticky_speaker_timeout_s").value),
@@ -227,6 +234,11 @@ class GeminiLiveNode(Node):
         self._setup_speaker = 'Unknown'
         self._setup_preferred_name = ''
 
+        # DOA tracking
+        self.latest_doa_angle = -1
+        self.focused_doa_angle = -1
+        self.current_segment_doa_angles = []
+
         # WebSocket state
         self._ws_app = None
         self._ws_thread = threading.Thread(
@@ -248,6 +260,7 @@ class GeminiLiveNode(Node):
         self._response_active = False
         self._response_create_pending = False
         self._user_speaking = False
+        self._ignore_model_response = False
         self._audio_chunks_sent = 0
         self._current_turn_audio_started = False
 
@@ -311,6 +324,9 @@ class GeminiLiveNode(Node):
         self.person_context_sub = self.create_subscription(String, "/person_context", self.person_context_callback, 10)
         self.pause_sub = self.create_subscription(Bool, "/conversation_pause", self.pause_callback, 10)
         self.wake_word_sub = self.create_subscription(WakeWord, "/wake_word", self.wake_word_callback, 10)
+        self.doa_sub = self.create_subscription(
+            Int32, '/doa_angle', self.doa_callback, 10
+        )
 
         self._ws_thread.start()
         self._publish_status("connecting")
@@ -348,7 +364,8 @@ class GeminiLiveNode(Node):
             self._cancel_and_clear()
 
     def wake_word_callback(self, msg: WakeWord):
-        """Inject a greeting into Gemini when wake word is detected.
+        """
+        Inject a greeting into Gemini when wake word is detected.
 
         Instead of playing a cached 'ack' sound, let Gemini respond naturally
         to the greeting so the conversation feels alive from the first word.
@@ -362,6 +379,12 @@ class GeminiLiveNode(Node):
         if "hello" not in word and "wake" not in word:
             return
         self.get_logger().info(f"Gemini: injecting greeting for wake word '{word}'")
+        if self.doa_enabled and self.latest_doa_angle != -1:
+            self.focused_doa_angle = self.latest_doa_angle
+            self.get_logger().info(
+                f'Locking focused DOA angle to wake word direction: '
+                f'{self.focused_doa_angle}°'
+            )
         # Inject as a user turn so Gemini responds with a natural greeting
         self._send_raw({
             "clientContent": {
@@ -444,6 +467,12 @@ class GeminiLiveNode(Node):
         if raw_speaker != 'Unknown' and speaker == raw_speaker:
             self.pending_focus_speaker = raw_speaker
             self.pending_focus_at = time.monotonic()
+            if self.doa_enabled and self.latest_doa_angle != -1:
+                self.focused_doa_angle = self.latest_doa_angle
+                self.get_logger().info(
+                    f'Locking focused DOA angle to identified speaker: '
+                    f'{self.focused_doa_angle}°'
+                )
             
         speaker_changed = speaker != self.current_speaker
         if speaker_changed:
@@ -499,7 +528,8 @@ class GeminiLiveNode(Node):
         self._inject_context_update('context_updated')
 
     def _inject_context_update(self, reason: str):
-        """Send a silent context note to Gemini mid-session.
+        """
+        Send a silent context note to Gemini mid-session.
 
         Instead of closing and reopening the WebSocket (which causes a 3-second
         silence gap), we push a brief system note as a user turn with
@@ -556,6 +586,13 @@ class GeminiLiveNode(Node):
             self.waiting_for_robot_confirmation = False
             self._request_reconnect("robot_confirmation_done")
 
+    def doa_callback(self, msg: Int32):
+        if not self.doa_enabled:
+            return
+        self.latest_doa_angle = msg.data
+        if self.session_active and not self.robot_speaking:
+            self.current_segment_doa_angles.append(msg.data)
+
     def audio_callback(self, msg: Audio):
         if not self.session_active:
             return
@@ -605,6 +642,20 @@ class GeminiLiveNode(Node):
             if is_speaker_diff or is_name_diff:
                 self.get_logger().info("Gemini Live: Speaker or name mismatch detected at start of turn. Injecting context update.")
                 self._inject_context_update("new_user_turn")
+
+        # Spatial DOA Gating
+        if (self.doa_enabled and self.focused_doa_angle != -1 and
+                self.latest_doa_angle != -1):
+            dist = self._angular_distance(
+                self.latest_doa_angle, self.focused_doa_angle
+            )
+            if dist > self.doa_focus_margin:
+                pcm = np.zeros_like(pcm)
+                if self._audio_chunks_sent % 50 == 0:
+                    self.get_logger().info(
+                        f'🚫 DOA Gating: mute (DOA={self.latest_doa_angle}°, '
+                        f'focus={self.focused_doa_angle}°, diff={dist:.1f}°)'
+                    )
 
         # Resample to API rate (Gemini expects 16kHz)
         pcm_api = self._resample_pcm16(pcm, input_sample_rate, self.api_sample_rate)
@@ -759,6 +810,8 @@ class GeminiLiveNode(Node):
         # Model turn (assistant response)
         model_turn = server_content.get("modelTurn")
         if model_turn:
+            if self._ignore_model_response:
+                return
             parts = model_turn.get("parts", []) or []
             for part in parts:
                 inline_data = part.get("inlineData")
@@ -780,10 +833,44 @@ class GeminiLiveNode(Node):
             self._start_user_audio_capture()
             self._is_new_user_turn = True
             self.get_logger().info("Gemini Live: turn complete, turn initialized")
+
+            # Calculate average DOA for the segment
+            avg_doa = -1
+            if self.doa_enabled and self.current_segment_doa_angles:
+                avg_doa = self._get_circular_average(
+                    self.current_segment_doa_angles
+                )
+                self.get_logger().info(f'DOA segment average: {avg_doa}°')
+            self.current_segment_doa_angles = []
+
+            # Check if side conversation
+            if (self.doa_enabled and self.focused_doa_angle != -1 and 
+                    avg_doa != -1):
+                dist = self._angular_distance(avg_doa, self.focused_doa_angle)
+                if dist > self.doa_focus_margin:
+                    transcript = self._current_user_transcript or ''
+                    normalized = normalize_realtime_text(transcript)
+                    direct_address = has_direct_robot_address(normalized)
+                    reengagement = is_reengagement_phrase(normalized)
+                    
+                    if not (direct_address or reengagement):
+                        self.get_logger().info(
+                            f'🚫 Blocking side conversation: DOA={avg_doa}°, '
+                            f'focus={self.focused_doa_angle}°, diff={dist:.1f}°'
+                        )
+                        self._ignore_model_response = True
+                        stop_msg = Bool()
+                        stop_msg.data = True
+                        self.tts_stop_pub.publish(stop_msg)
+                        self._current_user_transcript = ''
+                        self._handle_turn_complete()
+                        return
+
             if self._current_user_transcript:
                 self._handle_input_transcript(self._current_user_transcript)
                 self._current_user_transcript = ""
             self._handle_turn_complete()
+            self._ignore_model_response = False
 
     def _handle_output_audio(self, inline_data: dict):
         mime = str(inline_data.get("mimeType", "") or "")
@@ -1201,7 +1288,8 @@ class GeminiLiveNode(Node):
     # ─── Utilities ───────────────────────────────────────────────────────────
 
     def _request_reconnect(self, reason: str, immediate_user_turn: bool = False):
-        """Close the WebSocket to force reconnection with a fresh setup message.
+        """
+        Close the WebSocket to force reconnection with a fresh setup message.
 
         Gemini Live API accepts 'setup' only once per session, so the only way
         to update system instructions mid-conversation is to reconnect.
@@ -1487,6 +1575,21 @@ class GeminiLiveNode(Node):
             "numele tau", "cum te cheama", "cum te numesti", "care e numele tau",
         )
         return any(p in text for p in patterns)
+
+    @staticmethod
+    def _get_circular_average(angles: list) -> int:
+        if not angles:
+            return -1
+        x_sum = sum(math.cos(math.radians(a)) for a in angles)
+        y_sum = sum(math.sin(math.radians(a)) for a in angles)
+        avg_rad = math.atan2(y_sum, x_sum)
+        avg_deg = math.degrees(avg_rad)
+        return int(round(avg_deg)) % 360
+
+    @staticmethod
+    def _angular_distance(a: int, b: int) -> int:
+        diff = (a - b + 180) % 360 - 180
+        return abs(diff)
 
 
 def main(args=None):

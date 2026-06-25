@@ -56,6 +56,8 @@ gemini_live_node:
     assistant_echo_window_s: 8.0
     assistant_echo_similarity_threshold: 84.0
     google_search_enabled: true
+    doa_enabled: true
+    doa_focus_margin: 45.0
     capture_during_playback: true
     speaker_switch_hits_required: 2
     language_switch_hits_required: 2
