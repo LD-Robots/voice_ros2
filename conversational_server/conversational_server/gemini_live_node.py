@@ -1155,8 +1155,15 @@ class GeminiLiveNode(Node):
             'you must immediately update your context, treat them as that person, and use their preferred name.'
         )
         extras.append(
-            'If the user asks who they are, whether you know their name, or if you need their facts or preferred language, '
-            'you must call the get_speaker_info tool to retrieve the current speaker context.'
+            'At the start of every user turn, you must call the '
+            'get_speaker_info tool to check who is speaking. If the '
+            'returned speaker name is known, greet them or address them by '
+            'their preferred name in your very next response (e.g., '
+            '\'Hello, Delia\' or \'Sure, Delia...\') to acknowledge them. '
+            'If the user asks who they are, whether you know their name, '
+            'or if you need their facts or preferred language, you must '
+            'call the get_speaker_info tool to retrieve the current '
+            'speaker context.'
         )
         if assistant_name_question:
             extras.append('The user is asking your name right now. Answer clearly with "My name is Robot."')
