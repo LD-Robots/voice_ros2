@@ -67,7 +67,7 @@
 
 /**/audio_capture_node:
   ros__parameters:
-    device_index: 3       # -1 = auto-detect (ReSpeaker will be found automatically)
+    device_index: -1       # -1 = auto-detect (ReSpeaker will be found automatically)
     respeaker_mode: false  # not needed: 1-channel firmware outputs mono natively
     respeaker_channel: 0
     stereo_mono_extract: true
