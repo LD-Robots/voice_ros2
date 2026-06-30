@@ -301,7 +301,9 @@ class SpeakerIdNode(Node):
                     match = None
 
                 # Perform dynamic unsupervised enrollment if enabled and speaker is Unknown
-                if self.unsupervised_enrollment_enabled and speaker_name == "Unknown" and new_embedding is not None:
+                # Skip candidate tracking if the speaker is Unknown only due to margin conflict
+                if (self.unsupervised_enrollment_enabled and speaker_name == "Unknown" and new_embedding is not None
+                        and (match is None or match.reason != 'margin_too_small')):
                     # Ignore short noise segments
                     if duration >= 1.0:
                         promoted_label = self._process_unsupervised_candidate(

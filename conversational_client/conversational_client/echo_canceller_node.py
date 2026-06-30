@@ -40,6 +40,8 @@ class EchoCancellerNode(Node):
         self.sample_rate = self.get_parameter('sample_rate').value
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
         self.playback_gain = float(self.get_parameter('playback_gain').value)
+        self.declare_parameter('mic_gain', 2.5)  # Amplificare software post-AEC
+        self.mic_gain = float(self.get_parameter('mic_gain').value)
         
         self.declare_parameter('raw_wav_path', '')
         self.declare_parameter('ref_wav_path', '')
@@ -292,6 +294,8 @@ class EchoCancellerNode(Node):
         msg.data = final_clean.tolist()
         self.clean_pub.publish(msg)
         if self.wav_clean: self.wav_clean.writeframes(final_clean.tobytes())
+        if self.mic_gain != 1.0:
+            final_clean = np.clip(final_clean.astype(np.float32) * self.mic_gain, -32768, 32767).astype(np.int16)
 
     def destroy_node(self):
         for f in [self.wav_raw, self.wav_ref_aligned, self.wav_clean]:

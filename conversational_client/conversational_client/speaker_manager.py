@@ -133,7 +133,12 @@ class SpeakerManager:
             emb_path = os.path.join(self.enrollment_dir, f"{speaker_name}.emb.npy")
 
             try:
-                if os.path.exists(emb_path):
+                # Check if cache exists and is newer than the wav file
+                cache_valid = False
+                if os.path.exists(emb_path) and os.path.exists(wav_path):
+                    cache_valid = os.path.getmtime(emb_path) >= os.path.getmtime(wav_path)
+
+                if cache_valid:
                     embedding_np = np.load(emb_path)
                     embedding = torch.from_numpy(embedding_np).float()
                     self.speaker_db[speaker_name] = embedding
