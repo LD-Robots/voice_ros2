@@ -21,7 +21,7 @@
       "facts": [
         "this one can you tell me another one"
       ],
-      "last_seen": "2026-06-25T07:33:45.225548+00:00"
+      "last_seen": "2026-06-30T08:52:39.622263+00:00"
     },
     "speaker_002": {
       "voice_label": "speaker_002",
@@ -69,7 +69,7 @@
     },
     "valee": {
       "voice_label": "valee",
-      "preferred_name": "Va Len",
+      "preferred_name": "Valee",
       "preferred_language": "",
       "facts": [],
       "last_seen": "2026-06-22T13:51:05.807694+00:00"

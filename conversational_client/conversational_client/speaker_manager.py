@@ -59,6 +59,16 @@ except Exception:
 from speechbrain.inference.speaker import EncoderClassifier
 
 from .speaker_match_utils import SpeakerMatchResult, select_speaker_match
+from .speaker_scoring import build_centroid, cosine, l2_normalize
+from .speaker_embedding_store import (
+    load_speaker_embeddings,
+    save_speaker_embeddings,
+)
+
+# Identifies the embedding backend. Persisted voiceprints are only reused when
+# this matches the stored model id, so changing the model safely invalidates
+# stale vectors instead of mixing incompatible geometry.
+EMBEDDING_MODEL_ID = 'ecapa-voxceleb'
 
 
 class SpeakerManager:
@@ -83,6 +93,10 @@ class SpeakerManager:
         self.enrollment_dir = enrollment_dir
         self.threshold = threshold
         self.min_margin = max(0.0, float(min_margin))
+        self.embedding_model_id = EMBEDDING_MODEL_ID
+        # How many clips each stored centroid was averaged from (for logging /
+        # incremental re-enrollment); kept in step with self.speaker_db.
+        self._clip_counts = {}
         self.model_cache_dir = os.path.expanduser(
             "~/.cache/speechbrain/spkrec-ecapa-voxceleb"
         )
@@ -111,35 +125,137 @@ class SpeakerManager:
     # ENROLLMENT LOADING
     # ═══════════════════════════════════════════════════════════════════
 
+    def _collect_enrollment_clips(self):
+        """Group enrollment .wav files by speaker.
+
+        Two layouts are supported (and may be mixed):
+          * ``<dir>/<name>.wav``        -> speaker "name" enrolled from one clip
+          * ``<dir>/<name>/*.wav``      -> speaker "name" enrolled from a centroid
+                                           of every clip in that sub-folder
+        Multiple clips per speaker produce a far more robust template than a
+        single utterance, so prefer the sub-folder layout for new enrollments.
+        """
+        clips: dict[str, list[str]] = {}
+        for entry in sorted(os.listdir(self.enrollment_dir)):
+            full = os.path.join(self.enrollment_dir, entry)
+            if os.path.isdir(full):
+                wavs = [
+                    os.path.join(full, f)
+                    for f in sorted(os.listdir(full))
+                    if f.endswith('.wav')
+                ]
+                if wavs:
+                    clips.setdefault(entry, []).extend(wavs)
+            elif entry.endswith('.wav'):
+                clips.setdefault(os.path.splitext(entry)[0], []).append(full)
+        return clips
+
     def _load_enrollment(self):
-        """Load all .wav files from enrollment_dir and compute embeddings."""
+        """Build the speaker database, preferring saved voiceprints.
+
+        Precedence per speaker:
+          1. a persisted centroid in ``speaker_embeddings.json`` (no .wav, no
+             ECAPA recompute needed) — this is what lets a freshly deployed
+             robot recognize everyone from a single portable file;
+          2. otherwise, compute a centroid from the speaker's .wav clip(s) and
+             persist it so the next launch (or another robot) needs no audio.
+        """
 
         if not os.path.isdir(self.enrollment_dir):
             print(f"⚠️ Enrollment folder does not exist: {self.enrollment_dir}")
             return
 
-        wav_files = [f for f in os.listdir(self.enrollment_dir) if f.endswith('.wav')]
+        clips = self._collect_enrollment_clips()
+        stored, raw_stored = load_speaker_embeddings(
+            self.enrollment_dir, self.embedding_model_id
+        )
+        if raw_stored and not stored:
+            print(
+                "⚠️ Saved voiceprints were built with a different model — "
+                "rebuilding from .wav clips where available."
+            )
 
-        if not wav_files:
-            print(f"⚠️ No .wav files in: {self.enrollment_dir}")
+        labels = sorted(set(stored) | set(clips))
+        if not labels:
+            print(f"⚠️ No enrolled speakers in: {self.enrollment_dir}")
             return
 
-        print(f"🔄 Loading {len(wav_files)} voices from enrollment...")
+        print(f"🔄 Loading {len(labels)} voices from enrollment...")
+        recomputed = bool(raw_stored) and not stored
 
-        for wav_file in wav_files:
-            # Person name = file name without extension
-            speaker_name = os.path.splitext(wav_file)[0]
-            wav_path = os.path.join(self.enrollment_dir, wav_file)
+        for label in labels:
+            if label in stored:
+                self.speaker_db[label] = l2_normalize(stored[label])
+                self._clip_counts[label] = int(
+                    (raw_stored.get(label) or {}).get('clips', 1)
+                )
+                print(f"  ✅ {label} — loaded saved voiceprint")
+                continue
 
-            try:
-                embedding = self._compute_embedding_from_file(wav_path)
-                self.speaker_db[speaker_name] = embedding
-                print(f"  ✅ {speaker_name} — embedding calculated ({wav_file})")
-            except Exception as e:
-                print(f"  ❌ Error at {wav_file}: {e}")
+            embeddings = []
+            for wav_path in clips.get(label, []):
+                try:
+                    embeddings.append(self._embedding_np_from_file(wav_path))
+                except Exception as e:
+                    print(f"  ❌ Error at {os.path.basename(wav_path)}: {e}")
+
+            centroid = build_centroid(embeddings)
+            if centroid.size == 0:
+                print(f"  ❌ {label} — no usable enrollment clips")
+                continue
+
+            self.speaker_db[label] = centroid
+            self._clip_counts[label] = len(embeddings)
+            recomputed = True
+            print(f"  ✅ {label} — voiceprint from {len(embeddings)} clip(s) (saved)")
+
+        # Persist whenever anything was (re)computed so the on-disk store stays
+        # the authoritative, audio-free record.
+        if recomputed:
+            self._persist_embeddings()
 
         print(f"📊 Database: {len(self.speaker_db)} voices "
               f"({', '.join(self.speaker_db.keys())})")
+
+    def _persist_embeddings(self):
+        """Write the current voiceprint database to the portable store."""
+        try:
+            save_speaker_embeddings(
+                self.enrollment_dir,
+                self.embedding_model_id,
+                self.speaker_db,
+                self._clip_counts,
+            )
+        except Exception as e:
+            print(f"⚠️ Could not persist voiceprints: {e}")
+
+    def enroll_speaker(self, label, wav_paths, combine_with_existing=False):
+        """Compute (or refresh) a speaker's voiceprint from clips and persist it.
+
+        ``combine_with_existing`` averages the new clip(s) with the speaker's
+        current centroid (used when re-recognizing someone already enrolled), so
+        the template strengthens over time instead of being replaced.
+        """
+        embeddings = []
+        for wav_path in wav_paths:
+            try:
+                embeddings.append(self._embedding_np_from_file(wav_path))
+            except Exception as e:
+                print(f"  ❌ Error at {os.path.basename(wav_path)}: {e}")
+
+        prior_clips = 0
+        if combine_with_existing and label in self.speaker_db:
+            embeddings.append(self.speaker_db[label])
+            prior_clips = self._clip_counts.get(label, 0)
+
+        centroid = build_centroid(embeddings)
+        if centroid.size == 0:
+            raise RuntimeError(f'no_usable_clips_for_{label}')
+
+        self.speaker_db[label] = centroid
+        self._clip_counts[label] = prior_clips + len(wav_paths)
+        self._persist_embeddings()
+        return centroid
 
     def _ensure_placeholder_custom_module(self):
         """SpeechBrain tries to fetch an optional custom.py by default."""
@@ -180,6 +296,17 @@ class SpeakerManager:
         # Compute embedding
         embedding = self.classifier.encode_batch(signal)
         return embedding.squeeze()
+
+    def _embedding_np_from_file(self, wav_path):
+        """Embedding for an enrollment clip as a 1-D float32 numpy vector."""
+        return self._to_np(self._compute_embedding_from_file(wav_path))
+
+    @staticmethod
+    def _to_np(embedding) -> np.ndarray:
+        """Convert a torch embedding (or array) to a flat float32 numpy vector."""
+        if isinstance(embedding, torch.Tensor):
+            embedding = embedding.detach().cpu().numpy()
+        return np.asarray(embedding, dtype=np.float32).reshape(-1)
 
     @staticmethod
     def _load_audio_file(wav_path):
@@ -255,15 +382,15 @@ class SpeakerManager:
             threshold = self.threshold
 
         # Compute embedding for the incoming audio
-        new_embedding = self._compute_embedding_from_array(audio_float)
+        new_embedding = self._to_np(self._compute_embedding_from_array(audio_float))
 
         # ─────────────────────────────────────────────────────────
-        # Compare with all speakers in the database (cosine similarity)
+        # Compare with each speaker centroid (length-normalized cosine)
         # ─────────────────────────────────────────────────────────
-        scores = {}
-
-        for name, stored_embedding in self.speaker_db.items():
-            scores[name] = self._cosine_similarity(new_embedding, stored_embedding)
+        scores = {
+            name: cosine(new_embedding, centroid)
+            for name, centroid in self.speaker_db.items()
+        }
 
         return select_speaker_match(scores, threshold, min_margin)
 
@@ -278,32 +405,6 @@ class SpeakerManager:
         return self.identify(audio_float, threshold=threshold, min_margin=min_margin)
 
     # ═══════════════════════════════════════════════════════════════════
-    # COSINE SIMILARITY
-    # ═══════════════════════════════════════════════════════════════════
-
-    @staticmethod
-    def _cosine_similarity(vec_a, vec_b):
-        """
-        Compute cosine similarity between two vectors.
-
-        Returns:
-            float: Score between -1 and 1 (1 = identical, 0 = unrelated)
-        """
-        # Ensure 1D
-        vec_a = vec_a.flatten()
-        vec_b = vec_b.flatten()
-
-        dot_product = torch.dot(vec_a, vec_b)
-        norm_a = torch.norm(vec_a)
-        norm_b = torch.norm(vec_b)
-
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-
-        similarity = dot_product / (norm_a * norm_b)
-        return similarity.item()
-
-    # ═══════════════════════════════════════════════════════════════════
     # UTILITIES
     # ═══════════════════════════════════════════════════════════════════
 
@@ -314,6 +415,7 @@ class SpeakerManager:
     def reload(self):
         """Reload the database (useful after new enrollment)."""
         self.speaker_db.clear()
+        self._clip_counts.clear()
         self._load_enrollment()
 
 
