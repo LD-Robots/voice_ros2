@@ -8,7 +8,7 @@ echo "[ReSpeaker Tuning] Applying OUTSIDE-HEAD (Development) parameters..."
 
 python3 "$DIR/tuning.py" \
     AGCGAIN 1.0 \
-    NLATTENONOFF 1 \
+    NLATTENONOFF 0 \
     GAMMAVAD_SR 5.0 \
     GAMMA_E 4.0 \
     GAMMA_ETAIL 4.0 \

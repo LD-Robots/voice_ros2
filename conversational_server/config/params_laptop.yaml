@@ -50,14 +50,14 @@ gemini_live_node:
     short_transcript_dedupe_window_s: 4.0
     playback_input_filter_enabled: true  # Filtru software anti-echo rezidual
     playback_input_filter_post_playback_ms: 200   # Fereastra de protectie dupa stop playback (redusa pentru barge-in rapid)
-    playback_input_filter_min_rms_dbfs: -32.0     # Prag RMS mai strict, AEC curata deja ecoul major
+    playback_input_filter_min_rms_dbfs: -28.0     # Ridicat de la -32: ignora ecoul rezidual, prinde doar vocea ta (care acum e mai tare)
     playback_input_filter_hits_required: 2         # 2 hits consecutive necesare (era 1 prea permisiv, 3 prea strict)
     playback_input_filter_hold_ms: 300             # Gate ramas deschis 300ms dupa ultimul hit de voce
     assistant_echo_filter_enabled: true
     assistant_echo_window_s: 8.0
     assistant_echo_similarity_threshold: 84.0
     google_search_enabled: true
-    doa_enabled: true
+    doa_enabled: false
     doa_focus_margin: 120.0
     capture_during_playback: true
     speaker_switch_hits_required: 2
@@ -126,7 +126,7 @@ attention_manager_node:
 
 person_memory_store_node:
   ros__parameters:
-    auto_enroll_unknown_speakers: true
+    auto_enroll_unknown_speakers: false
     min_enrollment_segment_seconds: 1.2
     speaker_switch_hits_required: 2
     sticky_speaker_timeout_s: 180.0
@@ -172,6 +172,7 @@ echo_canceller_node:
     step_size: 0.15              # A bit more aggressive
     max_delay_ms: 400            # Real physical latency is ~100-300ms; keeping it small prevents false correlation peaks in speech
     playback_gain: 1.0           # FIX: default 0.5 sub-cancela ecoul → suprimare extra pe voce
+    mic_gain: 2.5                # Amplificare software a microfonului (compensare lipsa AGC hardware)
     debug_recording: true
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings

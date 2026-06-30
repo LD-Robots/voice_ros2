@@ -209,8 +209,8 @@ class EchoCancellerNode(Node):
             if len(footprint) >= self.sample_rate * 0.5:
                 slen = self.max_delay_samples + len(footprint)
                 area = self.get_ref_slice(slen, slen)
-                f_norm = (footprint - np.mean(footprint)) / (np.std(footprint) + 1e-6)
-                a_norm = (area - np.mean(area)) / (np.std(area) + 1e-6)
+                f_norm = (footprint - float(np.mean(footprint))) / (float(np.std(footprint)) + 1e-6)
+                a_norm = (area - float(np.mean(area))) / (float(np.std(area)) + 1e-6)
                 corr = signal.correlate(a_norm, f_norm, mode='valid')
                 peak = np.argmax(corr)
                 score = corr[peak] / len(f_norm)

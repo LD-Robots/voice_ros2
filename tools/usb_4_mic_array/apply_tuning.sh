@@ -12,7 +12,7 @@ echo "  -> If testing outside the head, please run: ./apply_tuning_outside_head.
 # We removed NLAEC_MODE because it was causing USB timeouts on this laptop
 python3 "$DIR/tuning.py" \
     AGCGAIN 1.0 \
-    NLATTENONOFF 1 \
+    NLATTENONOFF 0 \
     GAMMAVAD_SR 5.0 \
     GAMMA_E 3.0 \
     GAMMA_ETAIL 3.0 \

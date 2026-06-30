@@ -8,7 +8,7 @@ echo "[ReSpeaker Tuning] Applying IN-HEAD (Production) parameters..."
 
 python3 "$DIR/tuning.py" \
     AGCGAIN 1.0 \
-    NLATTENONOFF 1 \
+    NLATTENONOFF 0 \
     GAMMAVAD_SR 5.0 \
     GAMMA_E 3.0 \
     GAMMA_ETAIL 3.0 \
