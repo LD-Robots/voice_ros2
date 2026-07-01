@@ -28,7 +28,7 @@ import numpy as np
 import rclpy
 from conversational_interfaces.msg import Audio
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 
 from .person_profile_utils import (
     build_unique_speaker_label,
@@ -131,6 +131,8 @@ class SpeakerIdNode(Node):
             'voices',
             'person_memory.json',
         )
+        self.is_robot_speaking = False
+        self.last_robot_speaking_time = 0.0
 
         # ─────────────────────────────────────────────────────────
         # SPEAKER MANAGER (from Developer A)
@@ -160,6 +162,12 @@ class SpeakerIdNode(Node):
             String,
             '/speaker_enrollment_request',
             self._enrollment_request_callback,
+            10,
+        )
+        self.is_speaking_sub = self.create_subscription(
+            Bool,
+            '/is_speaking',
+            self.is_speaking_callback,
             10,
         )
 
@@ -239,6 +247,11 @@ class SpeakerIdNode(Node):
         except Exception as e:
             self.get_logger().error(f'❌ Error initializing SpeakerManager: {e}')
 
+    def is_speaking_callback(self, msg: Bool):
+        self.is_robot_speaking = msg.data
+        if msg.data:
+            self.last_robot_speaking_time = time.time()
+
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACK — AUDIO SEGMENT PROCESSING
     # ═══════════════════════════════════════════════════════════════════
@@ -249,6 +262,12 @@ class SpeakerIdNode(Node):
         and identifies the speaker.
         """
         if not msg.data:
+            return
+
+        # Ignore segments during or immediately after robot playback to prevent enrolling/adapting the robot's own voice
+        time_since_playback = time.time() - self.last_robot_speaking_time
+        if self.is_robot_speaking or time_since_playback < 1.5:
+            self.get_logger().info('🔇 Speaker ID skipped during/after robot playback (prevents echo matching)')
             return
 
         # ─────────────────────────────────────────────────────────

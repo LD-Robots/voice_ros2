@@ -73,7 +73,7 @@ audio_capture_node:
     respeaker_mode: false  # not needed: 1-channel firmware outputs mono natively
     respeaker_channel: 0
     stereo_mono_extract: true
-    gain: 1.0              # 3.0 when inside head (needs amplification), 1.0 when outside (avoid clipping)
+    gain: 3.0              # 3.0 when inside head (needs amplification), 1.0 when outside (avoid clipping)
     # gain: 3.0            # (Uncomment this line when microphone is mounted inside the head)
     chunk_ms: 20
     debug_recording: true
@@ -86,6 +86,7 @@ vad_node:
     min_silence_frames: 14
     use_hardware_vad: false
     energy_threshold: 150
+    aggressiveness: 3
 
 audio_segment_node:
   ros__parameters:
@@ -117,6 +118,7 @@ speaker_id_node:
     similarity_margin: 0.08
     enrollment_reuse_threshold: 0.58
     enrollment_reuse_margin: 0.16
+    unsupervised_enrollment_enabled: false
 
 attention_manager_node:
   ros__parameters:
@@ -177,4 +179,5 @@ echo_canceller_node:
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings
     deep_filter_enabled: true
-    deep_filter_attenuation: 70   # Redus: playback_gain=1.0 face AEC mai eficient, DF mai putin necesar
+    webrtc_ns_level: 2
+    webrtc_ns_enabled: true      # Enabled at level 2 to keep noise floor low so Gemini Live VAD detects turn end, preventing cascaded responses

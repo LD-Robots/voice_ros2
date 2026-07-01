@@ -43,6 +43,10 @@ class EchoCancellerNode(Node):
         
         self.declare_parameter('mic_gain', 2.5)  # Amplificare software post-AEC
         self.mic_gain = float(self.get_parameter('mic_gain').value)
+        self.declare_parameter('webrtc_ns_level', 2) # Noise Suppression level (0-3)
+        self.webrtc_ns_level = int(self.get_parameter('webrtc_ns_level').value)
+        self.declare_parameter('webrtc_ns_enabled', True)
+        self.webrtc_ns_enabled = bool(self.get_parameter('webrtc_ns_enabled').value)
         
         self.declare_parameter('raw_wav_path', '')
         self.declare_parameter('ref_wav_path', '')
@@ -59,7 +63,12 @@ class EchoCancellerNode(Node):
         self.apm: AudioProcessor | None = None
         if WEBRTC_AVAILABLE:
             # AGC disabled per user request to avoid over-amplification
-            self.apm = AudioProcessor(enable_aec=True, enable_ns=True, ns_level=4, enable_agc=False)
+            self.apm = AudioProcessor(
+                enable_aec=True,
+                enable_ns=self.webrtc_ns_enabled,
+                ns_level=self.webrtc_ns_level,
+                enable_agc=False
+            )
             self.apm.set_stream_format(16000, 1)
             self.apm.set_reverse_stream_format(16000, 1)
             self.get_logger().info("🚀 [AEC] WebRTC Engine Started (AEC+NS, AGC Disabled).")
