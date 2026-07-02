@@ -41,12 +41,23 @@ class EchoCancellerNode(Node):
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
         self.playback_gain = float(self.get_parameter('playback_gain').value)
         
-        self.declare_parameter('mic_gain', 2.5)  # Amplificare software post-AEC
+        self.declare_parameter('mic_gain', 1.0)  # Amplificare software post-AEC (1.0 = fara amplificare extra)
         self.mic_gain = float(self.get_parameter('mic_gain').value)
+        # capture_gain trebuie sincronizat cu audio_capture_node.gain din YAML
+        # Necesar pentru a scala referinta AEC la amplitudinea reala captata de microfon
+        self.declare_parameter('capture_gain', 1.0)  # Sincronizat cu audio_capture_node.gain
+        self.capture_gain = float(self.get_parameter('capture_gain').value)
         self.declare_parameter('webrtc_ns_level', 2) # Noise Suppression level (0-3)
         self.webrtc_ns_level = int(self.get_parameter('webrtc_ns_level').value)
         self.declare_parameter('webrtc_ns_enabled', True)
         self.webrtc_ns_enabled = bool(self.get_parameter('webrtc_ns_enabled').value)
+        # Residual gate: during/after robot playback, zero out AEC output if it
+        # is below the RMS threshold — eliminates residual echo fragments.
+        # Human barge-in voice is loud enough to exceed the threshold and pass.
+        self.declare_parameter('residual_gate_enabled', True)
+        self.residual_gate_enabled = bool(self.get_parameter('residual_gate_enabled').value)
+        self.declare_parameter('residual_gate_rms_threshold', 800)  # int16 RMS (~-32 dBFS)
+        self.residual_gate_rms_threshold = int(self.get_parameter('residual_gate_rms_threshold').value)
         
         self.declare_parameter('raw_wav_path', '')
         self.declare_parameter('ref_wav_path', '')
@@ -144,19 +155,28 @@ class EchoCancellerNode(Node):
         """Receive the audio that will be played on speakers and enqueue it as
         the AEC reference signal.  The audio may arrive at a different sample
         rate than the AEC processing rate (e.g. Gemini sends 24 kHz, AEC works
-        at 16 kHz), so we resample here.  We also apply the same playback gain
-        used by AudioPlaybackNode so the reference amplitude matches what the
-        microphone will actually capture."""
+        at 16 kHz), so we resample here.
+
+        SCALING LOGIC:
+        The reference must reflect what the microphone actually captures.
+        The acoustic echo path is:
+            API audio → playback_gain (audio_playback_node) → speaker → room → mic → capture_gain (audio_capture_node)
+        So the reference must be scaled by: playback_gain × capture_gain
+        Both values are read from YAML parameters and must be kept in sync
+        with audio_playback_node.gain and audio_capture_node.gain respectively.
+        """
         if len(msg.data) == 0:
             return
 
         src_rate = int(getattr(msg, 'sample_rate', None) or self.sample_rate)
         audio_f32 = np.array(msg.data, dtype=np.int16).astype(np.float32) / 32768.0
 
-        # Apply the same gain that AudioPlaybackNode applies before writing to
-        # the speaker so the reference level matches the actual acoustic output.
-        if self.playback_gain != 1.0:
-            audio_f32 = audio_f32 * self.playback_gain
+        # Scale reference to match what the microphone actually captures:
+        # - playback_gain: applied by audio_playback_node before speaker output
+        # - capture_gain: applied by audio_capture_node on microphone signal
+        ref_scale = self.playback_gain * self.capture_gain
+        if ref_scale != 1.0:
+            audio_f32 = audio_f32 * ref_scale
 
         # Resample to AEC processing rate if the source rate differs.
         if src_rate != self.sample_rate:
@@ -250,8 +270,12 @@ class EchoCancellerNode(Node):
                             self._drift_count = 0
 
         # Process through WebRTC
+        # Activate as soon as we have at least 1 consistent delay estimate
+        # (inspired by voice-cancellation/OpenAI branch which activated at current_delay > 0).
+        # _lock_count >= 1 means at least one correlated estimate — good enough to start;
+        # the full 5-frame lock is still tracked for the log message.
         final_clean = d_i16
-        if self.apm and self._lock_count >= 5:
+        if self.apm and (self._lock_count >= 5 or (self.current_delay > 0 and self._lock_count >= 1)):
             # Extract aligned reference
             ref_aligned = self.get_ref_slice(self.current_delay + n, n)
             if self.wav_ref_aligned:
@@ -302,6 +326,15 @@ class EchoCancellerNode(Node):
                     self.get_logger().error(f"❌ [DF] Enhancement Error: {e}")
         else:
             if self.wav_ref_aligned: self.wav_ref_aligned.writeframes(np.zeros(n, dtype=np.int16).tobytes())
+
+        # ── Residual Gate ─────────────────────────────────────────────────────
+        # Applied only during/after robot playback (when AEC was active).
+        # AEC residuals are low-amplitude; real human voice (barge-in) is higher.
+        # Threshold: int16 RMS.  Default 800 ≈ -32 dBFS (human voice >> -20 dBFS).
+        if self.residual_gate_enabled and (self.robot_speaking or self.tail_samples > 0):
+            rms = float(np.sqrt(np.mean(final_clean.astype(np.float32) ** 2)))
+            if rms < self.residual_gate_rms_threshold:
+                final_clean = np.zeros(len(final_clean), dtype=np.int16)
 
         if self.mic_gain != 1.0:
             final_clean = np.clip(final_clean.astype(np.float32) * self.mic_gain, -32768, 32767).astype(np.int16)

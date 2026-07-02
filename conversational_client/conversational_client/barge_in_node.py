@@ -11,7 +11,7 @@ Features (as in the original project):
 - Timers: min_voice_ms, debounce, cooldown, arm_after
 
 Subscribes to:
-  - /audio_raw (Audio) - direct analysis
+  - /audio_clean (Audio) - AEC-processed audio (robot voice already removed)
   - /tts_speaking (Bool) - TTS state
 
 Publishes to:
@@ -198,10 +198,13 @@ class BargeInNode(Node):
         # SUBSCRIBERS
         # ─────────────────────────────────────────────────────────
         
-        # Raw audio for local analysis
+        # AEC-processed audio for barge-in analysis.
+        # Using /audio_clean instead of /audio_raw ensures the robot's own voice
+        # has already been removed by the AEC pipeline, preventing false barge-ins
+        # triggered by speaker echo. Human voice is preserved in /audio_clean.
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            '/audio_clean',
             self.audio_callback,
             10
         )
