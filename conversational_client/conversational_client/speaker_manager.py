@@ -412,6 +412,30 @@ class SpeakerManager:
         """Return the list of speaker names in the database."""
         return list(self.speaker_db.keys())
 
+    def adapt_speaker(self, label, audio_float, max_clips: int = 20) -> bool:
+        """Fold a confidently-matched segment into a speaker's centroid (online).
+
+        Uses a clip-count-weighted running mean of unit vectors, so the template
+        strengthens toward the speaker's stable characteristics without a single
+        noisy segment dominating. Persisted so the gains carry across restarts
+        and to other robots. Callers must gate this on a high-confidence match to
+        avoid poisoning the template with the wrong voice.
+        """
+        centroid = self.speaker_db.get(label)
+        if centroid is None:
+            return False
+        emb = l2_normalize(self._to_np(self._compute_embedding_from_array(audio_float)))
+        if emb.size == 0 or emb.size != centroid.size:
+            return False
+        n = min(int(self._clip_counts.get(label, 1)), max_clips)
+        blended = l2_normalize(centroid * float(n) + emb)
+        if blended.size == 0:
+            return False
+        self.speaker_db[label] = blended
+        self._clip_counts[label] = min(n + 1, max_clips)
+        self._persist_embeddings()
+        return True
+
     def reload(self):
         """Reload the database (useful after new enrollment)."""
         self.speaker_db.clear()
