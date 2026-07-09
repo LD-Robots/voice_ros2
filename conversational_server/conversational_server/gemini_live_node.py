@@ -140,6 +140,9 @@ class GeminiLiveNode(Node):
         self.declare_parameter("utterance_capture_min_ms", 800)
         self.declare_parameter("name_context_wait_ms", 950)
         self.declare_parameter("google_search_enabled", False)
+        # Let Gemini decide (via function-calling) when the current speaker
+        # introduces their own name, instead of relying on static regex phrases.
+        self.declare_parameter("name_capture_tool_enabled", True)
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -184,6 +187,7 @@ class GeminiLiveNode(Node):
         self.utterance_capture_min_ms = int(self.get_parameter("utterance_capture_min_ms").value)
         self.name_context_wait_ms = max(0, int(self.get_parameter("name_context_wait_ms").value))
         self.google_search_enabled = bool(self.get_parameter("google_search_enabled").value)
+        self.name_capture_tool_enabled = bool(self.get_parameter("name_capture_tool_enabled").value)
         self.base_instructions = str(self.get_parameter("instructions").value)
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter("sticky_speaker_timeout_s").value),
@@ -295,6 +299,7 @@ class GeminiLiveNode(Node):
         self.status_pub = self.create_publisher(String, "gemini_live_status", 10)
         self.session_pub = self.create_publisher(Bool, "session_active", 10)
         self.end_session_pub = self.create_publisher(Bool, "end_session_external", 10)
+        self.introduced_name_pub = self.create_publisher(String, "introduced_name", 10)
 
         # Subscriptions
         self.audio_sub = self.create_subscription(Audio, "audio_clean", self.audio_callback, 10)
@@ -703,10 +708,13 @@ class GeminiLiveNode(Node):
                 name = fc.get("name", "")
                 args = fc.get("args", {})
                 self.get_logger().info(f"  - tool: {name}, args: {args}")
+                result = "ok"
+                if name == "remember_person":
+                    result = self._handle_remember_person(args)
                 responses.append({
                     "id": call_id,
                     "name": name,
-                    "response": {"result": "ok"}
+                    "response": {"result": result}
                 })
                 
             if responses:
@@ -983,6 +991,24 @@ class GeminiLiveNode(Node):
 
     # ─── Session Setup ───────────────────────────────────────────────────────
 
+    def _handle_remember_person(self, args: dict) -> str:
+        """Forward a Gemini-detected self-introduction to the enrollment path.
+
+        The LLM decides *that* a self-introduction happened (any language /
+        phrasing); person_memory_store_node still owns the audio buffer, the
+        Unknown-speaker gate, and the actual voiceprint enrollment.
+        """
+        name = str((args or {}).get("name", "") or "").strip()
+        language = str((args or {}).get("language", "") or "").strip()
+        if not name:
+            return "no name provided"
+        payload = {"preferred_name": name, "preferred_language": language}
+        msg = String()
+        msg.data = json.dumps(payload, separators=(",", ":"))
+        self.introduced_name_pub.publish(msg)
+        self.get_logger().info(f"remember_person -> enrollment request for '{name}'")
+        return "acknowledged"
+
     def _send_setup(self):
         if not self._connected.is_set() or self.current_backend != "gemini_live":
             return
@@ -992,6 +1018,33 @@ class GeminiLiveNode(Node):
         instructions = self._build_instructions()
 
         tools: list = [{"googleSearch": {}}] if self.google_search_enabled else []
+        if self.name_capture_tool_enabled:
+            tools.append({
+                "functionDeclarations": [{
+                    "name": "remember_person",
+                    "description": (
+                        "Call this when the CURRENT speaker states, spells, or "
+                        "asks to be called by their OWN name, in any language or "
+                        "phrasing (e.g. 'my name is Mario', 'call me Mario', "
+                        "'sunt Mario', 'eu sunt Mario'). Do NOT call it for other "
+                        "people's names or when merely mentioning a name."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "the speaker's own name",
+                            },
+                            "language": {
+                                "type": "string",
+                                "description": "language code if evident, e.g. en or ro",
+                            },
+                        },
+                        "required": ["name"],
+                    },
+                }]
+            })
 
         setup_payload: dict = {
             "model": f"models/{self.model}",

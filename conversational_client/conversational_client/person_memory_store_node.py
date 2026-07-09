@@ -8,6 +8,7 @@ import json
 import os
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from .person_profile_utils import (
     extract_language_preference,
     extract_preferred_name,
     migrate_legacy_auto_voice_labels,
+    normalize_person_name,
     normalize_person_record,
     resolve_preferred_name_update,
     write_speaker_profile_sidecar,
@@ -57,8 +59,13 @@ class PersonMemoryStoreNode(Node):
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
         self.declare_parameter('auto_enroll_unknown_speakers', True)
-        self.declare_parameter('max_enrollment_segment_age_s', 8.0)
+        # Gemini Live transcripts lag the audio by several seconds, so the
+        # window that decides whether recent audio is "fresh enough" to enroll
+        # must comfortably exceed that latency (was 8.0 -> missed real intros).
+        self.declare_parameter('max_enrollment_segment_age_s', 20.0)
         self.declare_parameter('min_enrollment_segment_seconds', 1.2)
+        # Cap on the concatenated enrollment clip assembled from recent segments.
+        self.declare_parameter('max_enrollment_clip_seconds', 12.0)
 
         self.memory_file = str(self.get_parameter('memory_file').value)
         self.max_facts_per_person = int(self.get_parameter('max_facts_per_person').value)
@@ -75,6 +82,9 @@ class PersonMemoryStoreNode(Node):
         self.min_enrollment_segment_seconds = float(
             self.get_parameter('min_enrollment_segment_seconds').value
         )
+        self.max_enrollment_clip_seconds = float(
+            self.get_parameter('max_enrollment_clip_seconds').value
+        )
         self.pending_enrollment_dir = os.path.join(
             str(workspace_root) if workspace_root else os.getcwd(),
             'voices',
@@ -89,7 +99,9 @@ class PersonMemoryStoreNode(Node):
         self.current_speaker = 'Unknown'
         self.last_raw_speaker = 'Unknown'
         self.memory = self._load_memory()
-        self.latest_segment = None
+        # Rolling buffer of recent user segments so enrollment can assemble a
+        # clip from the audio just before the (laggy) intro transcript arrives.
+        self.recent_segments = deque(maxlen=16)
         self.pending_enrollment_paths = set()
 
         self.speaker_sub = self.create_subscription(String, 'speaker_id', self._speaker_callback, 10)
@@ -109,6 +121,16 @@ class PersonMemoryStoreNode(Node):
             Transcription,
             'attended_transcription',
             self._transcription_callback,
+            10,
+        )
+        # Gemini function-calling path: the LLM decides a self-introduction
+        # happened (any language/phrasing) and publishes the name here. This is
+        # the flexible alternative to the static regex patterns, which stay as a
+        # fallback in _transcription_callback.
+        self.introduced_name_sub = self.create_subscription(
+            String,
+            'introduced_name',
+            self._introduced_name_callback,
             10,
         )
         self.enrollment_status_sub = self.create_subscription(
@@ -135,12 +157,12 @@ class PersonMemoryStoreNode(Node):
     def _remember_latest_segment(self, msg: Audio):
         if not msg.data:
             return
-        self.latest_segment = {
+        self.recent_segments.append({
             'data': list(msg.data),
             'sample_rate': int(msg.sample_rate),
             'channels': int(msg.channels or 1),
             'captured_at': time.monotonic(),
-        }
+        })
 
     def _transcription_callback(self, msg: Transcription):
         normalized = normalize_text(msg.text)
@@ -206,33 +228,78 @@ class PersonMemoryStoreNode(Node):
             self.get_logger().info(f'Updated memory for speaker={self.current_speaker}')
             self._publish_context()
 
-    def _request_speaker_enrollment(self, preferred_name: str, preferred_language: str, fact: str):
-        if self.latest_segment is None:
-            self.get_logger().warning(
-                f'Cannot enroll "{preferred_name}" yet: no recent audio segment available'
-            )
+    def _introduced_name_callback(self, msg: String):
+        """Enroll a speaker whose name Gemini captured via function-calling."""
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            self.get_logger().warning('Invalid introduced_name payload')
             return
 
-        segment_age_s = time.monotonic() - float(self.latest_segment.get('captured_at', 0.0))
-        if segment_age_s > self.max_enrollment_segment_age_s:
-            self.get_logger().warning(
-                f'Cannot enroll "{preferred_name}" yet: latest segment is too old ({segment_age_s:.1f}s)'
-            )
+        name = normalize_person_name(str(payload.get('preferred_name', '') or ''))
+        if not name:
             return
+        language = str(payload.get('preferred_language', '') or '').strip().lower()
+        language = language if language in ('en', 'ro') else ''
 
-        duration_s = len(self.latest_segment['data']) / max(1, int(self.latest_segment['sample_rate']))
+        # Same gate as the regex path: only auto-enroll a not-yet-known speaker.
+        if not self.auto_enroll_unknown_speakers or self.last_raw_speaker != 'Unknown':
+            return
+        self._request_speaker_enrollment(name, language, '')
+
+    def _collect_enrollment_audio(self):
+        """Assemble an enrollment clip from the freshest recent user segments.
+
+        Because Gemini transcripts lag the audio, a single "latest" segment is
+        often already stale by the time the intro text arrives. We instead take
+        the newest contiguous segments within ``max_enrollment_segment_age_s``
+        and concatenate them (capped at ``max_enrollment_clip_seconds``), which
+        both fixes the latency race and yields a longer, more robust voiceprint.
+
+        Returns ``((audio_int16, sample_rate), '')`` or ``(None, reason)``.
+        """
+        now = time.monotonic()
+        fresh = [
+            seg for seg in self.recent_segments
+            if (now - float(seg.get('captured_at', 0.0))) <= self.max_enrollment_segment_age_s
+        ]
+        if not fresh:
+            return None, 'no recent audio segment available'
+
+        sample_rate = int(fresh[-1]['sample_rate'])
+        chunks = []
+        total_samples = 0
+        cap_samples = int(self.max_enrollment_clip_seconds * max(1, sample_rate))
+        for seg in reversed(fresh):
+            if int(seg['sample_rate']) != sample_rate:
+                break  # don't mix sample rates
+            chunks.append(seg['data'])
+            total_samples += len(seg['data'])
+            if total_samples >= cap_samples:
+                break
+        chunks.reverse()
+
+        audio = np.concatenate(
+            [np.array(c, dtype=np.int16) for c in chunks]
+        ) if chunks else np.array([], dtype=np.int16)
+        duration_s = len(audio) / max(1, sample_rate)
         if duration_s < self.min_enrollment_segment_seconds:
+            return None, f'recent audio is too short ({duration_s:.2f}s)'
+        return (audio, sample_rate), ''
+
+    def _request_speaker_enrollment(self, preferred_name: str, preferred_language: str, fact: str):
+        result, reason = self._collect_enrollment_audio()
+        if result is None:
             self.get_logger().warning(
-                f'Cannot enroll "{preferred_name}" yet: latest segment is too short ({duration_s:.2f}s)'
+                f'Cannot enroll "{preferred_name}" yet: {reason}'
             )
             return
+        audio, sample_rate = result
 
         os.makedirs(self.pending_enrollment_dir, exist_ok=True)
         request_id = str(uuid.uuid4())
         source_wav = os.path.join(self.pending_enrollment_dir, f'{request_id}.wav')
 
-        audio = np.array(self.latest_segment['data'], dtype=np.int16)
-        sample_rate = int(self.latest_segment['sample_rate'])
         sf.write(source_wav, audio, sample_rate, subtype='PCM_16')
         self.pending_enrollment_paths.add(source_wav)
 
