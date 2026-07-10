@@ -17,6 +17,7 @@ If the enrollment database is empty, it always publishes "Unknown".
 
 import json
 import os
+import time
 import warnings
 from pathlib import Path
 
@@ -35,6 +36,8 @@ from .person_profile_utils import (
     default_preferred_name_for_voice_label,
     migrate_legacy_auto_voice_labels,
 )
+from .speaker_scoring import TemporalSpeakerSmoother
+from .speaker_embedding_store import has_any_speakers
 
 try:
     from .speaker_manager import SpeakerManager
@@ -88,6 +91,20 @@ class SpeakerIdNode(Node):
         self.declare_parameter('enrollment_reuse_threshold', 0.58)
         self.declare_parameter('enrollment_reuse_margin', 0.16)
         self.declare_parameter('sample_rate', 16000)
+        # Temporal smoothing of the published /speaker_id stream. Per-segment
+        # ECAPA embeddings are noisy; smoothing kills single-segment flip-flops.
+        self.declare_parameter('enable_temporal_smoothing', True)
+        self.declare_parameter('smoothing_switch_hits', 2)
+        self.declare_parameter('smoothing_unknown_hits', 3)
+        self.declare_parameter('smoothing_window_s', 8.0)
+        # Online voiceprint adaptation: fold confidently-matched segments back
+        # into the speaker's template so weak initial enrollments strengthen and
+        # separate over time (raising scores / margins). Gated hard to avoid
+        # poisoning a template with the wrong voice.
+        self.declare_parameter('enable_voiceprint_adaptation', True)
+        self.declare_parameter('adapt_min_score', 0.60)
+        self.declare_parameter('adapt_min_margin', 0.10)
+        self.declare_parameter('adapt_min_interval_s', 20.0)
 
         self.enrollment_dir = self.get_parameter('enrollment_dir').value
         self.similarity_threshold = self.get_parameter('similarity_threshold').value
@@ -95,6 +112,19 @@ class SpeakerIdNode(Node):
         self.enrollment_reuse_threshold = self.get_parameter('enrollment_reuse_threshold').value
         self.enrollment_reuse_margin = self.get_parameter('enrollment_reuse_margin').value
         self.sample_rate = self.get_parameter('sample_rate').value
+        self.enable_temporal_smoothing = self.get_parameter('enable_temporal_smoothing').value
+        self.smoother = TemporalSpeakerSmoother(
+            switch_hits=self.get_parameter('smoothing_switch_hits').value,
+            unknown_hits=self.get_parameter('smoothing_unknown_hits').value,
+            window_s=self.get_parameter('smoothing_window_s').value,
+        )
+        self.enable_voiceprint_adaptation = bool(
+            self.get_parameter('enable_voiceprint_adaptation').value
+        )
+        self.adapt_min_score = float(self.get_parameter('adapt_min_score').value)
+        self.adapt_min_margin = float(self.get_parameter('adapt_min_margin').value)
+        self.adapt_min_interval_s = float(self.get_parameter('adapt_min_interval_s').value)
+        self._last_adapt = {}
         self.memory_file = os.path.join(
             str(workspace_root) if workspace_root else os.getcwd(),
             'voices',
@@ -168,10 +198,14 @@ class SpeakerIdNode(Node):
             )
             return
 
+        # Enrollment data is either raw .wav clips OR a persisted, portable
+        # voiceprint store (speaker_embeddings.json). A freshly deployed robot
+        # may carry only the store and no audio, so accept either.
         wav_files = [f for f in os.listdir(self.enrollment_dir) if f.endswith('.wav')]
-        if not wav_files:
+        if not wav_files and not has_any_speakers(self.enrollment_dir):
             self.get_logger().warn(
-                f'⚠️ Enrollment folder is empty: {self.enrollment_dir}'
+                f'⚠️ No voiceprints yet (no .wav clips and no saved '
+                f'embeddings): {self.enrollment_dir}'
             )
             return
 
@@ -200,6 +234,35 @@ class SpeakerIdNode(Node):
     # ═══════════════════════════════════════════════════════════════════
     # CALLBACK — AUDIO SEGMENT PROCESSING
     # ═══════════════════════════════════════════════════════════════════
+
+    def _maybe_adapt_voiceprint(self, match, audio_float):
+        """Fold a high-confidence match back into the template (rate-limited).
+
+        Only adapts on a clear, unambiguous match so a wrong ID can't poison a
+        speaker's voiceprint: requires reason=='matched', a high score, and a
+        real margin over the runner-up (when more than one speaker exists).
+        """
+        if not self.enable_voiceprint_adaptation or self.speaker_manager is None:
+            return
+        if match.reason != 'matched' or match.speaker_name == 'Unknown':
+            return
+        if match.best_score < self.adapt_min_score:
+            return
+        has_runner_up = match.second_best_score > -1.0
+        if has_runner_up and (match.best_score - match.second_best_score) < self.adapt_min_margin:
+            return
+        now = time.monotonic()
+        if (now - self._last_adapt.get(match.speaker_name, 0.0)) < self.adapt_min_interval_s:
+            return
+        try:
+            if self.speaker_manager.adapt_speaker(match.speaker_name, audio_float):
+                self._last_adapt[match.speaker_name] = now
+                self.get_logger().debug(
+                    f'🧬 Adapted voiceprint for {match.speaker_name} '
+                    f'(score={match.best_score:.3f})'
+                )
+        except Exception as e:
+            self.get_logger().debug(f'Voiceprint adaptation skipped: {e}')
 
     def segment_callback(self, msg: Audio):
         """
@@ -237,6 +300,9 @@ class SpeakerIdNode(Node):
                 # Identify the speaker
                 match = self.speaker_manager.identify_with_details(audio_float)
                 speaker_name = match.speaker_name
+
+                # Opportunistically strengthen the matched template.
+                self._maybe_adapt_voiceprint(match, audio_float)
                 
                 # SMART LOGGING:
                 # - Show INFO only if someone is known
@@ -273,20 +339,27 @@ class SpeakerIdNode(Node):
             )
 
         # ─────────────────────────────────────────────────────────
+        # Temporal smoothing — stabilize "who is speaking" across the
+        # noisy per-segment stream before publishing.
+        # ─────────────────────────────────────────────────────────
+        published_name = speaker_name
+        if self.enable_temporal_smoothing:
+            published_name = self.smoother.update(speaker_name)
+            if published_name != speaker_name:
+                self.get_logger().debug(
+                    f'🌀 Smoothing: raw="{speaker_name}" -> held="{published_name}"'
+                )
+
+        # ─────────────────────────────────────────────────────────
         # Publish result
         # ─────────────────────────────────────────────────────────
         result_msg = String()
-        result_msg.data = speaker_name
+        result_msg.data = published_name
         self.speaker_pub.publish(result_msg)
 
-        if speaker_name != "Unknown":
-            self.get_logger().info(
-                f'📤 /speaker_id: "{speaker_name}" (segment: {duration:.2f}s)'
-            )
-        else:
-            self.get_logger().info(
-                f'📤 /speaker_id: "Unknown" (segment: {duration:.2f}s)'
-            )
+        self.get_logger().info(
+            f'📤 /speaker_id: "{published_name}" (segment: {duration:.2f}s)'
+        )
 
     def _enrollment_request_callback(self, msg: String):
         try:
@@ -374,17 +447,30 @@ class SpeakerIdNode(Node):
                     threshold=self.similarity_threshold,
                     min_margin=self.similarity_margin,
                 )
-            else:
-                self.speaker_manager.reload()
+
+            # Compute + persist this speaker's voiceprint. When we matched an
+            # existing speaker, blend the new clip into their template instead
+            # of replacing it so the voiceprint strengthens over time.
+            combine_with_existing = bool(
+                matched_existing_label and matched_existing_label != 'Unknown'
+            )
+            self.speaker_manager.enroll_speaker(
+                voice_label,
+                [target_wav],
+                combine_with_existing=combine_with_existing,
+            )
 
             loaded_speakers = self.speaker_manager.get_speakers()
             self.db_loaded = bool(loaded_speakers)
             if not self.db_loaded:
-                raise RuntimeError('speaker_database_empty_after_reload')
+                raise RuntimeError('speaker_database_empty_after_enroll')
 
             self.get_logger().info(
                 f'✅ Auto-enrolled speaker "{preferred_name}" as {voice_label}'
             )
+            # Drop any held identity so the freshly enrolled speaker is not
+            # suppressed by the smoother on the next segments.
+            self.smoother.reset()
             result_msg = String()
             result_msg.data = voice_label
             self.speaker_pub.publish(result_msg)

@@ -32,3 +32,11 @@ install/
 log/
 **/__pycache__/
 *.pyc
+
+# Voice enrollment audio is runtime/PII data — keep recordings local.
+# The portable registration record is voices/enrollment/speaker_embeddings.json
+# (+ *.profile.json / person_memory.json), which stay tracked.
+voices/**/*.wav
+voices/*.wav
+voices/quarantine/
+voices/pending_enrollment/
