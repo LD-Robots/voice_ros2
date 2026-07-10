@@ -121,7 +121,6 @@ def generate_launch_description():
             executable='audio_capture_node',
             name='audio_capture_node',
             parameters=[config_file_path, {
-                'device_index': LaunchConfiguration('audio_device_index'),
                 'debug_wav_path': debug_mic_wav,
             }]
         ),
@@ -208,8 +207,7 @@ def generate_launch_description():
             name='wake_word_node',
             parameters=[config_file_path, {
                 'custom_models': ','.join([f'{hello_model_path}:wake', f'{goodbye_model_path}:stop']),
-            }],
-            remappings=[('audio_raw', 'audio_clean')]
+            }]
         ),
 
         Node(

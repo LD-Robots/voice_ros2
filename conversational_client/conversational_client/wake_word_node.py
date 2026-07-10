@@ -274,7 +274,7 @@ class WakeWordNode(Node):
 
                     if self.audio_debug_count % 25 == 0:
                         scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in prediction.items()])
-                        self.get_logger().debug(f'👀 Scores: {scores_str}')
+                        self.get_logger().info(f'👀 Scores: {scores_str}')
                     
                 except Exception as e:
                     self.get_logger().error(f'OpenWakeWord prediction error: {e}')

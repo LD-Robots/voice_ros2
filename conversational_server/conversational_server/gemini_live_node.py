@@ -705,16 +705,20 @@ class GeminiLiveNode(Node):
                         'Unknown'
                     )
                     facts = self.person_context.get('facts', []) or []
+                    
+                    tool_output = {
+                        'speaker': self.current_speaker,
+                        'preferred_name': pref_name,
+                        'preferred_language': pref_lang,
+                        'facts': facts,
+                    }
                     responses.append({
                         'id': call_id,
                         'name': name,
                         'response': {
-                            'result': {
-                                'speaker': self.current_speaker,
-                                'preferred_name': pref_name,
-                                'preferred_language': pref_lang,
-                                'facts': facts,
-                            }
+                            'output': tool_output,
+                            'result': tool_output,
+                            **tool_output
                         }
                     })
                 else:
@@ -1105,17 +1109,7 @@ class GeminiLiveNode(Node):
             'Do not use any speaker preferred name as your own identity.'
         )
 
-        extras.append(
-            'At the start of every user turn, you must call the '
-            'get_speaker_info tool to check who is speaking. If the '
-            'returned speaker name is known, greet them or address them by '
-            'their preferred name in your very next response (e.g., '
-            '\'Hello, Delia\' or \'Sure, Delia...\') to acknowledge them. '
-            'If the user asks who they are, whether you know their name, '
-            'or if you need their facts or preferred language, you must '
-            'call the get_speaker_info tool to retrieve the current '
-            'speaker context.'
-        )
+
         if assistant_name_question:
             extras.append('The user is asking your name right now. Answer clearly with "My name is Robot."')
             extras.append("For this turn, ignore user profile names when composing the answer.")

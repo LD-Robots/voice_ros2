@@ -40,7 +40,7 @@
 /**/gemini_live_node:
   ros__parameters:
     model: "gemini-2.5-flash-native-audio-latest"
-    voice: "Kore"
+    voice: "Charon" #"Charon" - masculine voice (calm, mature), "Puck" - masculine voice (friendly, energetic), "Aoede" - feminine voice (dynamic, vibrant)
     input_sample_rate: 16000
     api_sample_rate: 24000
     vad_prefix_padding_ms: 400
@@ -49,14 +49,16 @@
     continued_turn_response_delay_ms: 450
     short_transcript_dedupe_window_s: 4.0
     playback_input_filter_enabled: true  # Filtru software anti-echo rezidual (dupa AEC WebRTC+DeepFilterNet)
-    playback_input_filter_post_playback_ms: 500   # Fereastra de protectie dupa stop playback (era 1200 - prea lung)
-    playback_input_filter_min_rms_dbfs: -32.0     # Prag RMS mai strict, AEC curata deja ecoul major
+    playback_input_filter_post_playback_ms: 200   # Fereastra de protectie dupa stop playback (redusa pentru barge-in rapid)
+    playback_input_filter_min_rms_dbfs: -28.0     # Ridicat de la -32: ignora ecoul rezidual, prinde doar vocea ta (care acum e mai tare)
     playback_input_filter_hits_required: 2         # Hits necesare pentru a deschide gate-ul (era 3)
     playback_input_filter_hold_ms: 300             # Gate ramas deschis 300ms dupa ultimul hit de voce
     assistant_echo_filter_enabled: true
     assistant_echo_window_s: 8.0
     assistant_echo_similarity_threshold: 84.0
     google_search_enabled: true
+    doa_enabled: false
+    doa_focus_margin: 120.0
     capture_during_playback: true
     speaker_switch_hits_required: 2
     language_switch_hits_required: 2
@@ -67,7 +69,7 @@
 
 /**/audio_capture_node:
   ros__parameters:
-    device_index: -1       # -1 = auto-detect (ReSpeaker will be found automatically)
+    device_index: 3       # -1 = auto-detect (ReSpeaker will be found automatically)
     respeaker_mode: false  # not needed: 1-channel firmware outputs mono natively
     respeaker_channel: 0
     stereo_mono_extract: true
@@ -83,6 +85,7 @@
     min_silence_frames: 14
     use_hardware_vad: false
     energy_threshold: 150
+    aggressiveness: 3
 
 /**/audio_segment_node:
   ros__parameters:
@@ -110,10 +113,11 @@
 
 /**/speaker_id_node:
   ros__parameters:
-    similarity_threshold: 0.40
+    similarity_threshold: 0.30
     similarity_margin: 0.08
     enrollment_reuse_threshold: 0.58
     enrollment_reuse_margin: 0.16
+    unsupervised_enrollment_enabled: false
 
 /**/attention_manager_node:
   ros__parameters:
@@ -123,7 +127,7 @@
 
 /**/person_memory_store_node:
   ros__parameters:
-    auto_enroll_unknown_speakers: true
+    auto_enroll_unknown_speakers: false
     min_enrollment_segment_seconds: 1.2
     speaker_switch_hits_required: 2
     sticky_speaker_timeout_s: 180.0
@@ -171,7 +175,7 @@
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings
     deep_filter_enabled: false   # Dezactivat: DF nu face AEC, conserva vocea robotului in output
-    webrtc_ns_level: 3           # Crescut la 3 (max) pentru supresie suplimentara a reziduurilor post-AEC
+    webrtc_ns_level: 3           # Crescut la 3 (max) pentru supresie suplimentara a reziduidelor post-AEC
     webrtc_ns_enabled: true      # Enabled to keep noise floor low so Gemini Live VAD detects turn end
     # Residual gate: zeroes out low-amplitude AEC residuals during/after robot playback.
     # Human barge-in voice (louder) passes through; robot echo fragments (quiet) are gated.
