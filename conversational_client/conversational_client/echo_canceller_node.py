@@ -21,8 +21,36 @@ except ImportError:
 
 # Import DeepFilterNet
 try:
+    import sys
+    import types
     import torch
     import torchaudio
+    # ─────────────────────────────────────────────────────────────────
+    # FIX: torchaudio 2.x removed torchaudio.backend.common.AudioMetaData,
+    # but DeepFilterNet 0.5.x still imports it at module load. Provide a
+    # minimal stub so `df` imports; the node feeds tensors straight to
+    # enhance(), so file-metadata handling is never exercised.
+    # ─────────────────────────────────────────────────────────────────
+    if 'torchaudio.backend.common' not in sys.modules:
+        _ta_backend = types.ModuleType('torchaudio.backend')
+        _ta_common = types.ModuleType('torchaudio.backend.common')
+
+        class AudioMetaData:  # noqa: D401 - compatibility stub
+            def __init__(self, sample_rate=0, num_frames=0, num_channels=0,
+                         bits_per_sample=0, encoding='UNKNOWN'):
+                self.sample_rate = sample_rate
+                self.num_frames = num_frames
+                self.num_channels = num_channels
+                self.bits_per_sample = bits_per_sample
+                self.encoding = encoding
+
+        _ta_common.AudioMetaData = AudioMetaData
+        _ta_backend.common = _ta_common
+        sys.modules.setdefault('torchaudio.backend', _ta_backend)
+        sys.modules['torchaudio.backend.common'] = _ta_common
+        if not hasattr(torchaudio, 'backend'):
+            torchaudio.backend = _ta_backend
+
     from df.enhance import init_df, enhance
     DF_AVAILABLE = True
 except ImportError:

@@ -17,6 +17,7 @@ If the enrollment database is empty, it always publishes "Unknown".
 
 import json
 import os
+import time
 import warnings
 from pathlib import Path
 
@@ -96,6 +97,14 @@ class SpeakerIdNode(Node):
         self.declare_parameter('smoothing_switch_hits', 2)
         self.declare_parameter('smoothing_unknown_hits', 3)
         self.declare_parameter('smoothing_window_s', 8.0)
+        # Online voiceprint adaptation: fold confidently-matched segments back
+        # into the speaker's template so weak initial enrollments strengthen and
+        # separate over time (raising scores / margins). Gated hard to avoid
+        # poisoning a template with the wrong voice.
+        self.declare_parameter('enable_voiceprint_adaptation', True)
+        self.declare_parameter('adapt_min_score', 0.60)
+        self.declare_parameter('adapt_min_margin', 0.10)
+        self.declare_parameter('adapt_min_interval_s', 20.0)
 
         self.enrollment_dir = self.get_parameter('enrollment_dir').value
         self.similarity_threshold = self.get_parameter('similarity_threshold').value
@@ -109,6 +118,13 @@ class SpeakerIdNode(Node):
             unknown_hits=self.get_parameter('smoothing_unknown_hits').value,
             window_s=self.get_parameter('smoothing_window_s').value,
         )
+        self.enable_voiceprint_adaptation = bool(
+            self.get_parameter('enable_voiceprint_adaptation').value
+        )
+        self.adapt_min_score = float(self.get_parameter('adapt_min_score').value)
+        self.adapt_min_margin = float(self.get_parameter('adapt_min_margin').value)
+        self.adapt_min_interval_s = float(self.get_parameter('adapt_min_interval_s').value)
+        self._last_adapt = {}
         self.memory_file = os.path.join(
             str(workspace_root) if workspace_root else os.getcwd(),
             'voices',
@@ -219,6 +235,35 @@ class SpeakerIdNode(Node):
     # CALLBACK — AUDIO SEGMENT PROCESSING
     # ═══════════════════════════════════════════════════════════════════
 
+    def _maybe_adapt_voiceprint(self, match, audio_float):
+        """Fold a high-confidence match back into the template (rate-limited).
+
+        Only adapts on a clear, unambiguous match so a wrong ID can't poison a
+        speaker's voiceprint: requires reason=='matched', a high score, and a
+        real margin over the runner-up (when more than one speaker exists).
+        """
+        if not self.enable_voiceprint_adaptation or self.speaker_manager is None:
+            return
+        if match.reason != 'matched' or match.speaker_name == 'Unknown':
+            return
+        if match.best_score < self.adapt_min_score:
+            return
+        has_runner_up = match.second_best_score > -1.0
+        if has_runner_up and (match.best_score - match.second_best_score) < self.adapt_min_margin:
+            return
+        now = time.monotonic()
+        if (now - self._last_adapt.get(match.speaker_name, 0.0)) < self.adapt_min_interval_s:
+            return
+        try:
+            if self.speaker_manager.adapt_speaker(match.speaker_name, audio_float):
+                self._last_adapt[match.speaker_name] = now
+                self.get_logger().debug(
+                    f'🧬 Adapted voiceprint for {match.speaker_name} '
+                    f'(score={match.best_score:.3f})'
+                )
+        except Exception as e:
+            self.get_logger().debug(f'Voiceprint adaptation skipped: {e}')
+
     def segment_callback(self, msg: Audio):
         """
         Receives a full audio segment (from audio_segment_node)
@@ -255,6 +300,9 @@ class SpeakerIdNode(Node):
                 # Identify the speaker
                 match = self.speaker_manager.identify_with_details(audio_float)
                 speaker_name = match.speaker_name
+
+                # Opportunistically strengthen the matched template.
+                self._maybe_adapt_voiceprint(match, audio_float)
                 
                 # SMART LOGGING:
                 # - Show INFO only if someone is known

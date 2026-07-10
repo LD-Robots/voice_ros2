@@ -131,6 +131,14 @@ class GeminiLiveNode(Node):
         self.declare_parameter("assistant_echo_similarity_threshold", 88.0)
         self.declare_parameter("assistant_echo_min_length", 8)
         self.declare_parameter("reconnect_delay_s", 3.0)
+        # A speaker-change reconnect is *intentional* (persona refresh), not an
+        # error — it must be fast so the user isn't left waiting after being
+        # recognized. Error reconnects still use the longer reconnect_delay_s.
+        self.declare_parameter("intentional_reconnect_delay_s", 0.3)
+        # Within this window after a speaker-change reconnect, treat further
+        # speaker switches as transient ID flips and update context cheaply
+        # (mid-session inject) instead of tearing down the session again.
+        self.declare_parameter("speaker_reconnect_debounce_s", 6.0)
         self.declare_parameter("sticky_speaker_timeout_s", 60.0)
         self.declare_parameter("speaker_switch_hits_required", 2)
         self.declare_parameter("language_switch_hits_required", 2)
@@ -143,6 +151,9 @@ class GeminiLiveNode(Node):
         self.declare_parameter("google_search_enabled", False)
         self.declare_parameter('doa_enabled', True)
         self.declare_parameter('doa_focus_margin', 90.0)
+        # Let Gemini decide (via function-calling) when the current speaker
+        # introduces their own name, instead of relying on static regex phrases.
+        self.declare_parameter("name_capture_tool_enabled", True)
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -183,6 +194,13 @@ class GeminiLiveNode(Node):
         self.assistant_echo_similarity_threshold = float(self.get_parameter("assistant_echo_similarity_threshold").value)
         self.assistant_echo_min_length = max(1, int(self.get_parameter("assistant_echo_min_length").value))
         self.reconnect_delay_s = float(self.get_parameter("reconnect_delay_s").value)
+        self.intentional_reconnect_delay_s = float(
+            self.get_parameter("intentional_reconnect_delay_s").value
+        )
+        self.speaker_reconnect_debounce_s = float(
+            self.get_parameter("speaker_reconnect_debounce_s").value
+        )
+        self._last_speaker_reconnect_s = 0.0
         self.utterance_capture_prefix_ms = int(self.get_parameter("utterance_capture_prefix_ms").value)
         self.utterance_capture_min_ms = int(self.get_parameter("utterance_capture_min_ms").value)
         self.name_context_wait_ms = max(0, int(self.get_parameter("name_context_wait_ms").value))
@@ -191,6 +209,7 @@ class GeminiLiveNode(Node):
         self.doa_focus_margin = float(
             self.get_parameter('doa_focus_margin').value
         )
+        self.name_capture_tool_enabled = bool(self.get_parameter("name_capture_tool_enabled").value)
         self.base_instructions = str(self.get_parameter("instructions").value)
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter("sticky_speaker_timeout_s").value),
@@ -311,6 +330,7 @@ class GeminiLiveNode(Node):
         self.status_pub = self.create_publisher(String, "gemini_live_status", 10)
         self.session_pub = self.create_publisher(Bool, "session_active", 10)
         self.end_session_pub = self.create_publisher(Bool, "end_session_external", 10)
+        self.introduced_name_pub = self.create_publisher(String, "introduced_name", 10)
 
         # Subscriptions
         self.audio_sub = self.create_subscription(Audio, "audio_clean", self.audio_callback, 10)
@@ -488,8 +508,29 @@ class GeminiLiveNode(Node):
                     str(self.person_context.get('preferred_language', ''))
                 )
 
-        # No mid-session injection needed. The model uses get_speaker_info tool CALL.
-        pass
+        # Trigger reconnection if WebSocket setup is out of sync
+        if speaker != 'Unknown':
+            current_name = self._voice_correlated_preferred_name()
+            is_speaker_diff = speaker != self._setup_speaker
+            is_name_diff = (current_name and
+                            current_name != self._setup_preferred_name)
+            if is_speaker_diff or is_name_diff:
+                now = time.monotonic()
+                # If we just reconnected for a speaker change, a new switch this
+                # soon is almost certainly an ID flip (weak/confusable
+                # voiceprints) — refresh context cheaply instead of stalling the
+                # conversation with another full session rebuild.
+                if (now - self._last_speaker_reconnect_s) < self.speaker_reconnect_debounce_s:
+                    self._inject_context_update('speaker_changed_debounced')
+                    return
+                self._last_speaker_reconnect_s = now
+                self._request_reconnect(
+                    'speaker_changed', immediate_user_turn=True
+                )
+                return
+                
+        if speaker_changed and speaker == 'Unknown':
+            self._inject_context_update('speaker_changed')
 
     def person_context_callback(self, msg: String):
         try:
@@ -641,7 +682,12 @@ class GeminiLiveNode(Node):
                 self.get_logger().error(f"Gemini Live WebSocket failed: {exc}")
             self._connected.clear()
             if self._running:
-                time.sleep(max(1.0, self.reconnect_delay_s))
+                # Intentional reconnects (persona/context refresh) reopen almost
+                # immediately; only genuine errors back off the full delay.
+                if self._intentional_reconnect:
+                    time.sleep(max(0.0, self.intentional_reconnect_delay_s))
+                else:
+                    time.sleep(max(1.0, self.reconnect_delay_s))
 
     def _on_open(self, ws):
         self._intentional_reconnect = False  # Reset flag on successful reconnect
@@ -698,7 +744,14 @@ class GeminiLiveNode(Node):
                 name = fc.get('name', '')
                 args = fc.get('args', {})
                 self.get_logger().info(f'  - tool: {name}, args: {args}')
-                if name == 'get_speaker_info':
+                if name == 'remember_person':
+                    result = self._handle_remember_person(args)
+                    responses.append({
+                        'id': call_id,
+                        'name': name,
+                        'response': {'result': result}
+                    })
+                elif name == 'get_speaker_info':
                     pref_name = self._voice_correlated_preferred_name() or 'Unknown'
                     pref_lang = (
                         self.person_context.get('preferred_language', '') or
@@ -727,7 +780,6 @@ class GeminiLiveNode(Node):
                         'name': name,
                         'response': {'result': 'ok'}
                     })
-
             if responses:
                 self._send_raw({
                     'toolResponse': {
@@ -1038,6 +1090,24 @@ class GeminiLiveNode(Node):
 
     # ─── Session Setup ───────────────────────────────────────────────────────
 
+    def _handle_remember_person(self, args: dict) -> str:
+        """Forward a Gemini-detected self-introduction to the enrollment path.
+
+        The LLM decides *that* a self-introduction happened (any language /
+        phrasing); person_memory_store_node still owns the audio buffer, the
+        Unknown-speaker gate, and the actual voiceprint enrollment.
+        """
+        name = str((args or {}).get("name", "") or "").strip()
+        language = str((args or {}).get("language", "") or "").strip()
+        if not name:
+            return "no name provided"
+        payload = {"preferred_name": name, "preferred_language": language}
+        msg = String()
+        msg.data = json.dumps(payload, separators=(",", ":"))
+        self.introduced_name_pub.publish(msg)
+        self.get_logger().info(f"remember_person -> enrollment request for '{name}'")
+        return "acknowledged"
+
     def _send_setup(self):
         if not self._connected.is_set() or self.current_backend != "gemini_live":
             return
@@ -1048,7 +1118,36 @@ class GeminiLiveNode(Node):
 
         tools: list = []
         if self.google_search_enabled:
-            tools.append({'googleSearch': {}})
+            tools.append({"googleSearch": {}})
+
+        # Register remember_person tool if enabled
+        if self.name_capture_tool_enabled:
+            tools.append({
+                "functionDeclarations": [{
+                    "name": "remember_person",
+                    "description": (
+                        "Call this when the CURRENT speaker states, spells, or "
+                        "asks to be called by their OWN name, in any language or "
+                        "phrasing (e.g. 'my name is Mario', 'call me Mario', "
+                        "'sunt Mario', 'eu sunt Mario'). Do NOT call it for other "
+                        "people's names or when merely mentioning a name."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "the speaker's own name",
+                            },
+                            "language": {
+                                "type": "string",
+                                "description": "language code if evident, e.g. en or ro",
+                            },
+                        },
+                        "required": ["name"],
+                    },
+                }]
+            })
 
         # Register get_speaker_info tool
         tools.append({
