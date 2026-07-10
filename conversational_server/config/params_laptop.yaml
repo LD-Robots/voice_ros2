@@ -71,7 +71,7 @@
     respeaker_mode: false  # not needed: 1-channel firmware outputs mono natively
     respeaker_channel: 0
     stereo_mono_extract: true
-    gain: 1.0
+    gain: 3.0              # 3.0 when inside head (needs amplification), 1.0 when outside (avoid clipping)
     chunk_ms: 20
     debug_recording: true
     # debug_wav_path is injected by the launch file (workspace_root/gemini_debug_mic.wav)
@@ -163,9 +163,17 @@
   ros__parameters:
     filter_length_ms: 100         # Increased to cover laptop reflections
     step_size: 0.15              # A bit more aggressive
-    max_delay_ms: 3000           # Increased to 3 seconds to cover extreme latency
+    max_delay_ms: 400            # Real physical latency is ~100-300ms; keeping it small prevents false correlation peaks in speech
+    playback_gain: 0.5           # SYNC cu audio_playback_node.gain: 0.5 (referinta AEC la amplitudinea corecta)
+    capture_gain: 3.0            # SYNC cu audio_capture_node.gain: 3.0 (reflecta amplificarea microfonului in referinta)
+    mic_gain: 1.0                # Post-AEC amplification (1.0 = off; amplificarea e acum inclusa in formula referintei)
     debug_recording: true
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings
-    deep_filter_enabled: true
-    deep_filter_attenuation: 100  # Percentage of noise reduction (0-100)
+    deep_filter_enabled: false   # Dezactivat: DF nu face AEC, conserva vocea robotului in output
+    webrtc_ns_level: 3           # Crescut la 3 (max) pentru supresie suplimentara a reziduurilor post-AEC
+    webrtc_ns_enabled: true      # Enabled to keep noise floor low so Gemini Live VAD detects turn end
+    # Residual gate: zeroes out low-amplitude AEC residuals during/after robot playback.
+    # Human barge-in voice (louder) passes through; robot echo fragments (quiet) are gated.
+    residual_gate_enabled: true
+    residual_gate_rms_threshold: 800  # int16 RMS threshold (~-32 dBFS). Increase if residues still audible, decrease if barge-in is cut.
