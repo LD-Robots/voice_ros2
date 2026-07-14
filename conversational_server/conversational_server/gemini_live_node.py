@@ -441,6 +441,11 @@ class GeminiLiveNode(Node):
         if paused:
             self.get_logger().info("Gemini Live conversation paused")
             self._cancel_pending_response_create()
+            # Silence any reply already in flight so the robot goes quiet at once.
+            self._mark_response_inactive()
+            stop_msg = Bool()
+            stop_msg.data = True
+            self.tts_stop_pub.publish(stop_msg)
         else:
             self.get_logger().info("Gemini Live conversation resumed")
         self._request_reconnect("pause_state")
@@ -508,29 +513,11 @@ class GeminiLiveNode(Node):
                     str(self.person_context.get('preferred_language', ''))
                 )
 
-        # Trigger reconnection if WebSocket setup is out of sync
-        if speaker != 'Unknown':
-            current_name = self._voice_correlated_preferred_name()
-            is_speaker_diff = speaker != self._setup_speaker
-            is_name_diff = (current_name and
-                            current_name != self._setup_preferred_name)
-            if is_speaker_diff or is_name_diff:
-                now = time.monotonic()
-                # If we just reconnected for a speaker change, a new switch this
-                # soon is almost certainly an ID flip (weak/confusable
-                # voiceprints) — refresh context cheaply instead of stalling the
-                # conversation with another full session rebuild.
-                if (now - self._last_speaker_reconnect_s) < self.speaker_reconnect_debounce_s:
-                    self._inject_context_update('speaker_changed_debounced')
-                    return
-                self._last_speaker_reconnect_s = now
-                self._request_reconnect(
-                    'speaker_changed', immediate_user_turn=True
-                )
-                return
-                
-        if speaker_changed and speaker == 'Unknown':
-            self._inject_context_update('speaker_changed')
+        # A speaker change no longer forces a session rebuild or a text
+        # injection. self.current_speaker and self.person_context are kept fresh
+        # above, and the model pulls the latest identity on demand via the
+        # get_speaker_info tool (declared in _send_setup, served in the toolCall
+        # handler). This removes the reconnect stall on every speaker switch.
 
     def person_context_callback(self, msg: String):
         try:
@@ -739,6 +726,7 @@ class GeminiLiveNode(Node):
             self.get_logger().info(f'Gemini Live toolCall: {len(function_calls)} calls')
 
             responses = []
+            pause_request = None  # applied AFTER the toolResponse is sent
             for fc in function_calls:
                 call_id = fc.get('id', '')
                 name = fc.get('name', '')
@@ -774,6 +762,19 @@ class GeminiLiveNode(Node):
                             **tool_output
                         }
                     })
+                elif name == 'set_conversation_pause':
+                    # Robust pause/resume: the model decides from the audio's
+                    # meaning, so it works even when the transcript is garbled
+                    # into a non-Latin script and dropped by the text filters.
+                    # Defer the state change until after the toolResponse is
+                    # sent — _apply_pause_state may reconnect (closing the
+                    # socket), and we must not lose the response.
+                    pause_request = bool(args.get('paused', True))
+                    responses.append({
+                        'id': call_id,
+                        'name': name,
+                        'response': {'result': 'paused' if pause_request else 'resumed'}
+                    })
                 else:
                     responses.append({
                         'id': call_id,
@@ -786,6 +787,8 @@ class GeminiLiveNode(Node):
                         'functionResponses': responses
                     }
                 })
+            if pause_request is not None:
+                self._apply_pause_state(pause_request, publish=True)
             return
 
         server_content = event.get("serverContent")
@@ -810,13 +813,15 @@ class GeminiLiveNode(Node):
         # Input transcription (user speech)
         input_transcription = server_content.get("inputTranscription")
         if input_transcription:
-            transcript = str(input_transcription.get("text", "") or "").strip()
+            # Gemini streams the input transcription as incremental chunks that
+            # already carry their own spacing (a new word arrives with a leading
+            # space, a continuation without one). Concatenate raw — do NOT strip
+            # per chunk or insert spaces, otherwise single words get split apart
+            # ("robot" -> "ro bot"). Regressed once in 6790ad8; keep it raw.
+            transcript = str(input_transcription.get("text", "") or "")
             if transcript:
-                if self._current_user_transcript:
-                    self._current_user_transcript += " " + transcript
-                else:
-                    self._current_user_transcript = transcript
-                self.get_logger().debug(f"Gemini Live intermediate word: '{transcript}' (accumulated: '{self._current_user_transcript}')")
+                self._current_user_transcript += transcript
+                self.get_logger().debug(f"Gemini Live intermediate chunk: '{transcript}' (accumulated: '{self._current_user_transcript}')")
 
         # Model turn (assistant response)
         model_turn = server_content.get("modelTurn")
@@ -884,6 +889,12 @@ class GeminiLiveNode(Node):
             self._ignore_model_response = False
 
     def _handle_output_audio(self, inline_data: dict):
+        # While paused ("hold on … until I'm back") the robot must stay silent
+        # even though the native-audio model keeps generating. We still receive
+        # input transcription (so resume/re-engagement is detected), but drop the
+        # model's speech instead of playing it.
+        if self.conversation_paused:
+            return
         mime = str(inline_data.get("mimeType", "") or "")
         data_b64 = str(inline_data.get("data", "") or "")
         if not data_b64:
@@ -1167,6 +1178,33 @@ class GeminiLiveNode(Node):
             ]
         })
 
+        # Register set_conversation_pause tool (robust pause/resume by intent)
+        tools.append({
+            'functionDeclarations': [
+                {
+                    'name': 'set_conversation_pause',
+                    'description': (
+                        'Pause or resume the conversation. Call with paused=true '
+                        'when the user asks you to wait, hold on, give them a '
+                        'moment, or pause (they may talk to other people '
+                        'meanwhile and you must stay silent). Call with '
+                        'paused=false only when the same user says they are '
+                        'back, ready, or to continue.'
+                    ),
+                    'parameters': {
+                        'type': 'OBJECT',
+                        'properties': {
+                            'paused': {
+                                'type': 'BOOLEAN',
+                                'description': 'true to pause, false to resume',
+                            }
+                        },
+                        'required': ['paused'],
+                    }
+                }
+            ]
+        })
+
         setup_payload: dict = {
             "model": f"models/{self.model}",
             "generationConfig": {
@@ -1206,6 +1244,23 @@ class GeminiLiveNode(Node):
             'Your own assistant name is Robot. '
             'If the user asks your name, answer "Robot". '
             'Do not use any speaker preferred name as your own identity.'
+        )
+        extras.append(
+            'You have a get_speaker_info tool that returns the CURRENT user\'s '
+            'preferred_name, preferred_language and known facts. The speaker can '
+            'change mid-conversation, so call get_speaker_info whenever you need '
+            'to personalize — before greeting, when asked "do you remember me / '
+            'my name", or when the speaker may have changed — and address the '
+            'user by the preferred_name it returns. Never invent a name.'
+        )
+        extras.append(
+            'You have a set_conversation_pause tool. When the user asks you to '
+            'wait, hold on, give them a moment, or pause — even briefly, and '
+            'even if the words are unclear — call set_conversation_pause with '
+            'paused=true and then stay silent (they may talk with other people; '
+            'do not respond to that). When the same user says they are back, '
+            'ready, or to continue, call set_conversation_pause with '
+            'paused=false and resume.'
         )
 
 

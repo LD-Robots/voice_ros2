@@ -63,6 +63,25 @@ def test_parse_short_addressed_direction_command():
     assert parsed['steps'] == 1
 
 
+def test_parse_split_robot_address_from_gemini_transcript():
+    move = parse_robot_command(
+        'Ro bot move forward.',
+        default_steps=1,
+        max_steps=20,
+        require_direct_robot_address=True,
+    )
+    raise_hand = parse_robot_command(
+        'Ro bot raise hand.',
+        require_direct_robot_address=True,
+    )
+
+    assert move is not None
+    assert move['command_name'] == 'move_forward'
+    assert move['steps'] == 1
+    assert raise_hand is not None
+    assert raise_hand['command_name'] == 'raise_hand'
+
+
 def test_do_not_misread_normal_sentences_as_robot_commands():
     assert looks_like_robot_command(
         'We should stop climate change.',

@@ -1,7 +1,6 @@
 import re
-import unicodedata
 
-from .conversation_utils import has_direct_robot_address
+from .conversation_utils import has_direct_robot_address, normalize_text
 
 
 NUMBER_WORDS = {
@@ -76,12 +75,7 @@ SAY_HI_PATTERNS = (
 )
 
 def normalize_command_text(text: str) -> str:
-    text = text.lower().strip()
-    text = unicodedata.normalize('NFD', text)
-    text = ''.join(ch for ch in text if unicodedata.category(ch) != 'Mn')
-    text = text.replace('-', ' ')
-    text = re.sub(r'[^a-z0-9\s]', ' ', text)
-    return ' '.join(text.split())
+    return normalize_text(text)
 
 
 def parse_robot_command(

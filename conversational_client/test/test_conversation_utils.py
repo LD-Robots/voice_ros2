@@ -5,6 +5,7 @@ from conversational_client.conversation_utils import (
     can_accept_control_action,
     can_accept_reengagement,
     detect_control_action,
+    has_direct_robot_address,
     is_reengagement_phrase,
     normalize_text,
 )
@@ -67,6 +68,23 @@ def test_attention_focus_requires_real_recognition_to_delegate():
 def test_control_and_reengagement_detection_cover_pause_resume_flow():
     assert detect_control_action(normalize_text('Just wait a second, I need to talk with someone.')) == 'hold_on'
     assert is_reengagement_phrase(normalize_text("OK robot, I'm back")) is True
+
+
+def test_split_robot_address_is_normalized_for_attention():
+    # STT may split "robot" at any interior position; all must collapse back so
+    # the address (and hence the command) survives both attention gates.
+    for raw in (
+        'Ro bot move forward.',
+        'Rob ot move forward.',
+        'R obot move forward.',
+        'Robo t move forward.',
+    ):
+        normalized = normalize_text(raw)
+        assert normalized == 'robot move forward', raw
+        assert has_direct_robot_address(normalized) is True, raw
+
+    # A genuine word that merely contains the letters must not be mangled.
+    assert normalize_text('robots are here') == 'robots are here'
 
 
 def test_control_detection_handles_generic_pause_phrases():
