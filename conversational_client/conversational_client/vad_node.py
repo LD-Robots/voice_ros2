@@ -120,6 +120,7 @@ class VADNode(Node):
         self.is_robot_speaking = False    # True when the robot is speaking (TTS playback)
         self.is_gate_open = not self.wake_word_enabled
         self.session_timer = None
+        self.conversation_paused = False
         
         # ─────────────────────────────────────────────────────────
         # HARDWARE VAD INITIALIZATION
@@ -163,6 +164,12 @@ class VADNode(Node):
             Bool,
             'session_active',
             self.session_callback,
+            10
+        )
+        self.pause_sub = self.create_subscription(
+            Bool,
+            'conversation_pause',
+            self.pause_callback,
             10
         )
         
@@ -282,7 +289,14 @@ class VADNode(Node):
             self.session_timer.cancel()
         self.session_timer = self.create_timer(self.session_timeout, self._on_session_timeout)
 
+    def pause_callback(self, msg: Bool):
+        self.conversation_paused = bool(msg.data)
+
     def _on_session_timeout(self):
+        if self.conversation_paused:
+            self.get_logger().debug('⏳ Session timeout skipped (conversation is paused)')
+            return
+            
         # Do not close the gate if the robot is speaking
         if self.is_robot_speaking:
             self.get_logger().debug('⏳ Session timeout skipped (robot still speaking)')

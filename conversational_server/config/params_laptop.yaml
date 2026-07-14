@@ -43,8 +43,8 @@
     voice: "Charon" #"Charon" - masculine voice (calm, mature), "Puck" - masculine voice (friendly, energetic), "Aoede" - feminine voice (dynamic, vibrant)
     input_sample_rate: 16000
     api_sample_rate: 24000
-    vad_prefix_padding_ms: 400
-    vad_silence_duration_ms: 600
+    vad_prefix_padding_ms: 300
+    vad_silence_duration_ms: 350
     response_create_delay_ms: 100
     continued_turn_response_delay_ms: 450
     short_transcript_dedupe_window_s: 4.0

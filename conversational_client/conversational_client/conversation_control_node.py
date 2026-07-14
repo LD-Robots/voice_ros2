@@ -76,6 +76,10 @@ class ConversationControlNode(Node):
             self.speaker_tracker.reset()
             self.current_speaker = 'Unknown'
             self.focused_speaker = 'Unknown'
+            self.conversation_paused = False
+            pause_msg = Bool()
+            pause_msg.data = False
+            self.pause_pub.publish(pause_msg)
 
     def _attention_status_callback(self, msg: String):
         try:

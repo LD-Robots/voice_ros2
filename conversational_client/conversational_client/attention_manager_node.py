@@ -83,6 +83,7 @@ class AttentionManagerNode(Node):
             self.last_focus_time = 0.0
             self.pending_focus_speaker = 'Unknown'
             self.pending_focus_at = 0.0
+            self.conversation_paused = False
             self._publish_status(False, False, 'session_inactive')
 
     def _pause_callback(self, msg: Bool):

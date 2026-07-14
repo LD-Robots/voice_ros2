@@ -234,6 +234,7 @@ class GeminiLiveNode(Node):
         # Conversation state
         self.session_active = False
         self.conversation_paused = False
+        self._pause_pending = False
         self.robot_speaking = False
         self.waiting_for_robot_confirmation = False
         self.current_speaker = "Unknown"
@@ -327,6 +328,7 @@ class GeminiLiveNode(Node):
         self.response_pub = self.create_publisher(Transcription, "llm_response", 10)
         self.pause_state_pub = self.create_publisher(Bool, "conversation_pause", 10)
         self.tts_stop_pub = self.create_publisher(Bool, "stop_playback", 10)
+        self.tts_command_pub = self.create_publisher(String, "tts_command", 10)
         self.status_pub = self.create_publisher(String, "gemini_live_status", 10)
         self.session_pub = self.create_publisher(Bool, "session_active", 10)
         self.end_session_pub = self.create_publisher(Bool, "end_session_external", 10)
@@ -376,6 +378,7 @@ class GeminiLiveNode(Node):
             self._is_new_user_turn = True
         else:
             self.get_logger().debug("Gemini Live session INACTIVE")
+            self.conversation_paused = False
             # Cache the speaker and context (do not reset current_speaker or speaker_tracker)
             self.language_tracker.reset()
             self.focused_speaker = "Unknown"
@@ -448,7 +451,6 @@ class GeminiLiveNode(Node):
             self.tts_stop_pub.publish(stop_msg)
         else:
             self.get_logger().info("Gemini Live conversation resumed")
-        self._request_reconnect("pause_state")
         if not paused and self._paused_transcript_pending:
             self._schedule_response_create("", reason="resume_from_pause")
             self._paused_transcript_pending = ""
@@ -788,7 +790,12 @@ class GeminiLiveNode(Node):
                     }
                 })
             if pause_request is not None:
-                self._apply_pause_state(pause_request, publish=True)
+                if pause_request:
+                    self._pause_pending = True
+                    self.get_logger().info("Gemini Live: pause request received, deferring pause until turn completes")
+                else:
+                    self._pause_pending = False
+                    self._apply_pause_state(False, publish=True)
             return
 
         server_content = event.get("serverContent")
@@ -808,6 +815,10 @@ class GeminiLiveNode(Node):
             self._start_user_audio_capture()  # restart for the next utterance
             self._schedule_deferred_response_after_speech_stop()
             self._current_user_transcript = ""
+            if self._pause_pending:
+                self.get_logger().info("Gemini Live: interruption during pending pause, applying pause state now")
+                self._apply_pause_state(True, publish=True)
+                self._pause_pending = False
             return
 
         # Input transcription (user speech)
@@ -949,6 +960,11 @@ class GeminiLiveNode(Node):
         self._last_response_request_item_id = ""
         self._assistant_name_question_active = False
         self._last_accepted_user_transcript_norm = ""
+
+        if self._pause_pending:
+            self.get_logger().info("Gemini Live: turn complete, applying deferred pause state")
+            self._apply_pause_state(True, publish=True)
+            self._pause_pending = False
 
         # Generate a new turn id for next response
         import uuid
@@ -1221,6 +1237,8 @@ class GeminiLiveNode(Node):
             "realtimeInputConfig": {
                 "automaticActivityDetection": {
                     "disabled": False,
+                    "prefixPaddingMs": self.vad_prefix_padding_ms,
+                    "silenceDurationMs": self.vad_silence_duration_ms,
                 }
             },
             "inputAudioTranscription": {},
@@ -1256,9 +1274,12 @@ class GeminiLiveNode(Node):
         extras.append(
             'You have a set_conversation_pause tool. When the user asks you to '
             'wait, hold on, give them a moment, or pause — even briefly, and '
-            'even if the words are unclear — call set_conversation_pause with '
-            'paused=true and then stay silent (they may talk with other people; '
-            'do not respond to that). When the same user says they are back, '
+            'even if the words are unclear — first verbally confirm very politely '
+            'and naturally that you are waiting (e.g. say "Sure, I\'ll hold on" or '
+            '"No problem, take your time" in English, or "Sigur, te aștept" or '
+            '"Nicio problemă, ia-ți timp" in Romanian, depending on the user\'s language), '
+            'and then immediately call set_conversation_pause with paused=true. '
+            'Once you do, stay silent. When the same user says they are back, '
             'ready, or to continue, call set_conversation_pause with '
             'paused=false and resume.'
         )

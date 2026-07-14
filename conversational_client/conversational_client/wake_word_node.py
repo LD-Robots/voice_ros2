@@ -212,6 +212,11 @@ class WakeWordNode(Node):
         # Add to buffer
         self.audio_buffer.extend(audio.tolist())
 
+        # Prevent backlog accumulation (cap buffer at 2 seconds of audio)
+        MAX_BUFFER_SAMPLES = 16000 * 2
+        if len(self.audio_buffer) > MAX_BUFFER_SAMPLES:
+            self.audio_buffer = self.audio_buffer[-MAX_BUFFER_SAMPLES:]
+
         # Track chunk count for periodic logging
         if not hasattr(self, 'audio_debug_count'): self.audio_debug_count = 0
         self.audio_debug_count += 1
@@ -220,7 +225,7 @@ class WakeWordNode(Node):
         # for optimal performance (though it handles streaming internally).
         MIN_SAMPLES = 1280
         
-        if len(self.audio_buffer) >= MIN_SAMPLES:
+        while len(self.audio_buffer) >= MIN_SAMPLES:
             # Extract exactly MIN_SAMPLES
             audio_chunk = np.array(self.audio_buffer[:MIN_SAMPLES], dtype=np.int16)
             

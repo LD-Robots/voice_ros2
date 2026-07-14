@@ -100,6 +100,8 @@ class TTSNode(Node):
             'error_en': ('Sorry, I encountered an error.', 'en'),
             'confirm_en': ('Are you sure? Please say yes or no.', 'en'),
             'confirm_ro': ('Esti sigur? Te rog spune da sau nu.', 'ro'),
+            'pause_en': ('Conversation paused.', 'en'),
+            'pause_ro': ('Conversație pusă pe pauză.', 'ro'),
         }
         # Only safety-critical prompts may speak in ANY backend (e.g. the risky-command
         # confirmation, which the gate needs even in Gemini mode). Greetings / acks /
@@ -108,6 +110,8 @@ class TTSNode(Node):
         self.system_commands = {
             'confirm_en',
             'confirm_ro',
+            'pause_en',
+            'pause_ro',
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
