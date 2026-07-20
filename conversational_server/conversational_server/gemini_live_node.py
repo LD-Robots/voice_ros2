@@ -467,6 +467,9 @@ class GeminiLiveNode(Node):
         self.current_backend = backend
         if backend != "gemini_live":
             self._cancel_and_clear()
+        else:
+            if self._connected.is_set() and not self._setup_sent:
+                self._send_setup()
 
     def stop_callback(self, msg: Bool):
         if msg.data:

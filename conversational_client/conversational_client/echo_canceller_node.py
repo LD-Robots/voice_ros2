@@ -147,6 +147,9 @@ class EchoCancellerNode(Node):
         self._lock_count = 0
         self._drift_count = 0
         self.total_ref_samples = 0
+        self.residual_gate_hold_samples = 0
+        self.residual_gate_hold_limit = int(0.25 * self.sample_rate) # 250ms hold time
+        
         
         self.raw_sub = self.create_subscription(Audio, 'audio_raw', self.raw_callback, 10)
         self.out_sub = self.create_subscription(Audio, 'audio_out', self.out_callback, 10)
@@ -358,10 +361,19 @@ class EchoCancellerNode(Node):
         # ── Residual Gate ─────────────────────────────────────────────────────
         # Applied only during/after robot playback (when AEC was active).
         # AEC residuals are low-amplitude; real human voice (barge-in) is higher.
-        # Threshold: int16 RMS.  Default 800 ≈ -32 dBFS (human voice >> -20 dBFS).
+        # Uses a hangover (hold) timer to prevent rapid frame-by-frame chattering/cutting.
         if self.residual_gate_enabled and (self.robot_speaking or self.tail_samples > 0):
             rms = float(np.sqrt(np.mean(final_clean.astype(np.float32) ** 2)))
-            if rms < self.residual_gate_rms_threshold:
+            if rms >= self.residual_gate_rms_threshold:
+                # Vocal activity detected: reset/hold the gate open
+                self.residual_gate_hold_samples = self.residual_gate_hold_limit
+            else:
+                # No activity: decay the hold samples count
+                if self.residual_gate_hold_samples > 0:
+                    self.residual_gate_hold_samples -= len(final_clean)
+            
+            # If hangover expired, mute the frame to clean residual echo
+            if self.residual_gate_hold_samples <= 0:
                 final_clean = np.zeros(len(final_clean), dtype=np.int16)
 
         if self.mic_gain != 1.0:

@@ -14,6 +14,10 @@ python3 "$DIR/tuning.py" \
     GAMMA_E 3.0 \
     GAMMA_ETAIL 3.0 \
     GAMMA_ENL 5.0 \
-    AGCONOFF 0
+    AGCONOFF 0 \
+    STATNOISEONOFF 1 \
+    NONSTATNOISEONOFF 1 \
+    STATNOISEONOFF_SR 1 \
+    NONSTATNOISEONOFF_SR 1
 
 echo "[ReSpeaker Tuning] Done."

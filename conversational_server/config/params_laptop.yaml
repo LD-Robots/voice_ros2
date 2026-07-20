@@ -50,8 +50,8 @@
     short_transcript_dedupe_window_s: 4.0
     playback_input_filter_enabled: true  # Filtru software anti-echo rezidual (dupa AEC WebRTC+DeepFilterNet)
     playback_input_filter_post_playback_ms: 200   # Fereastra de protectie dupa stop playback (redusa pentru barge-in rapid)
-    playback_input_filter_min_rms_dbfs: -28.0     # Ridicat de la -32: ignora ecoul rezidual, prinde doar vocea ta (care acum e mai tare)
-    playback_input_filter_hits_required: 2         # Hits necesare pentru a deschide gate-ul (era 3)
+    playback_input_filter_min_rms_dbfs: -45.0     # Redus la -45 pentru a fi foarte sensibil la vocea slaba
+    playback_input_filter_hits_required: 1         # Descarca poarta la primul frame detectat (era 2)
     playback_input_filter_hold_ms: 300             # Gate ramas deschis 300ms dupa ultimul hit de voce
     assistant_echo_filter_enabled: true
     assistant_echo_window_s: 8.0
@@ -174,6 +174,7 @@
     enable_voice_cancel: true
     enable_risky_confirmation: true
     confirmation_timeout_s: 12.0
+    require_same_speaker_for_confirmation: false
     risky_steps_threshold: 5
     risky_turn_angle_deg: 150.0
 
@@ -189,9 +190,9 @@
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings
     deep_filter_enabled: false   # Dezactivat: DF nu face AEC, conserva vocea robotului in output
-    webrtc_ns_level: 3           # Crescut la 3 (max) pentru supresie suplimentara a reziduidelor post-AEC
-    webrtc_ns_enabled: true      # Enabled to keep noise floor low so Gemini Live VAD detects turn end
+    webrtc_ns_level: 1           # Redus la 1 (gentle) pentru a nu tăia silabele slabe
+    webrtc_ns_enabled: true      # Activat din nou pentru reducerea zgomotului de fundal
     # Residual gate: zeroes out low-amplitude AEC residuals during/after robot playback.
     # Human barge-in voice (louder) passes through; robot echo fragments (quiet) are gated.
-    residual_gate_enabled: true
-    residual_gate_rms_threshold: 800  # int16 RMS threshold (~-32 dBFS). Increase if residues still audible, decrease if barge-in is cut.
+    residual_gate_enabled: true  # Activat din nou la cerere
+    residual_gate_rms_threshold: 150  # Setat la 150 (acum avem hold time de 250ms, deci nu mai taie silabele)
