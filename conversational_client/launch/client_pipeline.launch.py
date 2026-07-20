@@ -226,6 +226,14 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # Acoustic Monitor (Noise / Environment adaptation)
+        Node(
+            package='conversational_client',
+            executable='acoustic_monitor_node',
+            name='acoustic_monitor_node',
+            output='screen',
+        ),
+
         # Speaker Identification (who is speaking)
         Node(
             package='conversational_client',

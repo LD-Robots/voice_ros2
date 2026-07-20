@@ -3,8 +3,9 @@ from typing import Any, TYPE_CHECKING
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 import numpy as np
+import json
 from scipy import signal
 import wave
 import collections
@@ -77,6 +78,7 @@ class EchoCancellerNode(Node):
         self.capture_gain = float(self.get_parameter('capture_gain').value)
         self.declare_parameter('webrtc_ns_level', 2) # Noise Suppression level (0-3)
         self.webrtc_ns_level = int(self.get_parameter('webrtc_ns_level').value)
+        self.base_webrtc_ns_level = self.webrtc_ns_level
         self.declare_parameter('webrtc_ns_enabled', True)
         self.webrtc_ns_enabled = bool(self.get_parameter('webrtc_ns_enabled').value)
         # Residual gate: during/after robot playback, zero out AEC output if it
@@ -86,6 +88,7 @@ class EchoCancellerNode(Node):
         self.residual_gate_enabled = bool(self.get_parameter('residual_gate_enabled').value)
         self.declare_parameter('residual_gate_rms_threshold', 800)  # int16 RMS (~-32 dBFS)
         self.residual_gate_rms_threshold = int(self.get_parameter('residual_gate_rms_threshold').value)
+        self.base_residual_gate_rms_threshold = self.residual_gate_rms_threshold
         
         self.declare_parameter('raw_wav_path', '')
         self.declare_parameter('ref_wav_path', '')
@@ -154,6 +157,7 @@ class EchoCancellerNode(Node):
         self.raw_sub = self.create_subscription(Audio, 'audio_raw', self.raw_callback, 10)
         self.out_sub = self.create_subscription(Audio, 'audio_out', self.out_callback, 10)
         self.is_speaking_sub = self.create_subscription(Bool, 'is_speaking', self.is_speaking_callback, 10)
+        self.env_sub = self.create_subscription(String, 'acoustic_environment', self.env_callback, 10)
         self.clean_pub = self.create_publisher(Audio, 'audio_clean', 10)
         
         # Debug files (only open if path is provided)
@@ -383,6 +387,42 @@ class EchoCancellerNode(Node):
         self.clean_pub.publish(msg)
         if self.wav_clean: self.wav_clean.writeframes(final_clean.tobytes())
 
+    def env_callback(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+            state = data.get('state', 'moderate')
+            ns_level_changed = False
+            
+            if state == 'quiet':
+                self.residual_gate_rms_threshold = int(self.base_residual_gate_rms_threshold * 0.5)
+                new_ns_level = 1
+            elif state == 'noisy':
+                self.residual_gate_rms_threshold = int(self.base_residual_gate_rms_threshold * 2.3)
+                new_ns_level = 3
+            else:
+                self.residual_gate_rms_threshold = self.base_residual_gate_rms_threshold
+                new_ns_level = self.base_webrtc_ns_level
+                
+            if new_ns_level != self.webrtc_ns_level:
+                self.webrtc_ns_level = new_ns_level
+                ns_level_changed = True
+                
+            self.get_logger().debug(f'Acoustic state: {state} | Threshold: {self.residual_gate_rms_threshold} | NS Level: {self.webrtc_ns_level}')
+            
+            # Recreate APM if noise suppression level changed
+            if ns_level_changed and WEBRTC_AVAILABLE and self.apm is not None:
+                self.apm = AudioProcessor(
+                    enable_aec=True,
+                    enable_ns=self.webrtc_ns_enabled,
+                    ns_level=self.webrtc_ns_level,
+                    enable_agc=False
+                )
+                self.apm.set_stream_format(16000, 1)
+                self.apm.set_reverse_stream_format(16000, 1)
+                self.get_logger().info(f'🔄 [AEC] WebRTC NS Level dynamically updated to {self.webrtc_ns_level}')
+        except Exception as e:
+            self.get_logger().error(f'Error parsing acoustic environment in AEC: {e}')
+
     def destroy_node(self):
         for f in [self.wav_raw, self.wav_ref_aligned, self.wav_clean]:
             if f: f.close()
@@ -395,7 +435,10 @@ def main(args=None):
     except KeyboardInterrupt: pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 if __name__ == '__main__':
     main()

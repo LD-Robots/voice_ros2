@@ -103,6 +103,14 @@
     sample_rate: 16000
     gain: 0.5
     force_os_volume_percent: 80
+/**/acoustic_monitor_node:
+  ros__parameters:
+    monitoring_interval_s: 5.0
+    respeaker_vid: 10374 # 0x2886
+    respeaker_pid: 24    # 0x0018
+    quiet_noise_threshold_dbfs: -48.0
+    noisy_noise_threshold_dbfs: -35.0
+    enable_respeaker_tuning: true
 /**/barge_in_node:
   ros__parameters:
     stop_enabled: false

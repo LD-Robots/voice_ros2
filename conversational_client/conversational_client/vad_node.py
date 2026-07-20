@@ -19,8 +19,9 @@ EXPLANATION:
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio, WakeWord
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 import numpy as np
+import json
 import struct
 import usb.core
 import usb.util
@@ -104,6 +105,7 @@ class VADNode(Node):
         self.sample_rate = self.get_parameter('sample_rate').value
         self.aggressiveness = self.get_parameter('aggressiveness').value
         self.energy_threshold = self.get_parameter('energy_threshold').value
+        self.base_energy_threshold = self.energy_threshold
         self.wake_word_enabled = self.get_parameter('wake_word_enabled').value
         self.session_timeout = self.get_parameter('session_timeout').value
         self.min_speech_frames = max(1, int(self.get_parameter('min_speech_frames').value))
@@ -170,6 +172,12 @@ class VADNode(Node):
             Bool,
             'conversation_pause',
             self.pause_callback,
+            10
+        )
+        self.env_sub = self.create_subscription(
+            String,
+            'acoustic_environment',
+            self.env_callback,
             10
         )
         
@@ -420,6 +428,20 @@ class VADNode(Node):
         # Compute RMS (Root Mean Square) = average energy
         rms = np.sqrt(np.mean(audio.astype(np.float32) ** 2))
         return rms > self.energy_threshold
+
+    def env_callback(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+            state = data.get('state', 'moderate')
+            if state == 'quiet':
+                self.energy_threshold = self.base_energy_threshold * 0.5
+            elif state == 'noisy':
+                self.energy_threshold = self.base_energy_threshold * 1.9
+            else:
+                self.energy_threshold = self.base_energy_threshold
+            self.get_logger().debug(f'Adjusted VAD energy threshold to {self.energy_threshold:.1f} due to acoustic state: {state}')
+        except Exception as e:
+            self.get_logger().error(f'Error parsing acoustic environment in VAD: {e}')
 
 
 # ═══════════════════════════════════════════════════════════════════

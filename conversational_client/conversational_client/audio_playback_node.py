@@ -20,6 +20,7 @@ class AudioPlaybackNode(Node):
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
         self.gain = self.get_parameter('gain').value
+        self.base_gain = self.gain
         
         self.speaking_pub = self.create_publisher(Bool, 'is_speaking', 10)
         self.progress_pub = self.create_publisher(String, 'audio_playback_progress', 10)
@@ -43,6 +44,7 @@ class AudioPlaybackNode(Node):
         
         self.audio_sub = self.create_subscription(Audio, 'audio_out', self.audio_callback, 10)
         self.stop_sub = self.create_subscription(Bool, 'stop_playback', self.stop_callback, 10)
+        self.env_sub = self.create_subscription(String, 'acoustic_environment', self.env_callback, 10)
         
         # PyAudio Setup
         self.audio_p = pyaudio.PyAudio()
@@ -172,6 +174,20 @@ class AudioPlaybackNode(Node):
             if self._stop_requested:
                 self._write_buffer = np.array([], dtype=np.int16)
 
+    def env_callback(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+            state = data.get('state', 'moderate')
+            if state == 'quiet':
+                self.gain = self.base_gain * 0.8
+            elif state == 'noisy':
+                self.gain = min(1.0, self.base_gain * 2.0)
+            else:
+                self.gain = min(1.0, self.base_gain * 1.2)
+            self.get_logger().debug(f'Adjusted playback gain to {self.gain:.2f} due to acoustic state: {state}')
+        except Exception as e:
+            self.get_logger().error(f'Error parsing acoustic environment in playback: {e}')
+
     def destroy_node(self):
         self.running = False
         if self.stream:
@@ -188,7 +204,10 @@ def main(args=None):
     except KeyboardInterrupt: pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 if __name__ == '__main__':
     main()
