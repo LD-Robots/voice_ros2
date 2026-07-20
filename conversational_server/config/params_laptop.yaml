@@ -43,6 +43,10 @@
     voice: "Charon" #"Charon" - masculine voice (calm, mature), "Puck" - masculine voice (friendly, energetic), "Aoede" - feminine voice (dynamic, vibrant)
     input_sample_rate: 16000
     api_sample_rate: 24000
+    enable_local_fillers: true
+    filler_chance: 0.75
+    filler_volume: 0.80
+    fillers_dir: "/home/delia/voice_ros2/voices/fillers"
     vad_prefix_padding_ms: 300
     vad_silence_duration_ms: 350
     response_create_delay_ms: 100

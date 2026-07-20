@@ -154,6 +154,10 @@ class GeminiLiveNode(Node):
         # Let Gemini decide (via function-calling) when the current speaker
         # introduces their own name, instead of relying on static regex phrases.
         self.declare_parameter("name_capture_tool_enabled", True)
+        self.declare_parameter("enable_local_fillers", False)
+        self.declare_parameter("filler_chance", 0.70)
+        self.declare_parameter("filler_volume", 0.80)
+        self.declare_parameter("fillers_dir", "/home/delia/voice_ros2/voices/fillers")
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -210,6 +214,15 @@ class GeminiLiveNode(Node):
             self.get_parameter('doa_focus_margin').value
         )
         self.name_capture_tool_enabled = bool(self.get_parameter("name_capture_tool_enabled").value)
+        self.enable_local_fillers = bool(self.get_parameter("enable_local_fillers").value)
+        self.filler_chance = float(self.get_parameter("filler_chance").value)
+        self.filler_volume = float(self.get_parameter("filler_volume").value)
+        self.fillers_dir = str(self.get_parameter("fillers_dir").value)
+        self.fillers_cache = {'ro': [], 'en': []}
+        self._user_audio_frames_sent = 0
+        if self.enable_local_fillers:
+            self._precache_fillers()
+
         self.base_instructions = str(self.get_parameter("instructions").value)
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter("sticky_speaker_timeout_s").value),
@@ -346,6 +359,7 @@ class GeminiLiveNode(Node):
         self.backend_sub = self.create_subscription(String, "conversation_backend", self.backend_callback, 10)
         self.person_context_sub = self.create_subscription(String, "person_context", self.person_context_callback, 10)
         self.pause_sub = self.create_subscription(Bool, "conversation_pause", self.pause_callback, 10)
+        self.vad_sub = self.create_subscription(Bool, "voice_activity", self.vad_callback, 10)
         self.wake_word_sub = self.create_subscription(WakeWord, "wake_word", self.wake_word_callback, 10)
         self.doa_sub = self.create_subscription(
             Int32, 'doa_angle', self.doa_callback, 10
@@ -597,6 +611,7 @@ class GeminiLiveNode(Node):
         # Buffer incoming user audio during the current turn, even during a reconnect gap
         if not self.robot_speaking:
             self._remember_input_audio(msg.data)
+            self._user_audio_frames_sent += 1
             if self._capture_user_audio:
                 self._current_user_audio.extend(msg.data)
 
@@ -624,6 +639,7 @@ class GeminiLiveNode(Node):
         # Deferred Context Injection disabled. The model uses get_speaker_info tool CALL.
         if self._is_new_user_turn:
             self._is_new_user_turn = False
+            self._user_audio_frames_sent = 0
 
         # Spatial DOA Gating
         if (self.doa_enabled and self.focused_doa_angle != -1 and
@@ -1719,6 +1735,80 @@ class GeminiLiveNode(Node):
     def _angular_distance(a: int, b: int) -> int:
         diff = (a - b + 180) % 360 - 180
         return abs(diff)
+
+    def _precache_fillers(self):
+        import wave
+        import os
+        import numpy as np
+
+        ro_files = ['charon_hmm_ro.wav', 'charon_pai_ro.wav', 'charon_aaa_ro.wav', 'charon_sa_vedem_ro.wav']
+        en_files = ['charon_hmm_en.wav', 'charon_well_en.wav', 'charon_let_see_en.wav', 'charon_uhm_en.wav']
+
+        for lang, files in [('ro', ro_files), ('en', en_files)]:
+            for fname in files:
+                fpath = os.path.join(self.fillers_dir, fname)
+                if not os.path.exists(fpath):
+                    self.get_logger().warn(f"Filler file not found: {fpath}")
+                    continue
+                try:
+                    with wave.open(fpath, 'rb') as w:
+                        rate = w.getframerate()
+                        channels = w.getnchannels()
+                        n_frames = w.getnframes()
+                        data = w.readframes(n_frames)
+                        pcm = np.frombuffer(data, dtype=np.int16)
+
+                        self.fillers_cache[lang].append({
+                            'name': fname,
+                            'pcm': pcm,
+                            'rate': rate,
+                            'channels': channels
+                        })
+                    self.get_logger().info(f"Loaded filler: {fname} ({rate}Hz, {channels}ch, {len(pcm)} samples)")
+                except Exception as e:
+                    self.get_logger().error(f"Error loading filler {fname}: {e}")
+
+    def vad_callback(self, msg: Bool):
+        if not self.session_active or self.current_backend != "gemini_live":
+            return
+        if not self.enable_local_fillers:
+            return
+
+        # Trigger on VAD transition to False (user stopped speaking)
+        if not msg.data:
+            # Check conditions for playing filler:
+            # 1. Robot is not currently speaking or about to speak
+            # 2. We haven't started playing the response yet
+            # 3. User actually spoke (to filter out noise spikes, we require at least 15 frames)
+            if (not self.robot_speaking and 
+                    not self._current_turn_audio_started and 
+                    self._user_audio_frames_sent >= 15):
+                
+                import random
+                lang = self.language_tracker.current_language or 'ro'
+                if lang not in self.fillers_cache or not self.fillers_cache[lang]:
+                    lang = 'ro'
+                    
+                cache_list = self.fillers_cache.get(lang, [])
+                if cache_list:
+                    if random.random() < self.filler_chance:
+                        filler = random.choice(cache_list)
+                        try:
+                            # Scale volume
+                            pcm = (filler['pcm'].astype(np.float32) * self.filler_volume).astype(np.int16)
+                            
+                            out = Audio()
+                            out.sample_rate = filler['rate']
+                            out.channels = filler['channels']
+                            out.data = pcm.tolist()
+                            # Use turn_id + "_filler" to force audio_playback_node to interrupt it
+                            # if the real response arrives immediately.
+                            out.stream_id = self._active_turn_id + "_filler"
+                            out.item_id = "local_filler"
+                            self.audio_pub.publish(out)
+                            self.get_logger().info(f"🎙️ Playing local filler: {filler['name']} ({lang.upper()})")
+                        except Exception as e:
+                            self.get_logger().error(f"Error playing local filler: {e}")
 
 
 def main(args=None):
