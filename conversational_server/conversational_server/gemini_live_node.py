@@ -130,7 +130,7 @@ class GeminiLiveNode(Node):
         self.declare_parameter("assistant_echo_window_s", 8.0)
         self.declare_parameter("assistant_echo_similarity_threshold", 88.0)
         self.declare_parameter("assistant_echo_min_length", 8)
-        self.declare_parameter("reconnect_delay_s", 3.0)
+        self.declare_parameter("reconnect_delay_s", 0.3)
         # A speaker-change reconnect is *intentional* (persona refresh), not an
         # error — it must be fast so the user isn't left waiting after being
         # recognized. Error reconnects still use the longer reconnect_delay_s.
@@ -353,6 +353,8 @@ class GeminiLiveNode(Node):
         self.response_pub = self.create_publisher(Transcription, "llm_response", 10)
         self.pause_state_pub = self.create_publisher(Bool, "conversation_pause", 10)
         self.tts_stop_pub = self.create_publisher(Bool, "stop_playback", 10)
+        self.person_remember_pub = self.create_publisher(String, "person_remember_request", 10)
+        self.user_emotion_pub = self.create_publisher(String, "user_emotion", 10)
         self.tts_command_pub = self.create_publisher(String, "tts_command", 10)
         self.status_pub = self.create_publisher(String, "gemini_live_status", 10)
         self.session_pub = self.create_publisher(Bool, "session_active", 10)
@@ -440,9 +442,12 @@ class GeminiLiveNode(Node):
                 f'{self.focused_doa_angle}°'
             )
         # Inject as a user turn so Gemini responds with a natural greeting
+        pref_name = self._voice_correlated_preferred_name()
+        speaker_info = f" (Current speaker: {pref_name})" if pref_name else ""
+        greeting_text = f"Hello!{speaker_info}"
         self._send_raw({
             "clientContent": {
-                "turns": [{"role": "user", "parts": [{"text": "Hello!"}]}],
+                "turns": [{"role": "user", "parts": [{"text": greeting_text}]}],
                 "turnComplete": True,
             }
         })
@@ -711,7 +716,7 @@ class GeminiLiveNode(Node):
                 if self._intentional_reconnect:
                     time.sleep(max(0.0, self.intentional_reconnect_delay_s))
                 else:
-                    time.sleep(max(1.0, self.reconnect_delay_s))
+                    time.sleep(max(0.1, self.reconnect_delay_s))
 
     def _on_open(self, ws):
         self._intentional_reconnect = False  # Reset flag on successful reconnect
@@ -811,6 +816,15 @@ class GeminiLiveNode(Node):
                         'id': call_id,
                         'name': name,
                         'response': {'result': 'paused' if pause_request else 'resumed'}
+                    })
+                elif name == 'report_user_emotion':
+                    emotion = str(args.get('emotion', '') or 'neutral').lower().strip()
+                    reason = str(args.get('reason', '') or '').strip()
+                    self._handle_report_user_emotion(emotion, reason)
+                    responses.append({
+                        'id': call_id,
+                        'name': name,
+                        'response': {'status': 'ok', 'emotion_recorded': emotion}
                     })
                 else:
                     responses.append({
@@ -1180,6 +1194,28 @@ class GeminiLiveNode(Node):
         self.get_logger().info(f"remember_person -> enrollment request for '{name}'")
         return "acknowledged"
 
+    def _handle_report_user_emotion(self, emotion: str, reason: str):
+        valid_emotions = {
+            'happy', 'enthusiastic', 'playful', 'neutral', 'curious',
+            'serious', 'sad', 'tired', 'anxious', 'frustrated', 'confused'
+        }
+        if emotion not in valid_emotions:
+            emotion = 'neutral'
+
+        pref_name = self._voice_correlated_preferred_name() or self.current_speaker
+        event = {
+            'speaker': pref_name,
+            'emotion': emotion,
+            'reason': reason,
+            'timestamp': time.time()
+        }
+        msg = String()
+        msg.data = json.dumps(event)
+        self.user_emotion_pub.publish(msg)
+        self.get_logger().info(
+            f"🎭 User Emotion Detected: {emotion.upper()} for speaker '{pref_name}' (reason: '{reason}')"
+        )
+
     def _send_setup(self):
         if not self._connected.is_set() or self.current_backend != "gemini_live":
             return
@@ -1266,6 +1302,37 @@ class GeminiLiveNode(Node):
             ]
         })
 
+        # Register report_user_emotion tool
+        tools.append({
+            'functionDeclarations': [
+                {
+                    'name': 'report_user_emotion',
+                    'description': (
+                        'Call this whenever you perceive a clear emotional state or affect in the user\'s voice '
+                        '(happy, enthusiastic, playful, neutral, curious, serious, sad, tired, anxious, frustrated, or confused).'
+                    ),
+                    'parameters': {
+                        'type': 'OBJECT',
+                        'properties': {
+                            'emotion': {
+                                'type': 'STRING',
+                                'description': 'The detected emotion',
+                                'enum': [
+                                    'happy', 'enthusiastic', 'playful', 'neutral', 'curious',
+                                    'serious', 'sad', 'tired', 'anxious', 'frustrated', 'confused'
+                                ]
+                            },
+                            'reason': {
+                                'type': 'STRING',
+                                'description': 'Brief explanation of vocal cues or context leading to this emotion'
+                            }
+                        },
+                        'required': ['emotion']
+                    }
+                }
+            ]
+        })
+
         setup_payload: dict = {
             "model": f"models/{self.model}",
             "generationConfig": {
@@ -1344,9 +1411,11 @@ class GeminiLiveNode(Node):
             extras.append(f"Preferred language for this speaker: {preferred_language}.")
         conversation_language = self.language_tracker.current_language
         if conversation_language == "ro":
-            extras.append("Current conversation language is Romanian. Keep speaking Romanian unless the user clearly asks to switch.")
+            extras.append("The last spoken language was Romanian. Respond in Romanian if the user continues in Romanian, or switch to English if the user speaks English.")
         elif conversation_language == "en":
-            extras.append("Current conversation language is English. Keep speaking English unless the user clearly asks to switch.")
+            extras.append("The last spoken language was English. Respond in English if the user continues in English, or switch to Romanian if the user speaks Romanian.")
+        else:
+            extras.append("Always respond in the same language the user is currently speaking (English or Romanian).")
         facts = self.person_context.get("facts", []) or []
         if facts:
             extras.append("Known personal facts: " + "; ".join(str(f) for f in facts[:8]) + ".")
@@ -1800,6 +1869,9 @@ class GeminiLiveNode(Node):
 
         if msg.data:
             # User is actively speaking
+            if not self._user_is_speaking_turn:
+                self._current_user_transcript = ""
+                self._filler_played_this_turn = False
             self._user_speech_frames += 1
             self._user_is_speaking_turn = True
             return
@@ -1868,9 +1940,9 @@ class GeminiLiveNode(Node):
 
         import random
         detected_lang = detect_text_language(transcript) if transcript else ""
-        lang = detected_lang or self.language_tracker.current_language or 'ro'
+        lang = detected_lang or self.language_tracker.current_language or 'en'
         if lang not in self.fillers_cache or not self.fillers_cache[lang]:
-            lang = 'ro'
+            lang = 'en' if 'en' in self.fillers_cache and self.fillers_cache['en'] else 'ro'
             
         cache_list = self.fillers_cache.get(lang, [])
         if cache_list:
@@ -1884,7 +1956,7 @@ class GeminiLiveNode(Node):
                     out.sample_rate = filler['rate']
                     out.channels = filler['channels']
                     out.data = pcm.tolist()
-                    out.stream_id = self._active_turn_id + "_filler"
+                    out.stream_id = self._active_turn_id or "turn_filler"
                     out.item_id = "local_filler"
                     self.audio_pub.publish(out)
                     self.get_logger().info(
