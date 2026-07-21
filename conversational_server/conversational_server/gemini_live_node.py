@@ -218,6 +218,13 @@ class GeminiLiveNode(Node):
         self.filler_chance = float(self.get_parameter("filler_chance").value)
         self.filler_volume = float(self.get_parameter("filler_volume").value)
         self.fillers_dir = str(self.get_parameter("fillers_dir").value)
+        # The configured path may point at another machine's home (it did:
+        # /home/delia/...). Fall back to this workspace's voices/fillers so the
+        # feature works regardless of where the repo is checked out.
+        if not os.path.isdir(self.fillers_dir):
+            _ws = _find_workspace_root()
+            if _ws is not None and os.path.isdir(str(_ws / "voices" / "fillers")):
+                self.fillers_dir = str(_ws / "voices" / "fillers")
         self.fillers_cache = {'ro': [], 'en': []}
         self._user_audio_frames_sent = 0
         if self.enable_local_fillers:
@@ -1281,6 +1288,13 @@ class GeminiLiveNode(Node):
             'Your own assistant name is Robot. '
             'If the user asks your name, answer "Robot". '
             'Do not use any speaker preferred name as your own identity.'
+        )
+        extras.append(
+            'You are a physical humanoid robot with a real body: a head, two '
+            'arms and hands, and a mobile base. You can physically move forward, '
+            'raise a hand, turn around, clap your hands, and wave to say hi. '
+            'Speak about yourself as an embodied robot that can perform these '
+            'physical actions — not as a disembodied program on a screen.'
         )
         extras.append(
             'You have a get_speaker_info tool that returns the CURRENT user\'s '
