@@ -601,7 +601,6 @@ class GeminiLiveNode(Node):
         # down mid-confirmation cost ~1.5s plus a stale-audio replay each time.
         if status in mute_statuses and not self.waiting_for_robot_confirmation:
             self.waiting_for_robot_confirmation = True
-<<<<<<< HEAD
             self.get_logger().info("Robot status: confirmation required - muting Gemini output")
         elif status in resume_statuses and self.waiting_for_robot_confirmation:
             self.waiting_for_robot_confirmation = False
