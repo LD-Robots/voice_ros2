@@ -158,7 +158,7 @@ class GeminiLiveNode(Node):
         self.declare_parameter("filler_chance", 0.70)
         self.declare_parameter("filler_volume", 0.80)
         self.declare_parameter("filler_delay_ms", 450)
-        self.declare_parameter("fillers_dir", "/home/delia/voice_ros2/voices/fillers")
+        self.declare_parameter("fillers_dir", "voices/fillers")
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -219,7 +219,13 @@ class GeminiLiveNode(Node):
         self.filler_chance = float(self.get_parameter("filler_chance").value)
         self.filler_volume = float(self.get_parameter("filler_volume").value)
         self.filler_delay_ms = max(0, int(self.get_parameter("filler_delay_ms").value))
-        self.fillers_dir = str(self.get_parameter("fillers_dir").value)
+        raw_fillers_dir = str(self.get_parameter("fillers_dir").value)
+        fillers_path = Path(os.path.expanduser(raw_fillers_dir))
+        if not fillers_path.is_absolute():
+            ws_root = _find_workspace_root() or Path.cwd()
+            self.fillers_dir = str(ws_root / fillers_path)
+        else:
+            self.fillers_dir = str(fillers_path)
         self.fillers_cache = {'ro': [], 'en': []}
         self.filler_timer = None
         self._user_speech_end_time = 0.0
