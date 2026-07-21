@@ -16,11 +16,19 @@ class AudioPlaybackNode(Node):
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('channels', 1)
         self.declare_parameter('gain', 0.5)
+        self.declare_parameter('enable_dynamic_volume', True)
+        self.declare_parameter('min_playback_gain', 0.35)
+        self.declare_parameter('max_playback_gain', 1.0)
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
         self.gain = self.get_parameter('gain').value
         self.base_gain = self.gain
+        self.enable_dynamic_volume = bool(self.get_parameter('enable_dynamic_volume').value)
+        self.min_playback_gain = float(self.get_parameter('min_playback_gain').value)
+        self.max_playback_gain = float(self.get_parameter('max_playback_gain').value)
+        self.target_gain = self.gain
+        self._last_env_state = ''
         
         self.speaking_pub = self.create_publisher(Bool, 'is_speaking', 10)
         self.progress_pub = self.create_publisher(String, 'audio_playback_progress', 10)
@@ -148,6 +156,9 @@ class AudioPlaybackNode(Node):
             self.is_playing = True
             self.speaking_pub.publish(Bool(data=True))
             
+            # Smoothly ramp gain towards target_gain to avoid click/pop artifacts
+            self.gain = float(0.80 * self.gain + 0.20 * self.target_gain)
+
             if self.gain != 1.0:
                 chunk_data = (chunk_data.astype(np.float32) * self.gain).astype(np.int16)
 
@@ -177,14 +188,29 @@ class AudioPlaybackNode(Node):
     def env_callback(self, msg: String):
         try:
             data = json.loads(msg.data)
-            state = data.get('state', 'moderate')
-            if state == 'quiet':
-                self.gain = self.base_gain * 0.8
-            elif state == 'noisy':
-                self.gain = min(1.0, self.base_gain * 2.0)
-            else:
-                self.gain = min(1.0, self.base_gain * 1.2)
-            self.get_logger().debug(f'Adjusted playback gain to {self.gain:.2f} due to acoustic state: {state}')
+            state = str(data.get('state', 'moderate') or 'moderate')
+            noise_dbfs = float(data.get('noise_dbfs', -45.0) or -45.0)
+
+            if not self.enable_dynamic_volume:
+                return
+
+            # Continuous linear interpolation:
+            # -60.0 dBFS (or quieter) -> min_playback_gain (0.35)
+            # -25.0 dBFS (or noisier) -> max_playback_gain (1.00)
+            raw_target = np.interp(
+                noise_dbfs,
+                [-60.0, -25.0],
+                [self.min_playback_gain, self.max_playback_gain]
+            )
+            old_target = self.target_gain
+            self.target_gain = float(np.clip(raw_target, self.min_playback_gain, self.max_playback_gain))
+
+            if abs(self.target_gain - old_target) >= 0.05 or state != self._last_env_state:
+                self._last_env_state = state
+                pct = int(self.target_gain * 100)
+                self.get_logger().info(
+                    f'🔊 Dynamic Playback Volume: {pct}% (Env: {state.upper()}, Noise: {noise_dbfs:.1f} dBFS)'
+                )
         except Exception as e:
             self.get_logger().error(f'Error parsing acoustic environment in playback: {e}')
 
