@@ -139,6 +139,10 @@ class GeminiLiveNode(Node):
         # speaker switches as transient ID flips and update context cheaply
         # (mid-session inject) instead of tearing down the session again.
         self.declare_parameter("speaker_reconnect_debounce_s", 6.0)
+        # Cap how much buffered user audio is replayed into a fresh session.
+        # Without a cap this grew to ~8.6s during long gaps (e.g. a confirmation
+        # window), delaying the new session and replaying stale speech.
+        self.declare_parameter("max_replay_seconds", 3.0)
         self.declare_parameter("sticky_speaker_timeout_s", 60.0)
         self.declare_parameter("speaker_switch_hits_required", 2)
         self.declare_parameter("language_switch_hits_required", 2)
@@ -205,6 +209,7 @@ class GeminiLiveNode(Node):
             self.get_parameter("speaker_reconnect_debounce_s").value
         )
         self._last_speaker_reconnect_s = 0.0
+        self.max_replay_seconds = float(self.get_parameter("max_replay_seconds").value)
         self.utterance_capture_prefix_ms = int(self.get_parameter("utterance_capture_prefix_ms").value)
         self.utterance_capture_min_ms = int(self.get_parameter("utterance_capture_min_ms").value)
         self.name_context_wait_ms = max(0, int(self.get_parameter("name_context_wait_ms").value))
@@ -586,12 +591,14 @@ class GeminiLiveNode(Node):
             "confirmation_accepted", "confirmation_rejected", "confirmation_timeout",
             "canceled", "completed", "executing", "stopped",
         }
+        # No session rebuild here. Muting the model's output while
+        # waiting_for_robot_confirmation keeps it quiet, and the yes/no answer
+        # still needs the LIVE session to transcribe it — tearing the session
+        # down mid-confirmation cost ~1.5s plus a stale-audio replay each time.
         if status in mute_statuses and not self.waiting_for_robot_confirmation:
             self.waiting_for_robot_confirmation = True
-            self._request_reconnect("robot_confirmation_required")
         elif status in resume_statuses and self.waiting_for_robot_confirmation:
             self.waiting_for_robot_confirmation = False
-            self._request_reconnect("robot_confirmation_done")
 
     def doa_callback(self, msg: Int32):
         if not self.doa_enabled:
@@ -926,11 +933,13 @@ class GeminiLiveNode(Node):
             self._ignore_model_response = False
 
     def _handle_output_audio(self, inline_data: dict):
-        # While paused ("hold on … until I'm back") the robot must stay silent
-        # even though the native-audio model keeps generating. We still receive
-        # input transcription (so resume/re-engagement is detected), but drop the
-        # model's speech instead of playing it.
-        if self.conversation_paused:
+        # While paused ("hold on … until I'm back") — or while a risky command
+        # awaits a yes/no — the robot must stay silent even though the
+        # native-audio model keeps generating. Input transcription still flows
+        # (so resume/re-engagement and the yes/no are detected); we just drop the
+        # model's speech instead of playing it. Muting here is what makes the
+        # confirmation session-rebuilds unnecessary.
+        if self.conversation_paused or self.waiting_for_robot_confirmation:
             return
         mime = str(inline_data.get("mimeType", "") or "")
         data_b64 = str(inline_data.get("data", "") or "")
@@ -1510,6 +1519,18 @@ class GeminiLiveNode(Node):
     def _replay_accumulated_audio(self):
         if not self._current_user_audio:
             return
+        # Keep only the most recent audio — replaying many seconds of stale
+        # speech into a fresh session adds latency and can make the model answer
+        # something the user already finished saying.
+        rate = max(1, int(self._current_input_sample_rate or self.input_sample_rate))
+        max_samples = int(max(0.5, self.max_replay_seconds) * rate)
+        if len(self._current_user_audio) > max_samples:
+            dropped = len(self._current_user_audio) - max_samples
+            self._current_user_audio = self._current_user_audio[-max_samples:]
+            self.get_logger().info(
+                f"Trimmed {dropped} stale samples from the replay buffer "
+                f"(cap {self.max_replay_seconds:.1f}s)"
+            )
         self.get_logger().info(f"Replaying {len(self._current_user_audio)} samples of accumulated user audio to new session")
         pcm = np.array(self._current_user_audio, dtype=np.int16)
         pcm_api = self._resample_pcm16(pcm, self._current_input_sample_rate, self.api_sample_rate)
@@ -1534,6 +1555,12 @@ class GeminiLiveNode(Node):
 
     def _should_filter_playback_input(self, now_ms: int) -> bool:
         if not self.playback_input_filter_enabled:
+            return False
+        # While a risky command awaits a yes/no answer, the confirmation prompt
+        # has already finished and we MUST hear the reply. Answers are short and
+        # often quiet (~-38 dBFS), i.e. below min_rms_dbfs, so leaving the guard
+        # armed silently dropped them and the confirmation always timed out.
+        if self.waiting_for_robot_confirmation:
             return False
         active = self.robot_speaking
         if not active and self._last_robot_speaking_end_ms > 0:
