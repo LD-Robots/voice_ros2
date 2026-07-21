@@ -109,6 +109,7 @@
     enable_local_fillers: true
     filler_chance: 0.75
     filler_volume: 0.80
+    filler_delay_ms: 2000
     fillers_dir: "/home/delia/voice_ros2/voices/fillers"
     # Speaker-change reconnects are persona refreshes, not errors: reopen fast
     # and debounce transient ID flips (see #1/#3 speaker-recognition fixes).

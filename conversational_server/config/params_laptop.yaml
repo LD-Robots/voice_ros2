@@ -46,6 +46,7 @@
     enable_local_fillers: true
     filler_chance: 0.75
     filler_volume: 0.80
+    filler_delay_ms: 2000
     fillers_dir: "/home/delia/voice_ros2/voices/fillers"
     vad_prefix_padding_ms: 300
     vad_silence_duration_ms: 350
