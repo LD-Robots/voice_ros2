@@ -177,7 +177,12 @@ class RobotCommandGateNode(Node):
 
         if self.require_same_speaker_for_confirmation:
             current_speaker = self.current_speaker if self.current_speaker else 'Unknown'
-            if pending_speaker != 'Unknown' and current_speaker != pending_speaker:
+            # Only reject a confirmation from a DIFFERENT, KNOWN speaker. Speaker
+            # ID frequently drops to 'Unknown' mid-turn, and rejecting those was
+            # silently dropping valid yes/no answers — treat 'Unknown' as "cannot
+            # prove it's someone else" and let it through.
+            if (pending_speaker != 'Unknown'
+                    and current_speaker not in ('Unknown', pending_speaker)):
                 self.get_logger().warn(
                     'Ignoring confirmation from a different speaker: '
                     f'expected={pending_speaker}, got={current_speaker}'

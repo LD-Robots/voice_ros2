@@ -33,10 +33,15 @@ log/
 **/__pycache__/
 *.pyc
 
-# Voice enrollment audio is runtime/PII data — keep recordings local.
-# The portable registration record is voices/enrollment/speaker_embeddings.json
-# (+ *.profile.json / person_memory.json), which stay tracked.
+# Audio files (recording & debug files)
+*.wav
+!conversational_server/resources/static_audio/*.wav
+!voices/fillers/*.wav
+
+# Voice enrollment & memory runtime data
 voices/**/*.wav
 voices/*.wav
+voices/**/*.json
+voices/*.json
 voices/quarantine/
 voices/pending_enrollment/

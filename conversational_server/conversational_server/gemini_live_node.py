@@ -28,7 +28,7 @@ from conversational_client.conversation_utils import (
     is_reengagement_phrase,
 )
 from std_msgs.msg import Bool, String, Int32
-from .language_utils import ConversationLanguageTracker, detect_text_language
+from .language_utils import ConversationLanguageTracker
 from .prompt_config import load_prompt_defaults
 from .realtime_audio_filter import PlaybackInputFilter, PlaybackInputFilterConfig
 from .realtime_text_utils import (
@@ -157,8 +157,7 @@ class GeminiLiveNode(Node):
         self.declare_parameter("enable_local_fillers", False)
         self.declare_parameter("filler_chance", 0.70)
         self.declare_parameter("filler_volume", 0.80)
-        self.declare_parameter("filler_delay_ms", 450)
-        self.declare_parameter("fillers_dir", "voices/fillers")
+        self.declare_parameter("fillers_dir", "/home/delia/voice_ros2/voices/fillers")
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -218,20 +217,16 @@ class GeminiLiveNode(Node):
         self.enable_local_fillers = bool(self.get_parameter("enable_local_fillers").value)
         self.filler_chance = float(self.get_parameter("filler_chance").value)
         self.filler_volume = float(self.get_parameter("filler_volume").value)
-        self.filler_delay_ms = max(0, int(self.get_parameter("filler_delay_ms").value))
-        raw_fillers_dir = str(self.get_parameter("fillers_dir").value)
-        fillers_path = Path(os.path.expanduser(raw_fillers_dir))
-        if not fillers_path.is_absolute():
-            ws_root = _find_workspace_root() or Path.cwd()
-            self.fillers_dir = str(ws_root / fillers_path)
-        else:
-            self.fillers_dir = str(fillers_path)
+        self.fillers_dir = str(self.get_parameter("fillers_dir").value)
+        # The configured path may point at another machine's home (it did:
+        # /home/delia/...). Fall back to this workspace's voices/fillers so the
+        # feature works regardless of where the repo is checked out.
+        if not os.path.isdir(self.fillers_dir):
+            _ws = _find_workspace_root()
+            if _ws is not None and os.path.isdir(str(_ws / "voices" / "fillers")):
+                self.fillers_dir = str(_ws / "voices" / "fillers")
         self.fillers_cache = {'ro': [], 'en': []}
-        self.filler_timer = None
-        self._user_speech_end_time = 0.0
-        self._user_speech_frames = 0
-        self._user_is_speaking_turn = False
-        self._filler_played_this_turn = False
+        self._user_audio_frames_sent = 0
         if self.enable_local_fillers:
             self._precache_fillers()
 
@@ -353,13 +348,12 @@ class GeminiLiveNode(Node):
         self.response_pub = self.create_publisher(Transcription, "llm_response", 10)
         self.pause_state_pub = self.create_publisher(Bool, "conversation_pause", 10)
         self.tts_stop_pub = self.create_publisher(Bool, "stop_playback", 10)
-        self.person_remember_pub = self.create_publisher(String, "person_remember_request", 10)
-        self.user_emotion_pub = self.create_publisher(String, "user_emotion", 10)
         self.tts_command_pub = self.create_publisher(String, "tts_command", 10)
         self.status_pub = self.create_publisher(String, "gemini_live_status", 10)
         self.session_pub = self.create_publisher(Bool, "session_active", 10)
         self.end_session_pub = self.create_publisher(Bool, "end_session_external", 10)
         self.introduced_name_pub = self.create_publisher(String, "introduced_name", 10)
+        self.user_emotion_pub = self.create_publisher(String, "user_emotion", 10)
 
         # Subscriptions
         self.audio_sub = self.create_subscription(Audio, "audio_clean", self.audio_callback, 10)
@@ -431,9 +425,6 @@ class GeminiLiveNode(Node):
         if "hello" not in word and "wake" not in word:
             return
         self.get_logger().info(f"Gemini: injecting greeting for wake word '{word}'")
-        self._filler_played_this_turn = True
-        self._user_speech_frames = 0
-        self._user_is_speaking_turn = False
         if self.doa_enabled and self.latest_doa_angle != -1:
             self.focused_doa_angle = self.latest_doa_angle
             self.doa_history = [self.focused_doa_angle]
@@ -631,6 +622,7 @@ class GeminiLiveNode(Node):
         # Buffer incoming user audio during the current turn, even during a reconnect gap
         if not self.robot_speaking:
             self._remember_input_audio(msg.data)
+            self._user_audio_frames_sent += 1
             if self._capture_user_audio:
                 self._current_user_audio.extend(msg.data)
 
@@ -658,9 +650,7 @@ class GeminiLiveNode(Node):
         # Deferred Context Injection disabled. The model uses get_speaker_info tool CALL.
         if self._is_new_user_turn:
             self._is_new_user_turn = False
-            self._user_speech_frames = 0
-            self._user_is_speaking_turn = False
-            self._filler_played_this_turn = False
+            self._user_audio_frames_sent = 0
 
         # Spatial DOA Gating
         if (self.doa_enabled and self.focused_doa_angle != -1 and
@@ -818,13 +808,11 @@ class GeminiLiveNode(Node):
                         'response': {'result': 'paused' if pause_request else 'resumed'}
                     })
                 elif name == 'report_user_emotion':
-                    emotion = str(args.get('emotion', '') or 'neutral').lower().strip()
-                    reason = str(args.get('reason', '') or '').strip()
-                    self._handle_report_user_emotion(emotion, reason)
+                    emotion_res = self._handle_report_user_emotion(args)
                     responses.append({
                         'id': call_id,
                         'name': name,
-                        'response': {'status': 'ok', 'emotion_recorded': emotion}
+                        'response': {'status': 'ok', 'emotion_recorded': emotion_res}
                     })
                 else:
                     responses.append({
@@ -949,8 +937,11 @@ class GeminiLiveNode(Node):
             self._ignore_model_response = False
 
     def _handle_output_audio(self, inline_data: dict):
-        # While paused or awaiting robot confirmation, the robot must stay silent
-        if self.conversation_paused or self.waiting_for_robot_confirmation:
+        # While paused ("hold on … until I'm back") the robot must stay silent
+        # even though the native-audio model keeps generating. We still receive
+        # input transcription (so resume/re-engagement is detected), but drop the
+        # model's speech instead of playing it.
+        if self.conversation_paused:
             return
         mime = str(inline_data.get("mimeType", "") or "")
         data_b64 = str(inline_data.get("data", "") or "")
@@ -970,13 +961,6 @@ class GeminiLiveNode(Node):
         if not self._current_turn_audio_started:
             self._current_turn_audio_started = True
             self._mark_response_active(self._active_turn_id)
-            if self.filler_timer is not None:
-                self.filler_timer.cancel()
-                self.filler_timer = None
-            if self._user_speech_end_time > 0:
-                latency_ms = int((time.monotonic() - self._user_speech_end_time) * 1000)
-                self.get_logger().info(f"⏱️ Gemini Live Response Latency: {latency_ms} ms")
-                self._user_speech_end_time = 0.0
             self.get_logger().debug("Gemini Live started audio output")
 
         self._last_assistant_audio_at = time.monotonic()
@@ -1013,12 +997,6 @@ class GeminiLiveNode(Node):
         self._last_response_request_item_id = ""
         self._assistant_name_question_active = False
         self._last_accepted_user_transcript_norm = ""
-        self._user_speech_frames = 0
-        self._user_is_speaking_turn = False
-        self._filler_played_this_turn = False
-        if self.filler_timer is not None:
-            self.filler_timer.cancel()
-            self.filler_timer = None
 
         if self._pause_pending:
             self.get_logger().info("Gemini Live: turn complete, applying deferred pause state")
@@ -1194,27 +1172,22 @@ class GeminiLiveNode(Node):
         self.get_logger().info(f"remember_person -> enrollment request for '{name}'")
         return "acknowledged"
 
-    def _handle_report_user_emotion(self, emotion: str, reason: str):
-        valid_emotions = {
-            'happy', 'enthusiastic', 'playful', 'neutral', 'curious',
-            'serious', 'sad', 'tired', 'anxious', 'frustrated', 'confused'
-        }
-        if emotion not in valid_emotions:
-            emotion = 'neutral'
-
-        pref_name = self._voice_correlated_preferred_name() or self.current_speaker
-        event = {
-            'speaker': pref_name,
-            'emotion': emotion,
-            'reason': reason,
-            'timestamp': time.time()
+    def _handle_report_user_emotion(self, args: dict) -> str:
+        emotion = str((args or {}).get("emotion", "neutral") or "neutral").strip().lower()
+        reason = str((args or {}).get("reason", "") or "").strip()
+        speaker = self.current_speaker
+        payload = {
+            "speaker": speaker,
+            "emotion": emotion,
+            "reason": reason,
         }
         msg = String()
-        msg.data = json.dumps(event)
+        msg.data = json.dumps(payload, separators=(",", ":"))
         self.user_emotion_pub.publish(msg)
         self.get_logger().info(
-            f"🎭 User Emotion Detected: {emotion.upper()} for speaker '{pref_name}' (reason: '{reason}')"
+            f"🎭 User Emotion Detected: {emotion.upper()} for speaker '{speaker}' (reason: '{reason}')"
         )
+        return emotion
 
     def _send_setup(self):
         if not self._connected.is_set() or self.current_backend != "gemini_live":
@@ -1374,6 +1347,13 @@ class GeminiLiveNode(Node):
             'Your own assistant name is Robot. '
             'If the user asks your name, answer "Robot". '
             'Do not use any speaker preferred name as your own identity.'
+        )
+        extras.append(
+            'You are a physical humanoid robot with a real body: a head, two '
+            'arms and hands, and a mobile base. You can physically move forward, '
+            'raise a hand, turn around, clap your hands, and wave to say hi. '
+            'Speak about yourself as an embodied robot that can perform these '
+            'physical actions — not as a disembodied program on a screen.'
         )
         extras.append(
             'You have a get_speaker_info tool that returns the CURRENT user\'s '
@@ -1866,105 +1846,44 @@ class GeminiLiveNode(Node):
     def vad_callback(self, msg: Bool):
         if not self.session_active or self.current_backend != "gemini_live":
             return
-
-        if msg.data:
-            # User is actively speaking
-            if not self._user_is_speaking_turn:
-                self._current_user_transcript = ""
-                self._filler_played_this_turn = False
-            self._user_speech_frames += 1
-            self._user_is_speaking_turn = True
+        if not self.enable_local_fillers:
             return
 
-        # User stopped speaking (msg.data is False)
-        if self._user_is_speaking_turn:
-            speech_duration_ok = (self._user_speech_frames >= 15)
-            self._user_is_speaking_turn = False
-            self._user_speech_frames = 0
-            self._user_speech_end_time = time.monotonic()
-
-            if (speech_duration_ok and 
-                    self.enable_local_fillers and
-                    not self._filler_played_this_turn and
-                    not self.robot_speaking and 
-                    not self._current_turn_audio_started and
-                    not self.waiting_for_robot_confirmation):
+        # Trigger on VAD transition to False (user stopped speaking)
+        if not msg.data:
+            # Check conditions for playing filler:
+            # 1. Robot is not currently speaking or about to speak
+            # 2. We haven't started playing the response yet
+            # 3. User actually spoke (to filter out noise spikes, we require at least 15 frames)
+            if (not self.robot_speaking and 
+                    not self._current_turn_audio_started and 
+                    self._user_audio_frames_sent >= 15):
                 
-                if self.filler_timer is not None:
-                    self.filler_timer.cancel()
-                import threading
-                self.filler_timer = threading.Timer(
-                    self.filler_delay_ms / 1000.0, self._trigger_delayed_filler
-                )
-                self.filler_timer.start()
-
-    @staticmethod
-    def _is_question_utterance(text: str) -> bool:
-        if not text:
-            return False
-        text = text.lower().strip()
-        if "?" in text:
-            return True
-        question_words = (
-            "what", "how", "why", "where", "who", "when", "which", "whose", "whom",
-            "can", "could", "would", "should", "will", "is", "are", "do", "does", "did",
-            "cum", "ce", "de ce", "unde", "cine", "când", "cand", "care", "poți", "poti",
-            "vei", "știi", "stii", "există", "exista", "ai", "este", "sunt"
-        )
-        words = text.split()
-        if any(w.strip(".,!?") in question_words for w in words[:4]):
-            return True
-        return False
-
-    def _trigger_delayed_filler(self):
-        if not self.session_active or self.current_backend != "gemini_live":
-            return
-        if (self.robot_speaking or 
-                self._current_turn_audio_started or 
-                self._filler_played_this_turn or
-                self.waiting_for_robot_confirmation):
-            return
-
-        # Check if the user utterance is actually a question or noise/unsupported
-        transcript = (self._current_user_transcript or "").strip()
-        if not self._is_question_utterance(transcript):
-            self.get_logger().info(f"⏭️ Skipping filler word: user utterance is not a question ('{transcript}')")
-            return
-
-        ignore_reason = ignored_short_transcript_reason(transcript)
-        if ignore_reason:
-            self.get_logger().info(f"⏭️ Skipping filler word: user utterance ignored ({ignore_reason}: '{transcript}')")
-            return
-
-        self._filler_played_this_turn = True
-
-        import random
-        detected_lang = detect_text_language(transcript) if transcript else ""
-        lang = detected_lang or self.language_tracker.current_language or 'en'
-        if lang not in self.fillers_cache or not self.fillers_cache[lang]:
-            lang = 'en' if 'en' in self.fillers_cache and self.fillers_cache['en'] else 'ro'
-            
-        cache_list = self.fillers_cache.get(lang, [])
-        if cache_list:
-            if random.random() < self.filler_chance:
-                filler = random.choice(cache_list)
-                try:
-                    # Scale volume
-                    pcm = (filler['pcm'].astype(np.float32) * self.filler_volume).astype(np.int16)
+                import random
+                lang = self.language_tracker.current_language or 'ro'
+                if lang not in self.fillers_cache or not self.fillers_cache[lang]:
+                    lang = 'ro'
                     
-                    out = Audio()
-                    out.sample_rate = filler['rate']
-                    out.channels = filler['channels']
-                    out.data = pcm.tolist()
-                    out.stream_id = self._active_turn_id or "turn_filler"
-                    out.item_id = "local_filler"
-                    self.audio_pub.publish(out)
-                    self.get_logger().info(
-                        f"🎙️ Played delayed filler ({self.filler_delay_ms}ms delay elapsed): "
-                        f"{filler['name']} ({lang.upper()})"
-                    )
-                except Exception as e:
-                    self.get_logger().error(f"Error playing local filler: {e}")
+                cache_list = self.fillers_cache.get(lang, [])
+                if cache_list:
+                    if random.random() < self.filler_chance:
+                        filler = random.choice(cache_list)
+                        try:
+                            # Scale volume
+                            pcm = (filler['pcm'].astype(np.float32) * self.filler_volume).astype(np.int16)
+                            
+                            out = Audio()
+                            out.sample_rate = filler['rate']
+                            out.channels = filler['channels']
+                            out.data = pcm.tolist()
+                            # Use turn_id + "_filler" to force audio_playback_node to interrupt it
+                            # if the real response arrives immediately.
+                            out.stream_id = self._active_turn_id + "_filler"
+                            out.item_id = "local_filler"
+                            self.audio_pub.publish(out)
+                            self.get_logger().info(f"🎙️ Playing local filler: {filler['name']} ({lang.upper()})")
+                        except Exception as e:
+                            self.get_logger().error(f"Error playing local filler: {e}")
 
 
 def main(args=None):
