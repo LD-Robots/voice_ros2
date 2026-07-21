@@ -98,8 +98,8 @@ class TTSNode(Node):
             'filler_en': ('One moment please...', 'en'),
             'goodbye_en': ('Goodbye. I will be here when you need me again.', 'en'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
-            'confirm_en': ('Are you sure? Please say yes or no.', 'en'),
-            'confirm_ro': ('Esti sigur? Te rog spune da sau nu.', 'ro'),
+            'confirm_en': ('Confirm? Yes or no.', 'en'),
+            'confirm_ro': ('Confirmi? Da sau nu.', 'ro'),
             'pause_en': ('Conversation paused.', 'en'),
             'pause_ro': ('Conversație pusă pe pauză.', 'ro'),
         }

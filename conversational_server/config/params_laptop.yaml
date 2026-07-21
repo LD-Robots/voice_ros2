@@ -185,7 +185,13 @@
     command_topic: "robot_commands"
     execution_enabled: true
     enable_voice_cancel: true
-    enable_risky_confirmation: true
+    # Risky-command confirmation is OFF: the spoken yes/no could not be received
+    # reliably (Gemini transcribed "yes" into other scripts, e.g. Devanagari
+    # "यस", which the unsupported_script filter drops, and the transcript often
+    # arrived after confirmation_timeout_s). All 5 commands now dispatch
+    # immediately. The spoken "stop" cancel below is still active.
+    # Set back to true to re-enable the confirmation gate.
+    enable_risky_confirmation: false
     confirmation_timeout_s: 12.0
     require_same_speaker_for_confirmation: false
     risky_steps_threshold: 5

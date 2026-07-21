@@ -152,7 +152,10 @@
     command_topic: "robot_commands"
     execution_enabled: true
     enable_voice_cancel: true
-    enable_risky_confirmation: true
+    # Risky-command confirmation is OFF (see params_laptop.yaml for the why):
+    # the spoken yes/no could not be received reliably. All 5 commands dispatch
+    # immediately; the spoken "stop" cancel below is still active.
+    enable_risky_confirmation: false
     confirmation_timeout_s: 12.0
     risky_steps_threshold: 5
     risky_turn_angle_deg: 150.0
