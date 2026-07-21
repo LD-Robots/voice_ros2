@@ -32,6 +32,7 @@ class AudioPlaybackNode(Node):
         
         self.speaking_pub = self.create_publisher(Bool, 'is_speaking', 10)
         self.progress_pub = self.create_publisher(String, 'audio_playback_progress', 10)
+        self.volume_pub = self.create_publisher(String, 'playback_volume', 10)
 
         # No maxlen – Gemini streams audio faster than real-time, so a bounded
         # deque would silently drop the oldest (next-to-play) chunks, causing
@@ -211,6 +212,13 @@ class AudioPlaybackNode(Node):
                 self.get_logger().info(
                     f'🔊 Dynamic Playback Volume: {pct}% (Env: {state.upper()}, Noise: {noise_dbfs:.1f} dBFS)'
                 )
+                vol_msg = {
+                    'volume_pct': pct,
+                    'target_gain': round(self.target_gain, 3),
+                    'state': state,
+                    'noise_dbfs': round(noise_dbfs, 1),
+                }
+                self.volume_pub.publish(String(data=json.dumps(vol_msg)))
         except Exception as e:
             self.get_logger().error(f'Error parsing acoustic environment in playback: {e}')
 

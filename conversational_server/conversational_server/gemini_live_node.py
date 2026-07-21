@@ -851,7 +851,7 @@ class GeminiLiveNode(Node):
         # Barge-in: model was interrupted by user speech
         if server_content.get("interrupted"):
             self.get_logger().info("Gemini Live: user interrupted assistant")
-            self._user_speaking = True
+            self._user_speaking = False
             self._cancel_pending_response_create()
             self._mark_response_inactive()
             stop_msg = Bool()
@@ -1043,6 +1043,7 @@ class GeminiLiveNode(Node):
 
 
     def _handle_input_transcript(self, transcript: str):
+        self._user_speaking = False
         ignore_reason = self._ignored_transcript_reason(transcript)
         if ignore_reason:
             self.get_logger().info(f"Ignoring transcript ({ignore_reason}): {transcript}")
@@ -1479,8 +1480,6 @@ class GeminiLiveNode(Node):
                 self._remember_deferred_response(item_id, reason)
             return False
         self._clear_deferred_response()
-        # Gemini responds automatically after user turn; no explicit response.create needed.
-        # We just update state to allow tracking.
         self._mark_response_create_pending()
         self._last_response_request_item_id = item_id
         self.get_logger().debug(f"Gemini response requested ({reason})")
