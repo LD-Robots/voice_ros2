@@ -29,19 +29,29 @@ PREFIXES = (
     'hello robot',
     'robot',
     'please',
+    'te rog sa faci',
+    'te rog sa',
     'te rog',
+    'poti sa faci',
+    'poti sa',
+    'poti',
     'can you',
     'could you',
     'can',
-    'poti sa',
-    'poti',
     'vreau sa',
     'vreau',
     'hai sa',
+    'fa un',
+    'fa o',
+    'fa',
+    'da-i',
+    'sa faci',
+    'sa dai',
+    'go ahead and',
 )
 
 MOVE_FORWARD_PATTERNS = (
-    r'^(move|go|walk|step|take|head|advance)\b.*\b(forward|ahead)\b',
+    r'^(move|go|walk|step|take|head|advance|fa|mergi|du te|inainteaza)\b.*\b(forward|ahead|inainte|in fata)\b',
     r'^(forward|ahead)\b',
     r'^(mergi|du te|du|inainteaza)\b.*\b(inainte|in fata)\b',
     r'^(inainte|in fata)\b',
@@ -49,28 +59,28 @@ MOVE_FORWARD_PATTERNS = (
 
 RAISE_HAND_PATTERNS = (
     r'^(hand|hands|arm|arms) up\b',
-    r'^(raise|lift|put)\b.*\b(hand|hands|arm|arms)\b',
+    r'^(raise|lift|put|ridica|fa)\b.*\b(hand|hands|arm|arms|mainile|mana|bratul|bratele|brat)\b',
     r'^ridica\b.*\b(mainile|mana|bratul|bratele|brat)\b',
     r'^mainile sus\b',
 )
 
 TURN_ARROUND_PATTERNS = (
-    r'^(turn|rotate|spin)\b.*\b(around|arround|back)\b',
+    r'^(turn|rotate|spin|intoarce|roteste|fa|da-i)\b.*\b(around|arround|back|180|one hundred eighty|inapoi|o suta optzeci)\b',
     r'^(turn|rotate|spin)\b.*\b(180|one hundred eighty)\b',
     r'^(turn around|turn arround|spin around|spin arround)\b',
     r'^(intoarce|roteste)\b.*\b(inapoi|180|o suta optzeci)\b',
 )
 
 CLAP_PATTERNS = (
-    r'^clap\b',
-    r'^clap\b.*\b(hand|hands)\b',
+    r'^(clap|fa clap|da-i clap)\b',
+    r'^(clap|bate|aplauda|fa|da-i)\b.*\b(hand|hands|palma|palmele|din palme)\b',
     r'^bate\b.*\b(palma|palmele|din palme)\b',
     r'^aplauda\b',
 )
 
 SAY_HI_PATTERNS = (
-    r'^(say|tell)\b.*\b(hi|hello|hello there)\b',
-    r'^(say hi|say hello|hello|hi)\b',
+    r'^(say|tell|spune|zi|saluta|fa)\b.*\b(hi|hello|hello there|salut|sei|se)\b',
+    r'^(say hi|say hello|hello|hi|salut|zi salut|spune salut)\b',
     r'^(saluta|spune salut|zi salut)\b',
 )
 

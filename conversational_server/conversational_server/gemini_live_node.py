@@ -1402,11 +1402,11 @@ class GeminiLiveNode(Node):
             extras.append(f"Preferred language for this speaker: {preferred_language}.")
         conversation_language = self.language_tracker.current_language
         if conversation_language == "ro":
-            extras.append("The last spoken language was Romanian. Respond in Romanian if the user continues in Romanian, or switch to English if the user speaks English.")
+            extras.append("The last spoken language was Romanian. Respond in Romanian, but accept English technical terms or code-switching naturally if the user uses them.")
         elif conversation_language == "en":
-            extras.append("The last spoken language was English. Respond in English if the user continues in English, or switch to Romanian if the user speaks Romanian.")
+            extras.append("The last spoken language was English. Respond in English, but accept Romanian phrases or code-switching naturally if the user uses them.")
         else:
-            extras.append("Always respond in the same language the user is currently speaking (English or Romanian).")
+            extras.append("The user may code-switch between Romanian and English. Adapt fluidly to their language style without forcing rigid translations.")
         facts = self.person_context.get("facts", []) or []
         if facts:
             extras.append("Known personal facts: " + "; ".join(str(f) for f in facts[:8]) + ".")
