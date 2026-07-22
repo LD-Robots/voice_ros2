@@ -166,3 +166,7 @@
     ref_wav_path: "aec_reference.wav"
     clean_wav_path: "aec_cleaned.wav"
     debug_recording: true
+    deep_filter_enabled: true
+    deep_filter_post_filter: true
+    deep_filter_atten_lim_db: 25.0
+    deep_filter_dynamic_adaptation: true

@@ -208,7 +208,10 @@
     debug_recording: true
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings
-    deep_filter_enabled: false   # Dezactivat: DF nu face AEC, conserva vocea robotului in output
+    deep_filter_enabled: true    # Activat: Filtrare neuronală activă cu post-filtering și adaptare dinamică
+    deep_filter_post_filter: true # Post-filtering spectral pentru atenuarea coercitivă a cozilor de ecou/reverberație (RT60)
+    deep_filter_atten_lim_db: 25.0 # Limită atenuare dB (previne distorsiunile fazice ale vocii)
+    deep_filter_dynamic_adaptation: true # Scalare dinamică a limitatorului de atenuare în funcție de starea acustică
     webrtc_ns_level: 1           # Redus la 1 (gentle) pentru a nu tăia silabele slabe
     webrtc_ns_enabled: true      # Activat din nou pentru reducerea zgomotului de fundal
     # Residual gate: zeroes out low-amplitude AEC residuals during/after robot playback.

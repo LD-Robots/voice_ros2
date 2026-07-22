@@ -119,13 +119,21 @@ class EchoCancellerNode(Node):
 
         # Initialize DeepFilterNet
         self.declare_parameter('deep_filter_enabled', True)
+        self.declare_parameter('deep_filter_post_filter', True)
+        self.declare_parameter('deep_filter_atten_lim_db', 25.0)
+        self.declare_parameter('deep_filter_dynamic_adaptation', True)
+
         self.deep_filter_enabled = self.get_parameter('deep_filter_enabled').value and DF_AVAILABLE
+        self.df_post_filter = bool(self.get_parameter('deep_filter_post_filter').value)
+        self.base_df_atten_lim_db = float(self.get_parameter('deep_filter_atten_lim_db').value)
+        self.df_atten_lim_db = self.base_df_atten_lim_db
+        self.df_dynamic_adaptation = bool(self.get_parameter('deep_filter_dynamic_adaptation').value)
         self.df_model: Any = None
 
         if self.deep_filter_enabled:
             self.get_logger().info("🧠 [DF] Loading DeepFilterNet model... (this may take a few seconds)")
             start_t = time.time()
-            self.df_model, self.df_state, _ = init_df()  # type: ignore[name-defined]
+            self.df_model, self.df_state, _ = init_df(post_filter=self.df_post_filter)  # type: ignore[name-defined]
             self.df_sr: int = self.df_state.sr() # Usually 48000
             self.df_hop: int = self.df_state.hop_size() # Usually 480
             
@@ -133,7 +141,11 @@ class EchoCancellerNode(Node):
             self.resampler_16to48: Any = torchaudio.transforms.Resample(16000, self.df_sr)  # type: ignore[name-defined]
             self.resampler_48to16: Any = torchaudio.transforms.Resample(self.df_sr, 16000)  # type: ignore[name-defined]
             
-            self.get_logger().info(f"✅ [DF] Model Loaded in {time.time()-start_t:.2f}s. Running at {self.df_sr}Hz.")
+            self.get_logger().info(
+                f"✅ [DF] Model Loaded in {time.time()-start_t:.2f}s ({self.df_sr}Hz). "
+                f"post_filter={self.df_post_filter}, atten_lim={self.df_atten_lim_db}dB, "
+                f"dynamic_adapt={self.df_dynamic_adaptation}"
+            )
         else:
             if not DF_AVAILABLE:
                 self.get_logger().warn("⚠️ [DF] DeepFilterNet NOT INSTALLED. Skipping AI enhancement.")
@@ -349,7 +361,12 @@ class EchoCancellerNode(Node):
                     
                     # Enhance with DeepFilterNet
                     # We process the whole chunk, DF handles internal state persistence via self.df_state
-                    enhanced_48k = enhance(self.df_model, self.df_state, clean_48k)
+                    enhanced_48k = enhance(
+                        self.df_model,
+                        self.df_state,
+                        clean_48k,
+                        atten_lim_db=self.df_atten_lim_db
+                    )
                     
                     # Resample 48kHz -> 16kHz
                     enhanced_16k = self.resampler_48to16(enhanced_48k)
@@ -396,18 +413,30 @@ class EchoCancellerNode(Node):
             if state == 'quiet':
                 self.residual_gate_rms_threshold = int(self.base_residual_gate_rms_threshold * 0.5)
                 new_ns_level = 1
+                new_df_atten = 15.0
             elif state == 'noisy':
                 self.residual_gate_rms_threshold = int(self.base_residual_gate_rms_threshold * 2.3)
                 new_ns_level = 3
+                new_df_atten = 30.0
             else:
                 self.residual_gate_rms_threshold = self.base_residual_gate_rms_threshold
                 new_ns_level = self.base_webrtc_ns_level
+                new_df_atten = 22.0
+
+            if self.df_dynamic_adaptation and abs(self.df_atten_lim_db - new_df_atten) > 1.0:
+                self.df_atten_lim_db = new_df_atten
+                self.get_logger().info(
+                    f'🧠 [DF] DeepFilterNet atten_lim_db dynamically set to {self.df_atten_lim_db:.1f} dB (env: {state.upper()})'
+                )
                 
             if new_ns_level != self.webrtc_ns_level:
                 self.webrtc_ns_level = new_ns_level
                 ns_level_changed = True
                 
-            self.get_logger().debug(f'Acoustic state: {state} | Threshold: {self.residual_gate_rms_threshold} | NS Level: {self.webrtc_ns_level}')
+            self.get_logger().debug(
+                f'Acoustic state: {state} | Threshold: {self.residual_gate_rms_threshold} | '
+                f'NS Level: {self.webrtc_ns_level} | DF Atten: {self.df_atten_lim_db}dB'
+            )
             
             # Recreate APM if noise suppression level changed
             if ns_level_changed and WEBRTC_AVAILABLE and self.apm is not None:
