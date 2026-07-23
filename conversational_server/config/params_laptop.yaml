@@ -150,7 +150,7 @@
 
 /**/person_memory_store_node:
   ros__parameters:
-    auto_enroll_unknown_speakers: false
+    auto_enroll_unknown_speakers: true
     min_enrollment_segment_seconds: 1.2
     # Gemini transcripts lag the audio; keep this well above that latency or
     # real self-introductions get rejected as "segment too old".
