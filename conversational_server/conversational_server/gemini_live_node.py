@@ -302,6 +302,11 @@ class GeminiLiveNode(Node):
         self._reconnect_cooldown_s = 1.5
         self._pending_reconnect_reason = ""
         self._intentional_reconnect = False  # True when we close WS on purpose (context update)
+        # Only replay buffered user audio into a fresh session after an INTENTIONAL
+        # reconnect. On a server error (close 1011) the old flow replayed the last
+        # utterance, making the model answer it a second time — the "double answer"
+        # bug. Default False so error reconnects never re-answer.
+        self._replay_on_next_setup = False
 
         # Response tracking
         self._assistant_text = defaultdict(str)
@@ -761,7 +766,13 @@ class GeminiLiveNode(Node):
         # Setup acknowledgement
         if "setupComplete" in event:
             self.get_logger().debug("Gemini Live session setup confirmed")
-            self._replay_accumulated_audio()
+            if self._replay_on_next_setup:
+                self._replay_on_next_setup = False
+                self._replay_accumulated_audio()
+            else:
+                # Error/unintentional reconnect: drop buffered audio so the model
+                # does not re-answer the last utterance (double-answer bug).
+                self._current_user_audio = []
             return
 
         # Tool calls from server (Google Search or custom tools)
@@ -1590,6 +1601,7 @@ class GeminiLiveNode(Node):
         self.get_logger().info(f"Gemini Live: reconnecting to refresh context ({reason})")
         self._setup_sent = False
         self._intentional_reconnect = True  # Signal that this close is intentional
+        self._replay_on_next_setup = True   # Preserve the in-flight utterance across THIS planned reconnect
         try:
             if self._ws_app is not None:
                 self._ws_app.close()
