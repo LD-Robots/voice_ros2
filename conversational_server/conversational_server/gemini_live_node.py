@@ -114,6 +114,9 @@ class GeminiLiveNode(Node):
         self.declare_parameter("vad_silence_duration_ms", 600)
         self.declare_parameter("response_create_delay_ms", 100)
         self.declare_parameter("continued_turn_response_delay_ms", 450)
+        # When native-audio auto-VAD transcribes a user turn but emits no spoken reply,
+        # re-send the transcript as a client turn to force generation. Set false to disable.
+        self.declare_parameter("force_response_on_silent_turn", True)
         self.declare_parameter("local_response_gating", False)
         self.declare_parameter("short_transcript_dedupe_window_s", 4.0)
         self.declare_parameter("playback_input_filter_enabled", True)
@@ -177,6 +180,7 @@ class GeminiLiveNode(Node):
         self.vad_silence_duration_ms = int(self.get_parameter("vad_silence_duration_ms").value)
         self.response_create_delay_ms = max(0, int(self.get_parameter("response_create_delay_ms").value))
         self.continued_turn_response_delay_ms = max(0, int(self.get_parameter("continued_turn_response_delay_ms").value))
+        self.force_response_on_silent_turn = bool(self.get_parameter("force_response_on_silent_turn").value)
         self.local_response_gating = bool(self.get_parameter("local_response_gating").value)
         self.short_transcript_dedupe_window_s = float(self.get_parameter("short_transcript_dedupe_window_s").value)
         self.playback_input_filter_enabled = bool(self.get_parameter("playback_input_filter_enabled").value)
@@ -1134,6 +1138,31 @@ class GeminiLiveNode(Node):
 
         self._user_speaking = False
 
+        # Native-audio auto-VAD often transcribes the user turn (inputTranscription +
+        # turnComplete) but never generates a spoken reply — observed as: the greeting
+        # answers, then every audio turn goes silent. This transcript passed all the
+        # attention/pause gates, so a reply IS wanted. If the model produced no audio
+        # for the just-completed turn, re-send the transcript as a proper client turn
+        # (identical shape to the working greeting — a bare turnComplete with no turns
+        # is rejected as "invalid argument") to force generation. Self-guarding: skipped
+        # when the model already started audio this turn, so it can't double a real reply.
+        if (
+            self.force_response_on_silent_turn
+            and not self._current_turn_audio_started
+            and not self.conversation_paused
+            and not self.waiting_for_robot_confirmation
+        ):
+            if self._send_raw({
+                "clientContent": {
+                    "turns": [{"role": "user", "parts": [{"text": transcript}]}],
+                    "turnComplete": True,
+                }
+            }):
+                self.get_logger().info(
+                    "Gemini produced no audio for the user turn — re-sent the "
+                    "transcript as a client turn to trigger a response"
+                )
+
     def _detect_goodbye(self, normalized_text: str) -> bool:
         """Return True if the normalized transcript is a goodbye phrase."""
         GOODBYE_KEYWORDS = (
@@ -1398,16 +1427,28 @@ class GeminiLiveNode(Node):
         if preferred_name and not assistant_name_question:
             extras.append(f"Preferred spoken name for the current speaker: {preferred_name}. Never call the user by internal labels.")
             extras.append("If the user asks whether you remember their name, answer directly with the preferred spoken name.")
+        # LANGUAGE: the system instruction is sent only once per session (no
+        # reconnect), so it must make the model mirror the user PER TURN rather than
+        # lock to one language. Firm mirror rule fixes "user speaks English, robot
+        # replies in Romanian". A stored profile language is only a weak fallback for
+        # genuinely ambiguous input — it must never override the language actually
+        # spoken in the current message.
+        extras.append(
+            "LANGUAGE RULE (highest priority): Detect the language of the user's "
+            "CURRENT message and reply entirely in that same language. If they speak "
+            "English, reply in English. If they speak Romanian, reply in Romanian. "
+            "Re-evaluate every single turn and mirror the user. Never default to "
+            "Romanian when the user is speaking English, and never switch languages on "
+            "your own. You may keep a technical term or short phrase the user themselves "
+            "used, but the base language of your reply must match their current message."
+        )
         preferred_language = self.person_context.get("preferred_language", "")
         if preferred_language:
-            extras.append(f"Preferred language for this speaker: {preferred_language}.")
-        conversation_language = self.language_tracker.current_language
-        if conversation_language == "ro":
-            extras.append("The last spoken language was Romanian. Respond in Romanian, but accept English technical terms or code-switching naturally if the user uses them.")
-        elif conversation_language == "en":
-            extras.append("The last spoken language was English. Respond in English, but accept Romanian phrases or code-switching naturally if the user uses them.")
-        else:
-            extras.append("The user may code-switch between Romanian and English. Adapt fluidly to their language style without forcing rigid translations.")
+            extras.append(
+                f"Only if a message is too short or ambiguous to tell the language, "
+                f"lean toward {preferred_language}; otherwise always follow the language "
+                f"actually spoken."
+            )
         facts = self.person_context.get("facts", []) or []
         if facts:
             extras.append("Known personal facts: " + "; ".join(str(f) for f in facts[:8]) + ".")
