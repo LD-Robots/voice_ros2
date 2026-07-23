@@ -38,5 +38,6 @@ log/
 # (+ *.profile.json / person_memory.json), which stay tracked.
 voices/**/*.wav
 voices/*.wav
+*.wav
 voices/quarantine/
 voices/pending_enrollment/
