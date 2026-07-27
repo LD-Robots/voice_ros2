@@ -133,7 +133,8 @@ class EchoCancellerNode(Node):
         if self.deep_filter_enabled:
             self.get_logger().info("🧠 [DF] Loading DeepFilterNet model... (this may take a few seconds)")
             start_t = time.time()
-            self.df_model, self.df_state, _ = init_df(post_filter=self.df_post_filter)  # type: ignore[name-defined]
+            res = init_df(post_filter=self.df_post_filter)  # type: ignore[name-defined]
+            self.df_model, self.df_state = res[0], res[1]
             self.df_sr: int = self.df_state.sr() # Usually 48000
             self.df_hop: int = self.df_state.hop_size() # Usually 480
             
