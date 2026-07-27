@@ -558,7 +558,7 @@ class GeminiLiveNode(Node):
             if speaker in self._speaker_context_cache:
                 self.person_context = self._speaker_context_cache[speaker]
                 self.language_tracker.seed(
-                    str(self.person_context.get('preferred_language', ''))
+                    self.person_context.get('preferred_language', '')
                 )
 
         # A speaker change no longer forces a session rebuild or a text
@@ -591,7 +591,7 @@ class GeminiLiveNode(Node):
 
         self.person_context = new_context
         self.language_tracker.seed(
-            str(self.person_context.get('preferred_language', ''))
+            self.person_context.get('preferred_language', '')
         )
         
         # No mid-session injection needed. The model uses get_speaker_info tool CALL.
