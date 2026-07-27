@@ -1664,7 +1664,7 @@ class GeminiLiveNode(Node):
         # Keep only the most recent audio — replaying many seconds of stale
         # speech into a fresh session adds latency and can make the model answer
         # something the user already finished saying.
-        rate = max(1, int(self._current_input_sample_rate or self.input_sample_rate))
+        rate = max(1, self._current_input_sample_rate or self.input_sample_rate)
         max_samples = int(max(0.5, self.max_replay_seconds) * rate)
         if len(self._current_user_audio) > max_samples:
             dropped = len(self._current_user_audio) - max_samples
