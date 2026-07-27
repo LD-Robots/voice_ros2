@@ -1139,7 +1139,7 @@ class GeminiLiveNode(Node):
 
         active_language = self.language_tracker.observe(
             transcript,
-            preferred_language=str(self.person_context.get("preferred_language", "")),
+            preferred_language=self.person_context.get("preferred_language", ""),
         )
         self._assistant_name_question_active = self._is_assistant_name_question(normalized)
         self._send_setup()
