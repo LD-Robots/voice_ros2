@@ -45,12 +45,12 @@ try:
                 self.bits_per_sample = bits_per_sample
                 self.encoding = encoding
 
-        _ta_common.AudioMetaData = AudioMetaData
-        _ta_backend.common = _ta_common
+        setattr(_ta_common, 'AudioMetaData', AudioMetaData)
+        setattr(_ta_backend, 'common', _ta_common)
         sys.modules.setdefault('torchaudio.backend', _ta_backend)
         sys.modules['torchaudio.backend.common'] = _ta_common
         if not hasattr(torchaudio, 'backend'):
-            torchaudio.backend = _ta_backend
+            setattr(torchaudio, 'backend', _ta_backend)
 
     from df.enhance import init_df, enhance
     DF_AVAILABLE = True
