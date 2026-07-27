@@ -352,6 +352,8 @@ class GeminiLiveNode(Node):
         self._goodbye_pending = False  # True after user said goodbye, waiting for Gemini to finish
         self._pending_context_update = False  # True when context inject was blocked by active response
         self._is_new_user_turn = True
+        self._silent_turn_timer: threading.Timer | None = None  # async guard for force_response_on_silent_turn
+        self._silent_turn_transcript = ""  # transcript saved for deferred re-send
 
 
         # Publishers
@@ -988,6 +990,11 @@ class GeminiLiveNode(Node):
             self._current_turn_audio_started = True
             self._mark_response_active(self._active_turn_id)
             self.get_logger().debug("Gemini Live started audio output")
+            # Audio a sosit — anulam timer-ul silent_turn daca era pornit
+            if self._silent_turn_timer is not None:
+                self._silent_turn_timer.cancel()
+                self._silent_turn_timer = None
+                self.get_logger().debug("Silent-turn timer cancelled: Gemini produced audio in time")
 
         self._last_assistant_audio_at = time.monotonic()
 
@@ -1149,30 +1156,48 @@ class GeminiLiveNode(Node):
 
         self._user_speaking = False
 
-        # Native-audio auto-VAD often transcribes the user turn (inputTranscription +
-        # turnComplete) but never generates a spoken reply — observed as: the greeting
-        # answers, then every audio turn goes silent. This transcript passed all the
-        # attention/pause gates, so a reply IS wanted. If the model produced no audio
-        # for the just-completed turn, re-send the transcript as a proper client turn
-        # (identical shape to the working greeting — a bare turnComplete with no turns
-        # is rejected as "invalid argument") to force generation. Self-guarding: skipped
-        # when the model already started audio this turn, so it can't double a real reply.
+        # Native-audio auto-VAD emits inputTranscription + turnComplete BEFORE the
+        # model generates audio. We cannot check _current_turn_audio_started
+        # synchronously at turnComplete because the audio packets haven't arrived yet.
+        # Fix: schedule a deferred check after 1.5s. If audio arrives in that window,
+        # _handle_output_audio cancels this timer. Only if the timer fires (no audio
+        # after 1.5s) do we re-send the transcript as a clientContent turn to force
+        # a response. Self-guarding: the timer callback re-checks _current_turn_audio_started
+        # so it cannot fire after audio has already started.
         if (
             self.force_response_on_silent_turn
             and not self._current_turn_audio_started
             and not self.conversation_paused
             and not self.waiting_for_robot_confirmation
         ):
-            if self._send_raw({
-                "clientContent": {
-                    "turns": [{"role": "user", "parts": [{"text": transcript}]}],
-                    "turnComplete": True,
-                }
-            }):
-                self.get_logger().info(
-                    "Gemini produced no audio for the user turn — re-sent the "
-                    "transcript as a client turn to trigger a response"
-                )
+            # Cancel any previous pending timer (e.g. rapid back-to-back turns)
+            if self._silent_turn_timer is not None:
+                self._silent_turn_timer.cancel()
+                self._silent_turn_timer = None
+
+            saved_transcript = transcript
+
+            def _deferred_silent_turn_check():
+                self._silent_turn_timer = None
+                # Double-check: if audio has arrived in the meantime, do nothing
+                if self._current_turn_audio_started:
+                    return
+                if self.conversation_paused or self.waiting_for_robot_confirmation:
+                    return
+                if self._send_raw({
+                    "clientContent": {
+                        "turns": [{"role": "user", "parts": [{"text": saved_transcript}]}],
+                        "turnComplete": True,
+                    }
+                }):
+                    self.get_logger().info(
+                        "Gemini produced no audio after 1.5s — re-sent transcript "
+                        "as client turn to trigger a response"
+                    )
+
+            self._silent_turn_timer = threading.Timer(1.5, _deferred_silent_turn_check)
+            self._silent_turn_timer.daemon = True
+            self._silent_turn_timer.start()
 
     def _detect_goodbye(self, normalized_text: str) -> bool:
         """Return True if the normalized transcript is a goodbye phrase."""
