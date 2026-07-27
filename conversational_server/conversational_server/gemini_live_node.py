@@ -1847,15 +1847,15 @@ class GeminiLiveNode(Node):
     def _voice_correlated_preferred_name(self) -> str:
         if self.current_speaker == "Unknown":
             return ""
-        context_speaker = str(self.person_context.get("speaker", "Unknown") or "Unknown")
+        context_speaker = self.person_context.get("speaker", "Unknown") or "Unknown"
         if context_speaker == self.current_speaker:
-            name = str(self.person_context.get("preferred_name", "") or "").strip()
+            name = (self.person_context.get("preferred_name", "") or "").strip()
             if name:
                 return name
         # Fallback to cache if context_speaker doesn't match current_speaker
         cached_context = self._speaker_context_cache.get(self.current_speaker)
         if cached_context:
-            return str(cached_context.get("preferred_name", "") or "").strip()
+            return (cached_context.get("preferred_name", "") or "").strip()
         return ""
 
     def _ignored_transcript_reason(self, text: str) -> str:
