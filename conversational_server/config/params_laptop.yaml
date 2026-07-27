@@ -49,7 +49,7 @@
     filler_delay_ms: 2000
     fillers_dir: "voices/fillers"
     vad_prefix_padding_ms: 300
-    vad_silence_duration_ms: 350
+    vad_silence_duration_ms: 700  # Marit de la 350 la 700ms: evita turnComplete prematur pe propozitii scurte/continuari
     response_create_delay_ms: 100
     continued_turn_response_delay_ms: 450
     short_transcript_dedupe_window_s: 4.0
