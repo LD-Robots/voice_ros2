@@ -1912,7 +1912,7 @@ class GeminiLiveNode(Node):
         y_sum = sum(math.sin(math.radians(a)) for a in angles)
         avg_rad = math.atan2(y_sum, x_sum)
         avg_deg = math.degrees(avg_rad)
-        return int(round(avg_deg)) % 360
+        return round(avg_deg) % 360
 
     @staticmethod
     def _angular_distance(a: int, b: int) -> int:
