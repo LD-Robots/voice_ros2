@@ -71,7 +71,6 @@ class AudioCaptureNode(Node):
         self.debug_wav = None
         if self.debug_recording:
             try:
-                import os
                 path = os.path.expanduser(self.debug_wav_path)
                 dir_name = os.path.dirname(os.path.abspath(path))
                 if dir_name:
