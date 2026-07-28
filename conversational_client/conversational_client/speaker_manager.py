@@ -98,8 +98,16 @@ class SpeakerManager:
         # How many clips each stored centroid was averaged from (for logging /
         # incremental re-enrollment); kept in step with self.speaker_db.
         self._clip_counts = {}
+        # Model cache location, most specific first: an explicit override for
+        # deployments (read-only or shared homes), then the XDG base-directory
+        # spec, then its documented ~/.cache default. Never a fixed path.
+        cache_home = (
+            os.environ.get('SPEAKER_MODEL_CACHE_DIR')
+            or os.environ.get('XDG_CACHE_HOME')
+            or os.path.join(os.path.expanduser('~'), '.cache')
+        )
         self.model_cache_dir = os.path.expanduser(
-            "~/.cache/speechbrain/spkrec-ecapa-voxceleb"
+            os.path.join(cache_home, 'speechbrain', 'spkrec-ecapa-voxceleb')
         )
 
         os.makedirs(self.model_cache_dir, exist_ok=True)
