@@ -55,7 +55,7 @@
     short_transcript_dedupe_window_s: 4.0
     playback_input_filter_enabled: true  # Filtru software anti-echo rezidual (dupa AEC WebRTC+DeepFilterNet)
     playback_input_filter_post_playback_ms: 200   # Fereastra de protectie dupa stop playback (redusa pentru barge-in rapid)
-    playback_input_filter_min_rms_dbfs: -26.0     # Ajustat la -26 dBFS (RMS ~1600) pentru a ignora ecoul rezidual de ~1200 RMS
+    playback_input_filter_min_rms_dbfs: -28.0     # Redus la -28 dBFS: permite voce mai slaba sa treaca spre Gemini
     playback_input_filter_hits_required: 2         # Necesita 2 frame-uri consecutive de voce reala (evita spike-uri scurte)
     playback_input_filter_hold_ms: 300             # Gate ramas deschis 300ms dupa ultimul hit de voce
     assistant_echo_filter_enabled: true
@@ -123,8 +123,8 @@
     stop_logit_margin: 0.5
     stop_hits_required: 2
     voice_enabled: true
-    min_voice_ms: 600
-    min_rms_dbfs: -7.0
+    min_voice_ms: 300          # Redus de la 600ms: trigger mai rapid la barge-in (300ms = 15 frame-uri)
+    min_rms_dbfs: -14.0        # Redus de la -7.0: cu gain=3.0 pe mic, vocea normala e la ~-12 dBFS
     highpass_hz: 300.0
     zcr_min: 0.05
     zcr_max: 0.35
