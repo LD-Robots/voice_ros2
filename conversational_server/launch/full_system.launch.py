@@ -12,12 +12,23 @@ import os
 from pathlib import Path
 
 
-def _find_workspace_root():
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
+try:
+    from conversational_client.workspace_paths import find_workspace_root
+except ImportError:  # launch may run before the package is on PYTHONPATH
+    def find_workspace_root():
+        """Fallback: identify the workspace by the packages it contains."""
+        markers = (
+            Path('conversational_client') / 'package.xml',
+            Path('conversational_server') / 'package.xml',
+        )
+        override = os.environ.get('VOICE_ROS2_WS', '').strip()
+        if override and Path(override).expanduser().is_dir():
+            return Path(override).expanduser().resolve()
+        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+            for parent in [base] + list(base.parents):
+                if all((parent / marker).is_file() for marker in markers):
+                    return parent
+        return None
 
 
 def generate_launch_description():
@@ -27,7 +38,7 @@ def generate_launch_description():
     client_share = get_package_share_directory('conversational_client')
     server_share = get_package_share_directory('conversational_server')
     models_dir = os.path.join(client_share, 'models')
-    workspace_root = _find_workspace_root()
+    workspace_root = find_workspace_root()
     ws_root_str = str(workspace_root) if workspace_root else str(Path.home())
     voices_dir = os.path.join(ws_root_str, 'voices')
 

@@ -8,17 +8,28 @@ from pathlib import Path
 from conversational_client.speaker_manager import SpeakerManager  # noqa: F401
 
 
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
+try:
+    from conversational_client.workspace_paths import find_workspace_root
+except ImportError:  # standalone use, without the ROS package on PYTHONPATH
+    def find_workspace_root() -> Path | None:
+        """Fallback: identify the workspace by the packages it contains."""
+        markers = (
+            Path('conversational_client') / 'package.xml',
+            Path('conversational_server') / 'package.xml',
+        )
+        override = os.environ.get('VOICE_ROS2_WS', '').strip()
+        if override and Path(override).expanduser().is_dir():
+            return Path(override).expanduser().resolve()
+        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+            for parent in [base] + list(base.parents):
+                if all((parent / marker).is_file() for marker in markers):
+                    return parent
+        return None
 
 if __name__ == '__main__':
     import sys
 
-    workspace_root = _find_workspace_root()
+    workspace_root = find_workspace_root()
     enrollment_path = os.path.join(
         str(workspace_root) if workspace_root else os.getcwd(),
         'voices',

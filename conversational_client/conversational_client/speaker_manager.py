@@ -12,12 +12,12 @@ Used by speaker_id_node.py (Developer B — Delia).
 """
 
 import os
-from pathlib import Path
 import inspect
 import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
+
 # ─────────────────────────────────────────────────────────────────
 # FIX: torchaudio 2.6+ removed list_audio_backends(),
 #      but speechbrain 1.0.x still calls it at import.
@@ -60,6 +60,7 @@ from speechbrain.inference.speaker import EncoderClassifier
 
 from .speaker_match_utils import SpeakerMatchResult, select_speaker_match
 from .speaker_scoring import build_centroid, cosine, l2_normalize
+from .workspace_paths import find_workspace_root
 from .speaker_embedding_store import (
     load_speaker_embeddings,
     save_speaker_embeddings,
@@ -447,18 +448,10 @@ class SpeakerManager:
 # QUICK TEST (optional)
 # ═══════════════════════════════════════════════════════════════════
 
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
-
-
 def main():
     import sys
 
-    workspace_root = _find_workspace_root()
+    workspace_root = find_workspace_root()
     voices_dir = os.path.join(
         str(workspace_root) if workspace_root else os.getcwd(),
         'voices'

@@ -27,6 +27,7 @@ from conversational_client.conversation_utils import (
     has_direct_robot_address,
     is_reengagement_phrase,
 )
+from conversational_client.workspace_paths import find_workspace_root, workspace_path
 from std_msgs.msg import Bool, String, Int32
 from .language_utils import ConversationLanguageTracker
 from .prompt_config import load_prompt_defaults
@@ -62,14 +63,6 @@ GEMINI_LIVE_WS_URL = (
 )
 
 
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == "voice_ros2":
-                return parent
-    return None
-
-
 class StatefulResampler:
     """Resampler that maintains phase state between chunks."""
     def __init__(self, original_rate, target_rate):
@@ -99,7 +92,7 @@ class GeminiLiveNode(Node):
         super().__init__("gemini_live_node")
 
         if DOTENV_AVAILABLE:
-            workspace_root = _find_workspace_root()
+            workspace_root = find_workspace_root()
             env_path = workspace_root / ".env" if workspace_root else None
             if env_path and env_path.exists():
                 load_dotenv(dotenv_path=env_path)
@@ -164,7 +157,9 @@ class GeminiLiveNode(Node):
         self.declare_parameter("enable_local_fillers", False)
         self.declare_parameter("filler_chance", 0.70)
         self.declare_parameter("filler_volume", 0.80)
-        self.declare_parameter("fillers_dir", "/home/delia/voice_ros2/voices/fillers")
+        # Empty means "resolve from the workspace" below; never point at a
+        # developer's home directory.
+        self.declare_parameter("fillers_dir", "")
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -227,13 +222,12 @@ class GeminiLiveNode(Node):
         self.filler_chance = float(self.get_parameter("filler_chance").value)
         self.filler_volume = float(self.get_parameter("filler_volume").value)
         self.fillers_dir = str(self.get_parameter("fillers_dir").value)
-        # The configured path may point at another machine's home (it did:
-        # /home/delia/...). Fall back to this workspace's voices/fillers so the
-        # feature works regardless of where the repo is checked out.
+        # Unset, relative, or stale paths resolve against this workspace so the
+        # feature works wherever the repo is checked out.
         if not os.path.isdir(self.fillers_dir):
-            _ws = _find_workspace_root()
-            if _ws is not None and os.path.isdir(str(_ws / "voices" / "fillers")):
-                self.fillers_dir = str(_ws / "voices" / "fillers")
+            _fillers = workspace_path("voices", "fillers")
+            if _fillers is not None and _fillers.is_dir():
+                self.fillers_dir = str(_fillers)
         self.fillers_cache = {'ro': [], 'en': []}
         self._user_audio_frames_sent = 0
         if self.enable_local_fillers:

@@ -24,27 +24,20 @@ import time
 from datetime import datetime
 from pathlib import Path
 from conversational_client.robot_command_utils import looks_like_robot_command
+from conversational_client.workspace_paths import find_workspace_root
 from .prompt_config import load_prompt_defaults
 
-# Load variables from .env
+# Load variables from .env (works from install/ or src/, whatever the checkout
+# directory is called).
 try:
     from dotenv import load_dotenv
-    # Search for the .env file in voice_ros2/ (works from install/ or src/)
-    current_path = Path(__file__).resolve()
-    # Walk up until we find the voice_ros2 directory
-    while current_path.name != 'voice_ros2' and current_path != current_path.parent:
-        current_path = current_path.parent
-    
-    # If we don't find voice_ros2, try going 3 levels up from this file
-    if current_path.name != 'voice_ros2':
-        current_path = Path(__file__).resolve().parents[3]
-    
-    env_path = current_path / '.env'
-    if env_path.exists():
+    workspace_root = find_workspace_root()
+    env_path = (workspace_root / '.env') if workspace_root else None
+    if env_path and env_path.exists():
         load_dotenv(dotenv_path=env_path)
         print(f"✅ Loaded .env from: {env_path}")
     else:
-        print(f"⚠️ .env not found at: {env_path}")
+        print(f"⚠️ .env not found at: {env_path or '<workspace root not found>'}")
 except ImportError:
     print("⚠️ python-dotenv not installed. Run: pip install python-dotenv")
 

@@ -28,16 +28,27 @@ DURATION = 5                  # recording seconds
 CHANNELS = 1                  # mono
 
 
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
+try:
+    from conversational_client.workspace_paths import find_workspace_root
+except ImportError:  # standalone use, without the ROS package on PYTHONPATH
+    def find_workspace_root() -> Path | None:
+        """Fallback: identify the workspace by the packages it contains."""
+        markers = (
+            Path('conversational_client') / 'package.xml',
+            Path('conversational_server') / 'package.xml',
+        )
+        override = os.environ.get('VOICE_ROS2_WS', '').strip()
+        if override and Path(override).expanduser().is_dir():
+            return Path(override).expanduser().resolve()
+        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+            for parent in [base] + list(base.parents):
+                if all((parent / marker).is_file() for marker in markers):
+                    return parent
+        return None
 
 
 # Canonical enrollment path in this project: <workspace>/voices/enrollment
-_workspace_root = _find_workspace_root()
+_workspace_root = find_workspace_root()
 ENROLLMENT_DIR = os.path.join(
     str(_workspace_root) if _workspace_root else os.getcwd(),
     'voices',

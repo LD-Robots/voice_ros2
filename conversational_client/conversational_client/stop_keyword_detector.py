@@ -6,6 +6,8 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from .workspace_paths import workspace_path
+
 try:
     import onnxruntime as ort
 except Exception as exc:  # pragma: no cover - import guard
@@ -52,8 +54,8 @@ class StopKeywordDetector:
         self.hits_required = max(1, int(cfg.get("hits_required", 1)))
         self.debug = bool(cfg.get("debug", False))
         default_model_path = (
-            self._find_workspace_root() / "voices" / "stop_keyword.onnx"
-            if self._find_workspace_root() else Path("voices/stop_keyword.onnx")
+            workspace_path("voices", "stop_keyword.onnx")
+            or Path("voices/stop_keyword.onnx")
         )
         model_path = Path(cfg.get("model_path") or default_model_path).expanduser()
 
@@ -86,14 +88,6 @@ class StopKeywordDetector:
         self._buf[:] = 0.0
         self._buf_filled = False
         self._filled = 0
-
-    @staticmethod
-    def _find_workspace_root() -> Path | None:
-        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-            for parent in [base] + list(base.parents):
-                if parent.name == 'voice_ros2':
-                    return parent
-        return None
 
     def process_block(self, pcm_i16: np.ndarray) -> Optional[StopDetectionResult]:
         """
