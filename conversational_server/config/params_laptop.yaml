@@ -201,7 +201,7 @@
   ros__parameters:
     filter_length_ms: 100         # Increased to cover laptop reflections
     step_size: 0.15              # A bit more aggressive
-    max_delay_ms: 400            # Real physical latency is ~100-300ms; keeping it small prevents false correlation peaks in speech
+    max_delay_ms: 900            # Marit la 900ms: delay-ul real masurat este ~703ms (11248 samples @ 16kHz)
     playback_gain: 0.5           # SYNC cu audio_playback_node.gain: 0.5 (referinta AEC la amplitudinea corecta)
     capture_gain: 3.0            # SYNC cu audio_capture_node.gain: 3.0 (reflecta amplificarea microfonului in referinta)
     mic_gain: 1.0                # Post-AEC amplification (1.0 = off; amplificarea e acum inclusa in formula referintei)
