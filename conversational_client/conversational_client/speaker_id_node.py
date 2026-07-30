@@ -554,7 +554,7 @@ class SpeakerIdNode(Node):
         target_wav: str = '',
     ):
         payload = {
-            'success': bool(success),
+            'success': success,
             'reason': reason,
             'request_id': request_id,
             'preferred_name': preferred_name or default_preferred_name_for_voice_label(voice_label),
