@@ -6,6 +6,7 @@ Refactored to match legacy project configuration for better hardware compatibili
 """
 
 import os
+import tempfile
 os.environ['PA_ALSA_PLUGHW'] = '1'  # Force PortAudio to use ALSA plughw (handles format/rate mismatch)
 
 import rclpy
@@ -38,7 +39,12 @@ class AudioCaptureNode(Node):
         self.declare_parameter('gain', 1.0)              # Digital gain multiplier
         self.declare_parameter('stereo_mono_extract', False)
         self.declare_parameter('debug_recording', False) # Save to local WAV file
-        self.declare_parameter('debug_wav_path', '/tmp/debug_mic_capture.wav')
+        # Launch injects an absolute path; this default only has to be somewhere
+        # writable rather than a fixed /tmp location.
+        self.declare_parameter(
+            'debug_wav_path',
+            os.path.join(tempfile.gettempdir(), 'debug_mic_capture.wav'),
+        )
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.channels = self.get_parameter('channels').value
@@ -65,7 +71,6 @@ class AudioCaptureNode(Node):
         self.debug_wav = None
         if self.debug_recording:
             try:
-                import os
                 path = os.path.expanduser(self.debug_wav_path)
                 dir_name = os.path.dirname(os.path.abspath(path))
                 if dir_name:

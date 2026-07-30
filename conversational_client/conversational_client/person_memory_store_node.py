@@ -10,7 +10,6 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timezone
-from pathlib import Path
 
 import numpy as np
 import rclpy
@@ -33,21 +32,14 @@ from .person_profile_utils import (
     resolve_preferred_name_update,
     write_speaker_profile_sidecar,
 )
-
-
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
+from .workspace_paths import find_workspace_root
 
 
 class PersonMemoryStoreNode(Node):
     def __init__(self):
         super().__init__('person_memory_store_node')
 
-        workspace_root = _find_workspace_root()
+        workspace_root = find_workspace_root()
         default_memory_path = os.path.join(
             str(workspace_root) if workspace_root else os.getcwd(),
             'voices',

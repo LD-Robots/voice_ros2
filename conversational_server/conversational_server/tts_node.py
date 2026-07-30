@@ -18,20 +18,17 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk, Audio
 from std_msgs.msg import Bool, String
 import asyncio
+import getpass
 import os
 import numpy as np
+import tempfile
 import threading
 import queue
 import scipy.signal  # For resampling
 import re
 from pathlib import Path
 
-def _find_workspace_root():
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
+from conversational_client.workspace_paths import find_workspace_root
 
 try:
     from num2words import num2words
@@ -89,7 +86,13 @@ class TTSNode(Node):
         self.target_sample_rate = 16000
         
         # === WAV CACHE - pre-generated common phrases ===
-        self.cache_dir = '/tmp/tts_cache'
+        # Overridable, and per-user by default: a fixed /tmp/tts_cache collides
+        # between accounts on a shared machine and is not writable everywhere.
+        self.declare_parameter('cache_dir', '')
+        configured_cache_dir = str(self.get_parameter('cache_dir').value).strip()
+        self.cache_dir = os.path.expanduser(configured_cache_dir) if configured_cache_dir else (
+            os.path.join(tempfile.gettempdir(), f'tts_cache_{getpass.getuser()}')
+        )
         os.makedirs(self.cache_dir, exist_ok=True)
         
         # Common phrases for cache
@@ -216,7 +219,7 @@ class TTSNode(Node):
         """Pre-generate audio for common phrases or load static files."""
         self.get_logger().info('🔄 Initializing TTS cache (prioritizing OpenAI static voices)...')
         
-        workspace_root = _find_workspace_root()
+        workspace_root = find_workspace_root()
         static_dir = None
         if workspace_root:
             static_dir = workspace_root / 'conversational_server' / 'resources' / 'static_audio'

@@ -27,6 +27,7 @@ from conversational_client.conversation_utils import (
     has_direct_robot_address,
     is_reengagement_phrase,
 )
+from conversational_client.workspace_paths import find_workspace_root, workspace_path
 from std_msgs.msg import Bool, String, Int32
 from .language_utils import ConversationLanguageTracker
 from .prompt_config import load_prompt_defaults
@@ -62,14 +63,6 @@ GEMINI_LIVE_WS_URL = (
 )
 
 
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == "voice_ros2":
-                return parent
-    return None
-
-
 class StatefulResampler:
     """Resampler that maintains phase state between chunks."""
     def __init__(self, original_rate, target_rate):
@@ -99,7 +92,7 @@ class GeminiLiveNode(Node):
         super().__init__("gemini_live_node")
 
         if DOTENV_AVAILABLE:
-            workspace_root = _find_workspace_root()
+            workspace_root = find_workspace_root()
             env_path = workspace_root / ".env" if workspace_root else None
             if env_path and env_path.exists():
                 load_dotenv(dotenv_path=env_path)
@@ -114,6 +107,9 @@ class GeminiLiveNode(Node):
         self.declare_parameter("vad_silence_duration_ms", 600)
         self.declare_parameter("response_create_delay_ms", 100)
         self.declare_parameter("continued_turn_response_delay_ms", 450)
+        # When native-audio auto-VAD transcribes a user turn but emits no spoken reply,
+        # re-send the transcript as a client turn to force generation. Set false to disable.
+        self.declare_parameter("force_response_on_silent_turn", True)
         self.declare_parameter("local_response_gating", False)
         self.declare_parameter("short_transcript_dedupe_window_s", 4.0)
         self.declare_parameter("playback_input_filter_enabled", True)
@@ -161,7 +157,9 @@ class GeminiLiveNode(Node):
         self.declare_parameter("enable_local_fillers", False)
         self.declare_parameter("filler_chance", 0.70)
         self.declare_parameter("filler_volume", 0.80)
-        self.declare_parameter("fillers_dir", "/home/delia/voice_ros2/voices/fillers")
+        # Empty means "resolve from the workspace" below; never point at a
+        # developer's home directory.
+        self.declare_parameter("fillers_dir", "")
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -177,6 +175,7 @@ class GeminiLiveNode(Node):
         self.vad_silence_duration_ms = int(self.get_parameter("vad_silence_duration_ms").value)
         self.response_create_delay_ms = max(0, int(self.get_parameter("response_create_delay_ms").value))
         self.continued_turn_response_delay_ms = max(0, int(self.get_parameter("continued_turn_response_delay_ms").value))
+        self.force_response_on_silent_turn = bool(self.get_parameter("force_response_on_silent_turn").value)
         self.local_response_gating = bool(self.get_parameter("local_response_gating").value)
         self.short_transcript_dedupe_window_s = float(self.get_parameter("short_transcript_dedupe_window_s").value)
         self.playback_input_filter_enabled = bool(self.get_parameter("playback_input_filter_enabled").value)
@@ -223,13 +222,12 @@ class GeminiLiveNode(Node):
         self.filler_chance = float(self.get_parameter("filler_chance").value)
         self.filler_volume = float(self.get_parameter("filler_volume").value)
         self.fillers_dir = str(self.get_parameter("fillers_dir").value)
-        # The configured path may point at another machine's home (it did:
-        # /home/delia/...). Fall back to this workspace's voices/fillers so the
-        # feature works regardless of where the repo is checked out.
+        # Unset, relative, or stale paths resolve against this workspace so the
+        # feature works wherever the repo is checked out.
         if not os.path.isdir(self.fillers_dir):
-            _ws = _find_workspace_root()
-            if _ws is not None and os.path.isdir(str(_ws / "voices" / "fillers")):
-                self.fillers_dir = str(_ws / "voices" / "fillers")
+            _fillers = workspace_path("voices", "fillers")
+            if _fillers is not None and _fillers.is_dir():
+                self.fillers_dir = str(_fillers)
         self.fillers_cache = {'ro': [], 'en': []}
         self._user_audio_frames_sent = 0
         if self.enable_local_fillers:
@@ -298,6 +296,11 @@ class GeminiLiveNode(Node):
         self._reconnect_cooldown_s = 1.5
         self._pending_reconnect_reason = ""
         self._intentional_reconnect = False  # True when we close WS on purpose (context update)
+        # Only replay buffered user audio into a fresh session after an INTENTIONAL
+        # reconnect. On a server error (close 1011) the old flow replayed the last
+        # utterance, making the model answer it a second time — the "double answer"
+        # bug. Default False so error reconnects never re-answer.
+        self._replay_on_next_setup = False
 
         # Response tracking
         self._assistant_text = defaultdict(str)
@@ -343,6 +346,8 @@ class GeminiLiveNode(Node):
         self._goodbye_pending = False  # True after user said goodbye, waiting for Gemini to finish
         self._pending_context_update = False  # True when context inject was blocked by active response
         self._is_new_user_turn = True
+        self._silent_turn_timer: threading.Timer | None = None  # async guard for force_response_on_silent_turn
+        self._silent_turn_transcript = ""  # transcript saved for deferred re-send
 
 
         # Publishers
@@ -439,8 +444,10 @@ class GeminiLiveNode(Node):
             )
         # Inject as a user turn so Gemini responds with a natural greeting
         pref_name = self._voice_correlated_preferred_name()
-        speaker_info = f" (Current speaker: {pref_name})" if pref_name else ""
-        greeting_text = f"Hello!{speaker_info}"
+        if pref_name:
+            greeting_text = f"[System: The user '{pref_name}' just said 'Hello Robot'. Greet them warmly in one short sentence and wait for their request.]"
+        else:
+            greeting_text = "[System: The user just said 'Hello Robot'. Greet them warmly in one short sentence and wait for their request.]"
         self._send_raw({
             "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": greeting_text}]}],
@@ -545,7 +552,7 @@ class GeminiLiveNode(Node):
             if speaker in self._speaker_context_cache:
                 self.person_context = self._speaker_context_cache[speaker]
                 self.language_tracker.seed(
-                    str(self.person_context.get('preferred_language', ''))
+                    self.person_context.get('preferred_language', '')
                 )
 
         # A speaker change no longer forces a session rebuild or a text
@@ -578,7 +585,7 @@ class GeminiLiveNode(Node):
 
         self.person_context = new_context
         self.language_tracker.seed(
-            str(self.person_context.get('preferred_language', ''))
+            self.person_context.get('preferred_language', '')
         )
         
         # No mid-session injection needed. The model uses get_speaker_info tool CALL.
@@ -757,7 +764,13 @@ class GeminiLiveNode(Node):
         # Setup acknowledgement
         if "setupComplete" in event:
             self.get_logger().debug("Gemini Live session setup confirmed")
-            self._replay_accumulated_audio()
+            if self._replay_on_next_setup:
+                self._replay_on_next_setup = False
+                self._replay_accumulated_audio()
+            else:
+                # Error/unintentional reconnect: drop buffered audio so the model
+                # does not re-answer the last utterance (double-answer bug).
+                self._current_user_audio = []
             return
 
         # Tool calls from server (Google Search or custom tools)
@@ -973,6 +986,11 @@ class GeminiLiveNode(Node):
             self._current_turn_audio_started = True
             self._mark_response_active(self._active_turn_id)
             self.get_logger().debug("Gemini Live started audio output")
+            # Audio a sosit — anulam timer-ul silent_turn daca era pornit
+            if self._silent_turn_timer is not None:
+                self._silent_turn_timer.cancel()
+                self._silent_turn_timer = None
+                self.get_logger().debug("Silent-turn timer cancelled: Gemini produced audio in time")
 
         self._last_assistant_audio_at = time.monotonic()
 
@@ -1115,7 +1133,7 @@ class GeminiLiveNode(Node):
 
         active_language = self.language_tracker.observe(
             transcript,
-            preferred_language=str(self.person_context.get("preferred_language", "")),
+            preferred_language=self.person_context.get("preferred_language", ""),
         )
         self._assistant_name_question_active = self._is_assistant_name_question(normalized)
         self._send_setup()
@@ -1133,6 +1151,49 @@ class GeminiLiveNode(Node):
         self.transcription_pub.publish(out)
 
         self._user_speaking = False
+
+        # Native-audio auto-VAD emits inputTranscription + turnComplete BEFORE the
+        # model generates audio. We cannot check _current_turn_audio_started
+        # synchronously at turnComplete because the audio packets haven't arrived yet.
+        # Fix: schedule a deferred check after 1.5s. If audio arrives in that window,
+        # _handle_output_audio cancels this timer. Only if the timer fires (no audio
+        # after 1.5s) do we re-send the transcript as a clientContent turn to force
+        # a response. Self-guarding: the timer callback re-checks _current_turn_audio_started
+        # so it cannot fire after audio has already started.
+        if (
+            self.force_response_on_silent_turn
+            and not self._current_turn_audio_started
+            and not self.conversation_paused
+            and not self.waiting_for_robot_confirmation
+        ):
+            # Cancel any previous pending timer (e.g. rapid back-to-back turns)
+            if self._silent_turn_timer is not None:
+                self._silent_turn_timer.cancel()
+                self._silent_turn_timer = None
+
+            saved_transcript = transcript
+
+            def _deferred_silent_turn_check():
+                self._silent_turn_timer = None
+                # Double-check: if audio has arrived in the meantime, do nothing
+                if self._current_turn_audio_started:
+                    return
+                if self.conversation_paused or self.waiting_for_robot_confirmation:
+                    return
+                prompt_text = f"[System: Speak your response out loud to the user request: '{saved_transcript}']"
+                if self._send_raw({
+                    "clientContent": {
+                        "turns": [{"role": "user", "parts": [{"text": prompt_text}]}],
+                        "turnComplete": True,
+                    }
+                }):
+                    self.get_logger().info(
+                        f"Gemini produced no audio after 1.5s — re-sent transcript as explicit speech turn: '{saved_transcript}'"
+                    )
+
+            self._silent_turn_timer = threading.Timer(1.5, _deferred_silent_turn_check)
+            self._silent_turn_timer.daemon = True
+            self._silent_turn_timer.start()
 
     def _detect_goodbye(self, normalized_text: str) -> bool:
         """Return True if the normalized transcript is a goodbye phrase."""
@@ -1398,16 +1459,28 @@ class GeminiLiveNode(Node):
         if preferred_name and not assistant_name_question:
             extras.append(f"Preferred spoken name for the current speaker: {preferred_name}. Never call the user by internal labels.")
             extras.append("If the user asks whether you remember their name, answer directly with the preferred spoken name.")
+        # LANGUAGE: the system instruction is sent only once per session (no
+        # reconnect), so it must make the model mirror the user PER TURN rather than
+        # lock to one language. Firm mirror rule fixes "user speaks English, robot
+        # replies in Romanian". A stored profile language is only a weak fallback for
+        # genuinely ambiguous input — it must never override the language actually
+        # spoken in the current message.
+        extras.append(
+            "LANGUAGE RULE (highest priority): Detect the language of the user's "
+            "CURRENT message and reply entirely in that same language. If they speak "
+            "English, reply in English. If they speak Romanian, reply in Romanian. "
+            "Re-evaluate every single turn and mirror the user. Never default to "
+            "Romanian when the user is speaking English, and never switch languages on "
+            "your own. You may keep a technical term or short phrase the user themselves "
+            "used, but the base language of your reply must match their current message."
+        )
         preferred_language = self.person_context.get("preferred_language", "")
         if preferred_language:
-            extras.append(f"Preferred language for this speaker: {preferred_language}.")
-        conversation_language = self.language_tracker.current_language
-        if conversation_language == "ro":
-            extras.append("The last spoken language was Romanian. Respond in Romanian, but accept English technical terms or code-switching naturally if the user uses them.")
-        elif conversation_language == "en":
-            extras.append("The last spoken language was English. Respond in English, but accept Romanian phrases or code-switching naturally if the user uses them.")
-        else:
-            extras.append("The user may code-switch between Romanian and English. Adapt fluidly to their language style without forcing rigid translations.")
+            extras.append(
+                f"Only if a message is too short or ambiguous to tell the language, "
+                f"lean toward {preferred_language}; otherwise always follow the language "
+                f"actually spoken."
+            )
         facts = self.person_context.get("facts", []) or []
         if facts:
             extras.append("Known personal facts: " + "; ".join(str(f) for f in facts[:8]) + ".")
@@ -1549,6 +1622,7 @@ class GeminiLiveNode(Node):
         self.get_logger().info(f"Gemini Live: reconnecting to refresh context ({reason})")
         self._setup_sent = False
         self._intentional_reconnect = True  # Signal that this close is intentional
+        self._replay_on_next_setup = True   # Preserve the in-flight utterance across THIS planned reconnect
         try:
             if self._ws_app is not None:
                 self._ws_app.close()
@@ -1584,7 +1658,7 @@ class GeminiLiveNode(Node):
         # Keep only the most recent audio — replaying many seconds of stale
         # speech into a fresh session adds latency and can make the model answer
         # something the user already finished saying.
-        rate = max(1, int(self._current_input_sample_rate or self.input_sample_rate))
+        rate = max(1, self._current_input_sample_rate or self.input_sample_rate)
         max_samples = int(max(0.5, self.max_replay_seconds) * rate)
         if len(self._current_user_audio) > max_samples:
             dropped = len(self._current_user_audio) - max_samples
@@ -1767,15 +1841,15 @@ class GeminiLiveNode(Node):
     def _voice_correlated_preferred_name(self) -> str:
         if self.current_speaker == "Unknown":
             return ""
-        context_speaker = str(self.person_context.get("speaker", "Unknown") or "Unknown")
+        context_speaker = self.person_context.get("speaker", "Unknown") or "Unknown"
         if context_speaker == self.current_speaker:
-            name = str(self.person_context.get("preferred_name", "") or "").strip()
+            name = (self.person_context.get("preferred_name", "") or "").strip()
             if name:
                 return name
         # Fallback to cache if context_speaker doesn't match current_speaker
         cached_context = self._speaker_context_cache.get(self.current_speaker)
         if cached_context:
-            return str(cached_context.get("preferred_name", "") or "").strip()
+            return (cached_context.get("preferred_name", "") or "").strip()
         return ""
 
     def _ignored_transcript_reason(self, text: str) -> str:
@@ -1832,7 +1906,7 @@ class GeminiLiveNode(Node):
         y_sum = sum(math.sin(math.radians(a)) for a in angles)
         avg_rad = math.atan2(y_sum, x_sum)
         avg_deg = math.degrees(avg_rad)
-        return int(round(avg_deg)) % 360
+        return round(avg_deg) % 360
 
     @staticmethod
     def _angular_distance(a: int, b: int) -> int:

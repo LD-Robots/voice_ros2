@@ -17,7 +17,7 @@ class AudioPlaybackNode(Node):
         self.declare_parameter('channels', 1)
         self.declare_parameter('gain', 0.5)
         self.declare_parameter('enable_dynamic_volume', True)
-        self.declare_parameter('min_playback_gain', 0.35)
+        self.declare_parameter('min_playback_gain', 0.15)
         self.declare_parameter('max_playback_gain', 1.0)
         
         self.sample_rate = self.get_parameter('sample_rate').value
@@ -181,7 +181,10 @@ class AudioPlaybackNode(Node):
                         "item_id": self._current_item_id,
                         "played_samples": self._played_samples_current_item,
                     }
-                    self.progress_pub.publish(String(data=json.dumps(prog)))
+                    try:
+                        self.progress_pub.publish(String(data=json.dumps(prog)))
+                    except Exception:
+                        pass
 
             if self._stop_requested:
                 self._write_buffer = np.array([], dtype=np.int16)
@@ -224,10 +227,18 @@ class AudioPlaybackNode(Node):
 
     def destroy_node(self):
         self.running = False
+        if hasattr(self, 'playback_thread') and self.playback_thread.is_alive():
+            self.playback_thread.join(timeout=1.0)
         if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        self.audio_p.terminate()
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except Exception:
+                pass
+        try:
+            self.audio_p.terminate()
+        except Exception:
+            pass
         super().destroy_node()
 
 def main(args=None):

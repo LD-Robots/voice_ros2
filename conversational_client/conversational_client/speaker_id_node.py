@@ -19,7 +19,8 @@ import json
 import os
 import time
 import warnings
-from pathlib import Path
+
+from .workspace_paths import find_workspace_root
 
 # Suppress annoying library warnings (Torch, SpeechBrain, etc.)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -48,14 +49,6 @@ except Exception as exc:
     _SPEAKER_MANAGER_IMPORT_ERROR = str(exc)
 
 
-def _find_workspace_root() -> Path | None:
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
-
-
 # ═══════════════════════════════════════════════════════════════════
 # NODE CLASS
 # ═══════════════════════════════════════════════════════════════════
@@ -78,7 +71,7 @@ class SpeakerIdNode(Node):
         # PARAMETERS
         # ─────────────────────────────────────────────────────────
         # Canonical enrollment path: <workspace>/voices/enrollment
-        workspace_root = _find_workspace_root()
+        workspace_root = find_workspace_root()
         default_enrollment_dir = os.path.join(
             str(workspace_root) if workspace_root else os.getcwd(),
             'voices',
