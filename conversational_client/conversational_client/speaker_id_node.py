@@ -475,6 +475,16 @@ class SpeakerIdNode(Node):
                     min_margin=self.similarity_margin,
                 )
 
+            # Guard: if SpeakerManager construction silently returned None
+            # (internal error caught inside its own __init__), raise a clear
+            # error here instead of an opaque AttributeError on enroll_speaker.
+            if self.speaker_manager is None:
+                raise RuntimeError(
+                    'SpeakerManager could not be initialized for enrollment. '
+                    'Check that SpeechBrain and its dependencies are installed '
+                    'and that the enrollment directory is accessible.'
+                )
+
             # Compute + persist this speaker's voiceprint. When we matched an
             # existing speaker, blend the new clip into their template instead
             # of replacing it so the voiceprint strengthens over time.
