@@ -86,7 +86,7 @@ class EchoCancellerNode(Node):
         # Human barge-in voice is loud enough to exceed the threshold and pass.
         self.declare_parameter('residual_gate_enabled', True)
         self.residual_gate_enabled = bool(self.get_parameter('residual_gate_enabled').value)
-        self.declare_parameter('residual_gate_rms_threshold', 800)  # int16 RMS (~-32 dBFS)
+        self.declare_parameter('residual_gate_rms_threshold', 1400)  # int16 RMS (~-24.4 dBFS)
         self.residual_gate_rms_threshold = int(self.get_parameter('residual_gate_rms_threshold').value)
         self.base_residual_gate_rms_threshold = self.residual_gate_rms_threshold
         
@@ -453,11 +453,7 @@ class EchoCancellerNode(Node):
         # Uses a hangover (hold) timer to prevent rapid frame-by-frame chattering/cutting.
         if self.residual_gate_enabled and (self.robot_speaking or self.tail_samples > 0):
             rms = float(np.sqrt(np.mean(final_clean.astype(np.float32) ** 2)))
-            # #7-B: Threshold dinamic — cel putin 300 SAU 8% din RMS-ul referintei curente.
-            # Cand robotul vorbeste tare, pragul creste automat; cand vorbeste incet, scade.
-            ref_rms_now = float(np.sqrt(np.mean(ref_chunk ** 2))) * 32768.0
-            dynamic_threshold = max(300.0, ref_rms_now * 0.08)
-            if rms >= dynamic_threshold:
+            if rms >= self.residual_gate_rms_threshold:
                 # Vocal activity detected: reset/hold the gate open
                 self.residual_gate_hold_samples = self.residual_gate_hold_limit
             else:

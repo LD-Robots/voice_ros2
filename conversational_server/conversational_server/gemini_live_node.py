@@ -1180,15 +1180,15 @@ class GeminiLiveNode(Node):
                     return
                 if self.conversation_paused or self.waiting_for_robot_confirmation:
                     return
+                prompt_text = f"[System: Speak your response out loud to the user request: '{saved_transcript}']"
                 if self._send_raw({
                     "clientContent": {
-                        "turns": [{"role": "user", "parts": [{"text": saved_transcript}]}],
+                        "turns": [{"role": "user", "parts": [{"text": prompt_text}]}],
                         "turnComplete": True,
                     }
                 }):
                     self.get_logger().info(
-                        "Gemini produced no audio after 1.5s — re-sent transcript "
-                        "as client turn to trigger a response"
+                        f"Gemini produced no audio after 1.5s — re-sent transcript as explicit speech turn: '{saved_transcript}'"
                     )
 
             self._silent_turn_timer = threading.Timer(1.5, _deferred_silent_turn_check)
