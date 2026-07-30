@@ -2,7 +2,7 @@
 from typing import Any, TYPE_CHECKING
 import rclpy
 from rclpy.node import Node
-from conversational_interfaces.msg import Audio
+from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool, String
 import numpy as np
 import json
@@ -177,18 +177,59 @@ class EchoCancellerNode(Node):
         self._last_api_rms = 0.0           # RMS nescelat al semnalului API (actualizat in out_callback)
         
         
+        # ── Standby gate state ─────────────────────────────────────────────────
+        # When _session_active is False and _pre_wake is False, all AEC+DF
+        # processing is skipped.  The raw audio is forwarded as-is (passthrough)
+        # so that downstream subscribers on /audio_clean (e.g. gemini_live_node,
+        # vad_node) keep receiving data.  Note: wake_word_node subscribes on
+        # /audio_raw directly, so it is never affected by this gate.
+        self._session_active = False
+        self._pre_wake = False  # True after wake word, before session_active=True
+
         self.raw_sub = self.create_subscription(Audio, 'audio_raw', self.raw_callback, 10)
         self.out_sub = self.create_subscription(Audio, 'audio_out', self.out_callback, 10)
         self.is_speaking_sub = self.create_subscription(Bool, 'is_speaking', self.is_speaking_callback, 10)
         self.env_sub = self.create_subscription(String, 'acoustic_environment', self.env_callback, 10)
         # #1-A: Sincronizare playback_gain live din /playback_volume (topic existent din audio_playback_node)
         self.vol_sub = self.create_subscription(String, 'playback_volume', self.playback_volume_callback, 10)
+        # Gate subscribers — session state and wake word pre-activation
+        self.session_sub = self.create_subscription(
+            Bool, 'session_active', self._session_active_cb, 10
+        )
+        self.wake_word_sub = self.create_subscription(
+            WakeWord, 'wake_word', self._wake_word_cb, 10
+        )
         self.clean_pub = self.create_publisher(Audio, 'audio_clean', 10)
         
         # Debug files (only open if path is provided)
         self.wav_raw = self.open_wav(raw_path, 16000) if raw_path else None
         self.wav_ref_aligned = self.open_wav(ref_path, 16000) if ref_path else None
         self.wav_clean = self.open_wav(clean_path, 16000) if clean_path else None
+
+    # ── Gate callbacks ─────────────────────────────────────────────────────────
+
+    def _session_active_cb(self, msg: Bool):
+        """Track session state for the standby gate."""
+        was_active = self._session_active
+        self._session_active = bool(msg.data)
+        if not self._session_active:
+            # Session ended — clear pre-wake flag
+            self._pre_wake = False
+            self.get_logger().debug('[AEC] Session ended — standby gate CLOSED (passthrough mode)')
+        elif not was_active:
+            self.get_logger().debug('[AEC] Session active — standby gate OPEN (full AEC+DF)')
+
+    def _wake_word_cb(self, msg: WakeWord):
+        """Pre-activate AEC+DF ~1 audio-callback ahead of session_active=True.
+
+        The wake_word_node publishes /wake_word before /session_active=True
+        arrives. By flipping _pre_wake here we ensure the first audio frames
+        of the user's actual utterance are already processed through AEC+DF
+        rather than forwarded as raw passthrough.
+        """
+        if not self._session_active:
+            self._pre_wake = True
+            self.get_logger().debug('[AEC] Wake word received — pre-activating AEC+DF')
 
     def is_speaking_callback(self, msg):
         self.robot_speaking = msg.data
@@ -273,6 +314,16 @@ class EchoCancellerNode(Node):
 
     def raw_callback(self, msg):
         if len(msg.data) == 0: return
+
+        # ── Standby gate ───────────────────────────────────────────────────────
+        # When neither a session nor a wake-word pre-activation is in effect,
+        # forward the raw audio directly without any AEC or DF processing.
+        # This saves the bulk of the CPU cost (DeepFilterNet + WebRTC AEC) while
+        # keeping /audio_clean flowing for any downstream subscribers.
+        if not self._session_active and not self._pre_wake:
+            self.clean_pub.publish(msg)
+            return
+
         d_i16 = np.array(msg.data, dtype=np.int16)
         d_f32 = d_i16.astype(np.float32) / 32768.0
         n = len(d_f32)
