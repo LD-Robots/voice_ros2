@@ -51,7 +51,7 @@
 
 /**/vad_node:
   ros__parameters:
-    wake_word_enabled: true
+    wake_word_enabled: false
     session_timeout: 30.0
     min_silence_frames: 14
     energy_threshold: 150
@@ -79,7 +79,7 @@
     stop_prob_threshold: 0.60
     stop_logit_margin: 0.3
     stop_hits_required: 1
-    voice_enabled: true
+    voice_enabled: false
     min_voice_ms: 600
     min_rms_dbfs: -50.0
     highpass_hz: 300.0
@@ -115,7 +115,7 @@
     # and debounce transient ID flips (see #1/#3 speaker-recognition fixes).
     intentional_reconnect_delay_s: 0.3
     speaker_reconnect_debounce_s: 6.0
-    name_capture_tool_enabled: true
+    name_capture_tool_enabled: false
 
 /**/person_memory_store_node:
   ros__parameters:
@@ -150,7 +150,7 @@
   ros__parameters:
     input_topic: "recognized_commands"
     command_topic: "robot_commands"
-    execution_enabled: true
+    execution_enabled: false
     enable_voice_cancel: true
     # Risky-command confirmation is OFF (see params_laptop.yaml for the why):
     # the spoken yes/no could not be received reliably. All 5 commands dispatch
@@ -166,7 +166,8 @@
     ref_wav_path: "aec_reference.wav"
     clean_wav_path: "aec_cleaned.wav"
     debug_recording: true
-    deep_filter_enabled: true
+    deep_filter_enabled: false
     deep_filter_post_filter: true
     deep_filter_atten_lim_db: 25.0
     deep_filter_dynamic_adaptation: true
+

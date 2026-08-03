@@ -315,25 +315,16 @@ class EchoCancellerNode(Node):
     def raw_callback(self, msg):
         if len(msg.data) == 0: return
 
-        # ── Standby gate ───────────────────────────────────────────────────────
-        # When neither a session nor a wake-word pre-activation is in effect,
-        # forward the raw audio directly without any AEC or DF processing.
-        # This saves the bulk of the CPU cost (DeepFilterNet + WebRTC AEC) while
-        # keeping /audio_clean flowing for any downstream subscribers.
-        if not self._session_active and not self._pre_wake:
-            self.clean_pub.publish(msg)
-            return
-
         d_i16 = np.array(msg.data, dtype=np.int16)
         d_f32 = d_i16.astype(np.float32) / 32768.0
         n = len(d_f32)
         
-        # Sync reference queue
+        # Sync reference queue (ALWAYS DO THIS to prevent delay drift in Standby)
         ref_chunk = np.zeros(n, dtype=np.float32)
         for i in range(n):
             if self.ref_queue: ref_chunk[i] = self.ref_queue.popleft()
         
-        # Write to circular buffer
+        # Write to circular buffer (ALWAYS DO THIS)
         if self.ref_ptr + n <= self.buffer_size:
             self.ref_circle[self.ref_ptr : self.ref_ptr + n] = ref_chunk
         else:
@@ -342,6 +333,15 @@ class EchoCancellerNode(Node):
             self.ref_circle[: n - rem] = ref_chunk[rem:]
         self.ref_ptr = (self.ref_ptr + n) % self.buffer_size
         self.total_ref_samples += n
+
+        # ── Standby gate ───────────────────────────────────────────────────────
+        # When neither a session nor a wake-word pre-activation is in effect,
+        # forward the raw audio directly without any AEC or DF processing.
+        # This saves the bulk of the CPU cost (DeepFilterNet + WebRTC AEC) while
+        # keeping /audio_clean flowing for any downstream subscribers.
+        if not self._session_active and not self._pre_wake:
+            self.clean_pub.publish(msg)
+            return
         
         self.mic_history.extend(d_f32)
         if self.wav_raw: self.wav_raw.writeframes(d_i16.tobytes())

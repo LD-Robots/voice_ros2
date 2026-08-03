@@ -1187,11 +1187,11 @@ class GeminiLiveNode(Node):
                     }
                 }):
                     self.get_logger().info(
-                        "Gemini produced no audio after 1.5s — re-sent transcript "
+                        "Gemini produced no audio after 3.5s — re-sent transcript "
                         "as client turn to trigger a response"
                     )
 
-            self._silent_turn_timer = threading.Timer(1.5, _deferred_silent_turn_check)
+            self._silent_turn_timer = threading.Timer(3.5, _deferred_silent_turn_check)
             self._silent_turn_timer.daemon = True
             self._silent_turn_timer.start()
 

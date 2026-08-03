@@ -248,5 +248,12 @@ def generate_launch_description():
             name='robot_command_gate_node',
             parameters=[config_file_path]
         ),
+
+        Node(
+            package='conversational_client',
+            executable='node_suspend_manager_node',
+            name='node_suspend_manager_node',
+            parameters=[config_file_path]
+        ),
         ]),  # end GroupAction(namespace)
     ])
