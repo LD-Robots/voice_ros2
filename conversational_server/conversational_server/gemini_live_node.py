@@ -805,6 +805,17 @@ class GeminiLiveNode(Node):
 
         # Tool calls from server (Google Search or custom tools)
         if 'toolCall' in event:
+            # The model is actively processing (calling a tool before speaking).
+            # Cancel the silent-turn timer so it doesn't fire and send the
+            # transcript a second time as clientContent, which would cause a
+            # double reply once the tool call completes and the model responds.
+            if self._silent_turn_timer is not None:
+                self._silent_turn_timer.cancel()
+                self._silent_turn_timer = None
+                self.get_logger().debug(
+                    "Silent-turn timer cancelled: model is active (toolCall received)"
+                )
+
             tool_call = event.get('toolCall', {})
             function_calls = tool_call.get('functionCalls', [])
             self.get_logger().info(f'Gemini Live toolCall: {len(function_calls)} calls')
