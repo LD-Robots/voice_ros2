@@ -65,6 +65,9 @@
   ros__parameters:
     sample_rate: 16000
     gain: 1.0
+    enable_dynamic_volume: true
+    min_playback_gain: 0.15
+    max_playback_gain: 1.0
 /**/acoustic_monitor_node:
   ros__parameters:
     monitoring_interval_s: 5.0

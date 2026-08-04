@@ -107,7 +107,9 @@
   ros__parameters:
     sample_rate: 16000
     gain: 0.5
-    force_os_volume_percent: 80
+    enable_dynamic_volume: true
+    min_playback_gain: 0.15
+    max_playback_gain: 1.0
 /**/acoustic_monitor_node:
   ros__parameters:
     monitoring_interval_s: 5.0
@@ -124,7 +126,7 @@
     stop_hits_required: 2
     voice_enabled: true
     min_voice_ms: 300          # Redus de la 600ms: trigger mai rapid la barge-in (300ms = 15 frame-uri)
-    min_rms_dbfs: -14.0        # Redus de la -7.0: cu gain=3.0 pe mic, vocea normala e la ~-12 dBFS
+    min_rms_dbfs: -28.0        # Synchronized with gemini_live_node (-28.0 dBFS) for uniform barge-in sensitivity
     highpass_hz: 300.0
     zcr_min: 0.05
     zcr_max: 0.35
@@ -202,8 +204,6 @@
     filter_length_ms: 100         # Increased to cover laptop reflections
     step_size: 0.15              # A bit more aggressive
     max_delay_ms: 900            # Marit la 900ms: delay-ul real masurat este ~703ms (11248 samples @ 16kHz)
-    playback_gain: 0.5           # SYNC cu audio_playback_node.gain: 0.5 (referinta AEC la amplitudinea corecta)
-    capture_gain: 3.0            # SYNC cu audio_capture_node.gain: 3.0 (reflecta amplificarea microfonului in referinta)
     mic_gain: 1.0                # Post-AEC amplification (1.0 = off; amplificarea e acum inclusa in formula referintei)
     debug_recording: true
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file

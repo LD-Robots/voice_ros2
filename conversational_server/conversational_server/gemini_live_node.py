@@ -1221,9 +1221,10 @@ class GeminiLiveNode(Node):
                     return
                 if self.conversation_paused or self.waiting_for_robot_confirmation:
                     return
+                prompt_text = f"[System: Speak your response out loud to the user request: '{saved_transcript}']"
                 if self._send_raw({
                     "clientContent": {
-                        "turns": [{"role": "user", "parts": [{"text": saved_transcript}]}],
+                        "turns": [{"role": "user", "parts": [{"text": prompt_text}]}],
                         "turnComplete": True,
                     }
                 }):
