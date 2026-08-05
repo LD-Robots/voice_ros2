@@ -429,10 +429,12 @@ class GeminiLiveNode(Node):
 
     def wake_word_callback(self, msg: WakeWord):
         """
-        Inject a greeting into Gemini when wake word is detected.
+        Handle wake word detection for the Gemini Live backend.
 
-        Instead of playing a cached 'ack' sound, let Gemini respond naturally
-        to the greeting so the conversation feels alive from the first word.
+        When the session was inactive, audio was NOT streamed to Gemini, so
+        "hello robot" was never heard by Gemini. We must inject a text turn to
+        tell Gemini the user just said the wake word and prompt a greeting.
+        Without this injection, Gemini receives silence and does not respond.
         """
         if self.current_backend != "gemini_live":
             return
@@ -442,7 +444,8 @@ class GeminiLiveNode(Node):
         # Only act on the hello wake word, not barge-in or stop models
         if "hello" not in word and "wake" not in word:
             return
-        self.get_logger().info(f"Gemini: injecting greeting for wake word '{word}'")
+        self.get_logger().info(f"Gemini: wake word '{word}' detected — injecting greeting")
+        # Lock DOA direction to the wake word source
         if self.doa_enabled and self.latest_doa_angle != -1:
             self.focused_doa_angle = self.latest_doa_angle
             self.doa_history = [self.focused_doa_angle]
@@ -450,12 +453,23 @@ class GeminiLiveNode(Node):
                 f'Locking focused DOA angle to wake word direction: '
                 f'{self.focused_doa_angle}°'
             )
-        # Inject as a user turn so Gemini responds with a natural greeting
+        # Inject a user turn to trigger a greeting. Use a concise prompt that
+        # prevents Gemini from opening with a repetitive "Hello! Hello there!" —
+        # the phrase "in exactly one sentence" and "do not repeat the greeting
+        # word" keeps the response brief and non-redundant.
         pref_name = self._voice_correlated_preferred_name()
         if pref_name:
-            greeting_text = f"[System: The user '{pref_name}' just said 'Hello Robot'. Greet them warmly in one short sentence and wait for their request.]"
+            greeting_text = (
+                f"[System: The user '{pref_name}' just activated the wake word. "
+                f"Greet them by name in exactly one short sentence. "
+                f"Do not repeat the greeting word. Then wait for their request.]"
+            )
         else:
-            greeting_text = "[System: The user just said 'Hello Robot'. Greet them warmly in one short sentence and wait for their request.]"
+            greeting_text = (
+                "[System: The user just activated the wake word. "
+                "Greet them in exactly one short sentence. "
+                "Do not repeat the greeting word. Then wait for their request.]"
+            )
         self._send_raw({
             "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": greeting_text}]}],
