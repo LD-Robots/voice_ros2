@@ -2,87 +2,15 @@
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, String, Float32
+from conversational_interfaces.srv import SetXmosParam
 import numpy as np
 import struct
-import usb.core
-import usb.util
 import time
 import json
 import threading
 
-PARAMETERS = {
-    'RT60': (18, 26, 'float', 0.9, 0.25, 'ro', 'Current RT60 estimate in seconds'),
-    'STATNOISEONOFF_SR': (19, 33, 'int', 1, 0, 'rw', 'Stationary noise suppression for ASR.'),
-    'NONSTATNOISEONOFF_SR': (19, 34, 'int', 1, 0, 'rw', 'Non-stationary noise suppression for ASR.'),
-    'GAMMA_NS_SR': (19, 35, 'float', 3, 0, 'rw', 'Over-subtraction factor of stationary noise for ASR.'),
-    'MIN_NS_SR': (19, 37, 'float', 1, 0, 'rw', 'Gain-floor for stationary noise suppression for ASR.')
-}
-
-class ReSpeakerTuner:
-    def __init__(self, vid=0x2886, pid=0x0018):
-        self.vid = vid
-        self.pid = pid
-        self.dev = None
-        self.TIMEOUT = 1000
-        self.connect()
-
-    def connect(self):
-        try:
-            self.dev = usb.core.find(idVendor=self.vid, idProduct=self.pid)
-            if self.dev:
-                try:
-                    self.dev.set_configuration()
-                except usb.core.USBError:
-                    pass
-        except Exception:
-            self.dev = None
-
-    def is_connected(self):
-        if self.dev is None:
-            self.connect()
-        return self.dev is not None
-
-    def read(self, name):
-        if not self.is_connected():
-            return None
-        try:
-            data = PARAMETERS[name]
-            id = data[0]
-            cmd = 0x80 | data[1]
-            if data[2] == 'int':
-                cmd |= 0x40
-            length = 8
-            response = self.dev.ctrl_transfer(
-                usb.util.CTRL_IN | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
-                0, cmd, id, length, self.TIMEOUT)
-            response = struct.unpack(b'ii', response.tobytes())
-            if data[2] == 'int':
-                result = response[0]
-            else:
-                result = response[0] * (2.**response[1])
-            return result
-        except Exception:
-            self.dev = None # Force reconnect next time
-            return None
-
-    def write(self, name, value):
-        if not self.is_connected():
-            return False
-        try:
-            data = PARAMETERS[name]
-            id = data[0]
-            if data[2] == 'int':
-                payload = struct.pack(b'iii', data[1], int(value), 1)
-            else:
-                payload = struct.pack(b'ifi', data[1], float(value), 0)
-            self.dev.ctrl_transfer(
-                usb.util.CTRL_OUT | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
-                0, 0, id, payload, self.TIMEOUT)
-            return True
-        except Exception:
-            self.dev = None # Force reconnect next time
-            return False
+# ReSpeaker USB logic moved to xmos_hardware_node.py
 
 class AcousticMonitorNode(Node):
     def __init__(self):
@@ -90,21 +18,14 @@ class AcousticMonitorNode(Node):
 
         # Parameters
         self.declare_parameter('monitoring_interval_s', 5.0)
-        self.declare_parameter('respeaker_vid', 10374)  # 0x2886
-        self.declare_parameter('respeaker_pid', 24)     # 0x0018
         self.declare_parameter('quiet_noise_threshold_dbfs', -48.0)
         self.declare_parameter('noisy_noise_threshold_dbfs', -35.0)
         self.declare_parameter('enable_respeaker_tuning', True)
 
         self.interval = self.get_parameter('monitoring_interval_s').value
-        self.vid = self.get_parameter('respeaker_vid').value
-        self.pid = self.get_parameter('respeaker_pid').value
         self.quiet_thresh = self.get_parameter('quiet_noise_threshold_dbfs').value
         self.noisy_thresh = self.get_parameter('noisy_noise_threshold_dbfs').value
         self.enable_hw_tuning = self.get_parameter('enable_respeaker_tuning').value
-
-        # Tuner initialization
-        self.tuner = ReSpeakerTuner(vid=self.vid, pid=self.pid)
 
         # State tracking
         self.voice_active = False
@@ -112,21 +33,36 @@ class AcousticMonitorNode(Node):
         self.recent_noise_dbfs = []
         self.lock = threading.Lock()
         self.current_state = 'moderate'
+        self.latest_rt60 = 0.0
 
         # Publishers / Subscribers
         self.env_pub = self.create_publisher(String, 'acoustic_environment', 10)
         self.audio_sub = self.create_subscription(Audio, 'audio_raw', self.audio_callback, 10)
         self.vad_sub = self.create_subscription(Bool, 'voice_activity', self.vad_callback, 10)
         self.speaking_sub = self.create_subscription(Bool, 'is_speaking', self.speaking_callback, 10)
+        self.rt60_sub = self.create_subscription(Float32, 'hardware_rt60', self.rt60_callback, 10)
+
+        # Service Client for XMOS Tuning
+        self.xmos_client = self.create_client(SetXmosParam, 'set_xmos_param')
 
         # Environment Evaluation Timer
         self.timer = self.create_timer(self.interval, self.evaluate_environment)
         
         self.get_logger().info('🎙️ Acoustic Monitor Node Initialized.')
-        if self.tuner.is_connected():
-            self.get_logger().info('✅ ReSpeaker XVF-3000 detected. Hardware registers accessible.')
-        else:
-            self.get_logger().warn('⚠️ ReSpeaker XVF-3000 not found over USB. Operating in Software fallback mode.')
+
+    def rt60_callback(self, msg: Float32):
+        self.latest_rt60 = msg.data
+
+    def _send_tuning(self, param_name, param_value):
+        if not self.xmos_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn('XMOS service not available, skipping tuning.')
+            return
+            
+        req = SetXmosParam.Request()
+        req.param_name = param_name
+        req.param_value = float(param_value)
+        # Send asynchronously so we don't block the timer loop
+        self.xmos_client.call_async(req)
 
     def vad_callback(self, msg: Bool):
         with self.lock:
@@ -182,32 +118,26 @@ class AcousticMonitorNode(Node):
         else:
             state = 'moderate'
 
-        # Read RT60 from hardware if connected
-        rt60 = 0.0
-        hw_active = False
-        if self.tuner.is_connected():
-            hw_active = True
-            hw_rt60 = self.tuner.read('RT60')
-            if hw_rt60 is not None:
-                rt60 = float(hw_rt60)
+        rt60 = self.latest_rt60
 
-            # Apply dynamic hardware noise suppression tuning
-            if self.enable_hw_tuning:
-                if state == 'quiet':
-                    # Gentle suppression
-                    self.tuner.write('STATNOISEONOFF_SR', 1)
-                    self.tuner.write('NONSTATNOISEONOFF_SR', 0)
-                    self.tuner.write('GAMMA_NS_SR', 0.5)
-                elif state == 'noisy':
-                    # Aggressive suppression
-                    self.tuner.write('STATNOISEONOFF_SR', 1)
-                    self.tuner.write('NONSTATNOISEONOFF_SR', 1)
-                    self.tuner.write('GAMMA_NS_SR', 1.5)
-                else:
-                    # Standard moderate settings
-                    self.tuner.write('STATNOISEONOFF_SR', 1)
-                    self.tuner.write('NONSTATNOISEONOFF_SR', 1)
-                    self.tuner.write('GAMMA_NS_SR', 1.0)
+        # Apply dynamic hardware noise suppression tuning via service
+        if self.enable_hw_tuning and state != self.current_state:
+            self.get_logger().info(f'Applying new tuning for {state} environment...')
+            if state == 'quiet':
+                # Gentle suppression
+                self._send_tuning('STATNOISEONOFF_SR', 1.0)
+                self._send_tuning('NONSTATNOISEONOFF_SR', 0.0)
+                self._send_tuning('GAMMA_NS_SR', 0.5)
+            elif state == 'noisy':
+                # Aggressive suppression
+                self._send_tuning('STATNOISEONOFF_SR', 1.0)
+                self._send_tuning('NONSTATNOISEONOFF_SR', 1.0)
+                self._send_tuning('GAMMA_NS_SR', 1.5)
+            else:
+                # Standard moderate settings
+                self._send_tuning('STATNOISEONOFF_SR', 1.0)
+                self._send_tuning('NONSTATNOISEONOFF_SR', 1.0)
+                self._send_tuning('GAMMA_NS_SR', 1.0)
 
         # Log state transitions
         if state != self.current_state:
@@ -220,7 +150,7 @@ class AcousticMonitorNode(Node):
             'state': state,
             'noise_dbfs': float(avg_noise),
             'rt60': rt60,
-            'hardware_active': hw_active
+            'hardware_active': self.xmos_client.wait_for_service(timeout_sec=0.1)
         })
         self.env_pub.publish(env_msg)
 

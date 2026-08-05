@@ -445,9 +445,17 @@ class GeminiLiveNode(Node):
         # Inject as a user turn so Gemini responds with a natural greeting
         pref_name = self._voice_correlated_preferred_name()
         if pref_name:
-            greeting_text = f"[System: The user '{pref_name}' just said 'Hello Robot'. Greet them warmly in one short sentence and wait for their request.]"
+            greeting_text = (
+                f"[System: The user '{pref_name}' just activated the wake word. "
+                f"Greet them by name in exactly one short sentence. "
+                f"Do not repeat the greeting word. Then wait for their request.]"
+            )
         else:
-            greeting_text = "[System: The user just said 'Hello Robot'. Greet them warmly in one short sentence and wait for their request.]"
+            greeting_text = (
+                "[System: The user just activated the wake word. "
+                "Greet them warmly in exactly one short sentence. "
+                "Do not repeat the greeting word. Then wait for their request.]"
+            )
         self._send_raw({
             "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": greeting_text}]}],
