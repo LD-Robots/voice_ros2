@@ -206,6 +206,12 @@ class WakeWordNode(Node):
     def audio_callback(self, msg: Audio):
         """Process audio for wake/stop word detection."""
         
+        # [Faza 3 - Optimizat]: Bypass total. Oprim orice conversie de array-uri pentru a scoate si ultimele 2% de CPU!
+        if getattr(self, 'session_active', False):
+            if self.audio_buffer:
+                self.audio_buffer.clear()
+            return
+            
         # Convert to numpy array
         audio = np.array(msg.data, dtype=np.int16)
         

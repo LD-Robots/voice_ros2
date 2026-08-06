@@ -30,7 +30,7 @@ import numpy as np
 import rclpy
 from conversational_interfaces.msg import Audio
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from .person_profile_utils import (
     build_unique_speaker_label,
@@ -155,6 +155,15 @@ class SpeakerIdNode(Node):
             10,
         )
 
+        # ── Standby gate ─────────────────────────────────────────────────────────
+        # When no session is active, skip all ECAPA-TDNN inference and publish
+        # nothing. The smoother is reset on session end so a stale identity does
+        # not bleed into the next session.
+        self._session_active = False
+        self.session_sub = self.create_subscription(
+            Bool, 'session_active', self._session_active_cb, 10
+        )
+
         # ─────────────────────────────────────────────────────────
         # PUBLISHER — publishes speaker name
         # ─────────────────────────────────────────────────────────
@@ -228,6 +237,22 @@ class SpeakerIdNode(Node):
     # CALLBACK — AUDIO SEGMENT PROCESSING
     # ═══════════════════════════════════════════════════════════════════
 
+    # ── Gate callback ──────────────────────────────────────────────────────────────
+
+    def _session_active_cb(self, msg: Bool):
+        """Track session state for the standby gate."""
+        was_active = self._session_active
+        self._session_active = bool(msg.data)
+        if not self._session_active and was_active:
+            # Reset smoother so stale identity from previous session does
+            # not suppress recognition at the start of the next session.
+            self.smoother.reset()
+            self.get_logger().debug(
+                '[SpeakerID] Session ended — standby gate CLOSED, smoother reset'
+            )
+
+    # ── Speaker Manager initialization ─────────────────────────────────────
+
     def _maybe_adapt_voiceprint(self, match, audio_float):
         """Fold a high-confidence match back into the template (rate-limited).
 
@@ -263,6 +288,15 @@ class SpeakerIdNode(Node):
         and identifies the speaker.
         """
         if not msg.data:
+            return
+
+        # ── Standby gate ───────────────────────────────────────────────────────
+        # Skip expensive ECAPA-TDNN inference when no session is active.
+        if not self._session_active:
+            self.get_logger().debug(
+                '[SpeakerID] Segment dropped — no active session (standby gate)',
+                throttle_duration_sec=10.0,
+            )
             return
 
         # ─────────────────────────────────────────────────────────
@@ -441,6 +475,16 @@ class SpeakerIdNode(Node):
                     min_margin=self.similarity_margin,
                 )
 
+            # Guard: if SpeakerManager construction silently returned None
+            # (internal error caught inside its own __init__), raise a clear
+            # error here instead of an opaque AttributeError on enroll_speaker.
+            if self.speaker_manager is None:
+                raise RuntimeError(
+                    'SpeakerManager could not be initialized for enrollment. '
+                    'Check that SpeechBrain and its dependencies are installed '
+                    'and that the enrollment directory is accessible.'
+                )
+
             # Compute + persist this speaker's voiceprint. When we matched an
             # existing speaker, blend the new clip into their template instead
             # of replacing it so the voiceprint strengthens over time.
@@ -510,7 +554,7 @@ class SpeakerIdNode(Node):
         target_wav: str = '',
     ):
         payload = {
-            'success': bool(success),
+            'success': success,
             'reason': reason,
             'request_id': request_id,
             'preferred_name': preferred_name or default_preferred_name_for_voice_label(voice_label),
