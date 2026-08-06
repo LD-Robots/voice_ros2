@@ -255,5 +255,6 @@ def generate_launch_description():
             name='robot_command_gate_node',
             parameters=[config_file_path]
         ),
+
         ]),  # end GroupAction(namespace)
     ])

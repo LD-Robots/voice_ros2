@@ -130,7 +130,9 @@ class GeminiLiveNode(Node):
         # A speaker-change reconnect is *intentional* (persona refresh), not an
         # error — it must be fast so the user isn't left waiting after being
         # recognized. Error reconnects still use the longer reconnect_delay_s.
-        self.declare_parameter("intentional_reconnect_delay_s", 0.3)
+        # 1.5s gives Google's server time to fully expire the old session and
+        # avoids 409 Conflict when the new WebSocket opens too quickly.
+        self.declare_parameter("intentional_reconnect_delay_s", 1.5)
         # Within this window after a speaker-change reconnect, treat further
         # speaker switches as transient ID flips and update context cheaply
         # (mid-session inject) instead of tearing down the session again.
@@ -293,8 +295,14 @@ class GeminiLiveNode(Node):
         self._send_lock = threading.Lock()
         self._setup_sent = False
         self._last_reconnect_time = 0.0
-        self._reconnect_cooldown_s = 1.5
+        self._reconnect_cooldown_s = 3.0
         self._pending_reconnect_reason = ""
+        # True between _ws_app.close() and _on_open() — prevents a second
+        # intentional reconnect from firing before the first one completes,
+        # which would send two rapid WebSocket opens and trigger a 409 Conflict.
+        self._reconnect_in_progress = False
+        # Timestamp of the last 409 Conflict error for backoff tracking.
+        self._last_409_at = 0.0
         self._intentional_reconnect = False  # True when we close WS on purpose (context update)
         # Only replay buffered user audio into a fresh session after an INTENTIONAL
         # reconnect. On a server error (close 1011) the old flow replayed the last
@@ -421,10 +429,12 @@ class GeminiLiveNode(Node):
 
     def wake_word_callback(self, msg: WakeWord):
         """
-        Inject a greeting into Gemini when wake word is detected.
+        Handle wake word detection for the Gemini Live backend.
 
-        Instead of playing a cached 'ack' sound, let Gemini respond naturally
-        to the greeting so the conversation feels alive from the first word.
+        When the session was inactive, audio was NOT streamed to Gemini, so
+        "hello robot" was never heard by Gemini. We must inject a text turn to
+        tell Gemini the user just said the wake word and prompt a greeting.
+        Without this injection, Gemini receives silence and does not respond.
         """
         if self.current_backend != "gemini_live":
             return
@@ -434,7 +444,8 @@ class GeminiLiveNode(Node):
         # Only act on the hello wake word, not barge-in or stop models
         if "hello" not in word and "wake" not in word:
             return
-        self.get_logger().info(f"Gemini: injecting greeting for wake word '{word}'")
+        self.get_logger().info(f"Gemini: wake word '{word}' detected — injecting greeting")
+        # Lock DOA direction to the wake word source
         if self.doa_enabled and self.latest_doa_angle != -1:
             self.focused_doa_angle = self.latest_doa_angle
             self.doa_history = [self.focused_doa_angle]
@@ -442,7 +453,10 @@ class GeminiLiveNode(Node):
                 f'Locking focused DOA angle to wake word direction: '
                 f'{self.focused_doa_angle}°'
             )
-        # Inject as a user turn so Gemini responds with a natural greeting
+        # Inject a user turn to trigger a greeting. Use a concise prompt that
+        # prevents Gemini from opening with a repetitive "Hello! Hello there!" —
+        # the phrase "in exactly one sentence" and "do not repeat the greeting
+        # word" keeps the response brief and non-redundant.
         pref_name = self._voice_correlated_preferred_name()
         if pref_name:
             greeting_text = (
@@ -453,7 +467,7 @@ class GeminiLiveNode(Node):
         else:
             greeting_text = (
                 "[System: The user just activated the wake word. "
-                "Greet them warmly in exactly one short sentence. "
+                "Greet them in exactly one short sentence. "
                 "Do not repeat the greeting word. Then wait for their request.]"
             )
         self._send_raw({
@@ -725,15 +739,27 @@ class GeminiLiveNode(Node):
                 self.get_logger().error(f"Gemini Live WebSocket failed: {exc}")
             self._connected.clear()
             if self._running:
-                # Intentional reconnects (persona/context refresh) reopen almost
-                # immediately; only genuine errors back off the full delay.
-                if self._intentional_reconnect:
+                # If the last close was triggered by a 409 Conflict error, use a
+                # longer backoff so the old session expires on Google's server.
+                since_409 = time.monotonic() - self._last_409_at
+                if self._last_409_at > 0 and since_409 < 10.0:
+                    backoff = max(3.0, self.intentional_reconnect_delay_s)
+                    self.get_logger().info(
+                        f"Gemini Live: 409 backoff — sleeping {backoff:.1f}s before reconnect"
+                    )
+                    time.sleep(backoff)
+                    self._last_409_at = 0.0
+                # Intentional reconnects (persona/context refresh) reopen after a
+                # delay that gives Google's server time to expire the old session.
+                # Error reconnects use the shorter reconnect_delay_s.
+                elif self._intentional_reconnect:
                     time.sleep(max(0.0, self.intentional_reconnect_delay_s))
                 else:
                     time.sleep(max(0.1, self.reconnect_delay_s))
 
     def _on_open(self, ws):
         self._intentional_reconnect = False  # Reset flag on successful reconnect
+        self._reconnect_in_progress = False   # Reconnect completed successfully
         self.get_logger().info("Connected to Gemini Live API")
         self._connected.set()
         self._publish_status("online")
@@ -753,7 +779,17 @@ class GeminiLiveNode(Node):
 
     def _on_error(self, ws, error):
         self._publish_status("error")
-        self.get_logger().error(f"Gemini Live error: {error}")
+        self._reconnect_in_progress = False  # Allow future reconnects even after error
+        error_str = str(error)
+        if "409" in error_str or "Conflict" in error_str:
+            self._last_409_at = time.monotonic()
+            self.get_logger().warn(
+                f"Gemini Live: 409 Conflict — session overlap detected. "
+                f"The old WebSocket session had not expired on Google's server yet. "
+                f"Will back off before reconnecting."
+            )
+        else:
+            self.get_logger().error(f"Gemini Live error: {error}")
 
     def _on_message(self, ws, message):
         try:
@@ -783,6 +819,17 @@ class GeminiLiveNode(Node):
 
         # Tool calls from server (Google Search or custom tools)
         if 'toolCall' in event:
+            # The model is actively processing (calling a tool before speaking).
+            # Cancel the silent-turn timer so it doesn't fire and send the
+            # transcript a second time as clientContent, which would cause a
+            # double reply once the tool call completes and the model responds.
+            if self._silent_turn_timer is not None:
+                self._silent_turn_timer.cancel()
+                self._silent_turn_timer = None
+                self.get_logger().debug(
+                    "Silent-turn timer cancelled: model is active (toolCall received)"
+                )
+
             tool_call = event.get('toolCall', {})
             function_calls = tool_call.get('functionCalls', [])
             self.get_logger().info(f'Gemini Live toolCall: {len(function_calls)} calls')
@@ -1196,10 +1243,11 @@ class GeminiLiveNode(Node):
                     }
                 }):
                     self.get_logger().info(
-                        f"Gemini produced no audio after 1.5s — re-sent transcript as explicit speech turn: '{saved_transcript}'"
+                        "Gemini produced no audio after 3.5s — re-sent transcript "
+                        "as client turn to trigger a response"
                     )
 
-            self._silent_turn_timer = threading.Timer(1.5, _deferred_silent_turn_check)
+            self._silent_turn_timer = threading.Timer(3.5, _deferred_silent_turn_check)
             self._silent_turn_timer.daemon = True
             self._silent_turn_timer.start()
 
@@ -1612,14 +1660,23 @@ class GeminiLiveNode(Node):
             return
         if not self._connected.is_set():
             return  # Already disconnected; reconnect loop will handle it
-            
+
+        # Prevent a second reconnect from firing while the first one is still in
+        # progress (between _ws_app.close() and _on_open()). Two rapid WebSocket
+        # opens against the same API key cause a 409 Conflict on Google's server.
+        if self._reconnect_in_progress:
+            self.get_logger().debug(
+                f"Gemini reconnect skipped (reconnect already in progress): {reason}"
+            )
+            return
+
         # Defer reconnect if the turn is not completely idle, unless immediate_user_turn is True and robot is not speaking
         is_busy = self._response_active or self._response_create_pending or self._user_speaking
         if self.robot_speaking or (is_busy and not immediate_user_turn):
             self._pending_reconnect_reason = reason
             self.get_logger().info(f"Gemini Live: deferring reconnect ({reason}) until turn completes")
             return
-            
+
         now = time.monotonic()
         if (now - self._last_reconnect_time) < self._reconnect_cooldown_s:
             self.get_logger().debug(
@@ -1629,12 +1686,14 @@ class GeminiLiveNode(Node):
         self._last_reconnect_time = now
         self.get_logger().info(f"Gemini Live: reconnecting to refresh context ({reason})")
         self._setup_sent = False
-        self._intentional_reconnect = True  # Signal that this close is intentional
-        self._replay_on_next_setup = True   # Preserve the in-flight utterance across THIS planned reconnect
+        self._intentional_reconnect = True   # Signal that this close is intentional
+        self._reconnect_in_progress = True   # Block further reconnects until _on_open fires
+        self._replay_on_next_setup = True    # Preserve the in-flight utterance across THIS planned reconnect
         try:
             if self._ws_app is not None:
                 self._ws_app.close()
         except Exception:
+            self._reconnect_in_progress = False  # Close failed — reset so future reconnects are allowed
             pass
 
     def _send_raw(self, payload: dict) -> bool:
