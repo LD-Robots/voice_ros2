@@ -70,11 +70,11 @@ class EchoCancellerNode(Node):
         self.max_delay_samples = int(self.get_parameter('max_delay_ms').value * self.sample_rate / 1000)
         self.playback_gain = float(self.get_parameter('playback_gain').value)
         
-        self.declare_parameter('mic_gain', 1.0)  # Amplificare software post-AEC (1.0 = fara amplificare extra)
+        self.declare_parameter('mic_gain', 1.0)  # Software post-AEC amplification (1.0 = no extra amplification)
         self.mic_gain = float(self.get_parameter('mic_gain').value)
-        # capture_gain trebuie sincronizat cu audio_capture_node.gain din YAML
-        # Necesar pentru a scala referinta AEC la amplitudinea reala captata de microfon
-        self.declare_parameter('capture_gain', 1.0)  # Sincronizat cu audio_capture_node.gain
+        # capture_gain must be kept in sync with audio_capture_node.gain from YAML
+        # Required to scale the AEC reference to the real amplitude captured by the microphone
+        self.declare_parameter('capture_gain', 1.0)  # Must match audio_capture_node.gain
         self.capture_gain = float(self.get_parameter('capture_gain').value)
         self.declare_parameter('webrtc_ns_level', 2) # Noise Suppression level (0-3)
         self.webrtc_ns_level = int(self.get_parameter('webrtc_ns_level').value)
@@ -165,16 +165,16 @@ class EchoCancellerNode(Node):
         self.total_ref_samples = 0
         self.residual_gate_hold_samples = 0
         self.residual_gate_hold_limit = int(0.25 * self.sample_rate) # 250ms hold time
-        self.last_known_delay = 0          # #2-B: delay salvat intre perioadele de vorbire ale robotului
-        self._df_warmup_count = 0          # #3-B: contor warmup DF la fiecare re-activare AEC
-        self._was_aec_active = False       # #3-B: urmareste tranzitia idle→activ pentru reset warmup
-        # #6-B: Auto-calibrare capture_gain in primele ~3s de playback robot
+        self.last_known_delay = 0          # #2-B: last good delay saved between robot speech bursts
+        self._df_warmup_count = 0          # #3-B: DF warmup frame counter, reset on each AEC re-activation
+        self._was_aec_active = False       # #3-B: tracks idle→active transition to trigger DF warmup reset
+        # #6-B: Auto-calibrate capture_gain over the first ~3s of robot playback
         self._cal_done = False
         self._cal_robot_frames = 0
         self._cal_api_rms_acc = 0.0
         self._cal_mic_rms_acc = 0.0
         self._cal_target_frames = 150      # ~3s @ 20ms chunks
-        self._last_api_rms = 0.0           # RMS nescelat al semnalului API (actualizat in out_callback)
+        self._last_api_rms = 0.0           # Unscaled RMS of the API signal (updated in out_callback)
         
         
         # ── Standby gate state ─────────────────────────────────────────────────
@@ -190,7 +190,7 @@ class EchoCancellerNode(Node):
         self.out_sub = self.create_subscription(Audio, 'audio_out', self.out_callback, 10)
         self.is_speaking_sub = self.create_subscription(Bool, 'is_speaking', self.is_speaking_callback, 10)
         self.env_sub = self.create_subscription(String, 'acoustic_environment', self.env_callback, 10)
-        # #1-A: Sincronizare playback_gain live din /playback_volume (topic existent din audio_playback_node)
+        # #1-A: Sync playback_gain live from /playback_volume (published by audio_playback_node)
         self.vol_sub = self.create_subscription(String, 'playback_volume', self.playback_volume_callback, 10)
         # Gate subscribers — session state and wake word pre-activation
         self.session_sub = self.create_subscription(
@@ -235,16 +235,16 @@ class EchoCancellerNode(Node):
         self.robot_speaking = msg.data
 
     def playback_volume_callback(self, msg: String):
-        """#1-A: Actualizeaza playback_gain live din /playback_volume pentru ca referinta AEC
-        sa reflecte intotdeauna volumul real al boxei, chiar si cand volumul se schimba dinamic."""
+        """#1-A: Keep playback_gain in sync with /playback_volume so the AEC reference
+        always reflects the actual speaker output level, even when volume changes dynamically."""
         try:
             data = json.loads(msg.data)
             new_gain = float(data.get('target_gain', self.playback_gain))
             if abs(new_gain - self.playback_gain) > 0.01:
                 self.playback_gain = new_gain
-                self.get_logger().debug(f'[AEC] playback_gain sincronizat → {self.playback_gain:.3f}')
+                self.get_logger().debug(f'[AEC] playback_gain synced → {self.playback_gain:.3f}')
         except Exception as e:
-            self.get_logger().warn(f'[AEC] Nu pot parsa playback_volume: {e}')
+            self.get_logger().warn(f'[AEC] Could not parse playback_volume: {e}')
 
     def open_wav(self, path, rate):
         try:
@@ -283,7 +283,7 @@ class EchoCancellerNode(Node):
 
         src_rate = int(getattr(msg, 'sample_rate', None) or self.sample_rate)
         audio_f32 = np.array(msg.data, dtype=np.int16).astype(np.float32) / 32768.0
-        # #6-B: Salveaza RMS nescelat al semnalului API (inainte de ref_scale) pentru calibrare
+        # #6-B: Save unscaled RMS of the API signal (before ref_scale) for capture_gain calibration
         self._last_api_rms = float(np.sqrt(np.mean(audio_f32 ** 2)))
 
         # Scale reference to match what the microphone actually captures:
@@ -346,7 +346,7 @@ class EchoCancellerNode(Node):
         self.mic_history.extend(d_f32)
         if self.wav_raw: self.wav_raw.writeframes(d_i16.tobytes())
 
-        # #6-B: Acumuleaza statistici API vs mic pentru auto-calibrare capture_gain (~3s de vorbire)
+        # #6-B: Accumulate API vs mic statistics for auto-calibrating capture_gain (~3s of playback)
         if not self._cal_done and self.robot_speaking and self._last_api_rms > 0.005:
             self._cal_api_rms_acc += self._last_api_rms
             self._cal_mic_rms_acc += float(np.sqrt(np.mean(d_f32 ** 2)))
@@ -357,15 +357,15 @@ class EchoCancellerNode(Node):
                 ideal_scale = mean_mic / (mean_api + 1e-9)
                 new_gain = float(np.clip(ideal_scale / max(self.playback_gain, 0.01), 0.05, 2.0))
                 self.get_logger().info(
-                    f'🎯 [AEC] Auto-calibrare finalizata: api_rms={mean_api:.4f} mic_rms={mean_mic:.4f} '
-                    f'→ ref_scale_ideal={ideal_scale:.4f} → capture_gain={new_gain:.3f}'
+                    f'🎯 [AEC] Auto-calibration done: api_rms={mean_api:.4f} mic_rms={mean_mic:.4f} '
+                    f'→ ideal_ref_scale={ideal_scale:.4f} → capture_gain={new_gain:.3f}'
                 )
                 self.capture_gain = new_gain
                 self._cal_done = True
 
         if self.robot_speaking:
             self.tail_samples = int(0.5 * self.sample_rate) # 500ms tail
-            # #2-B: Salveaza delay-ul bun in timp ce suntem lockat si robotul vorbeste
+            # #2-B: Save the good delay while locked and robot is speaking
             if self._lock_count >= 5 and self.current_delay > 0:
                 self.last_known_delay = self.current_delay
         else:
@@ -376,17 +376,17 @@ class EchoCancellerNode(Node):
                 if len(self.ref_queue) > self.sample_rate: self.ref_queue.clear()
                 self._lock_count = 0
                 self._drift_count = 0
-                # #3-B: Resetam warmup-ul DF cand AEC se dezactiveaza (robot a tacut)
+                # #3-B: Reset DF warmup when AEC deactivates (robot stopped speaking)
                 self._was_aec_active = False
                 self._df_warmup_count = 0
         
         # Delay Estimation
         if (self.robot_speaking or self.tail_samples > 0):
-            # #2-B: Restaurare rapida din last_known_delay — evita 100ms de re-lock la fiecare fraza noua
+            # #2-B: Fast restore from last_known_delay — avoids 100ms re-lock overhead on each new utterance
             if self._lock_count == 0 and self.last_known_delay > 0:
                 self.current_delay = self.last_known_delay
-                self._lock_count = 3  # Necesita doar 2 frame-uri consecutive pentru re-confirmare
-                self.get_logger().debug(f'[AEC] Delay restaurat din last_known: {self.last_known_delay} samples')
+                self._lock_count = 3  # Only needs 2 more consecutive frames to re-confirm
+                self.get_logger().debug(f'[AEC] Delay restored from last_known: {self.last_known_delay} samples')
             footprint = np.array(self.mic_history)
             if len(footprint) >= self.sample_rate * 0.5:
                 slen = self.max_delay_samples + len(footprint)
@@ -400,7 +400,7 @@ class EchoCancellerNode(Node):
                 
                 # Compute RMS to ignore pure silence/noise
                 ref_rms = np.std(area)
-                if ref_rms > 0.005 and score > 0.3:  # Mai strict: ignoram daca e zgomot sau corelatia e slaba
+                if ref_rms > 0.005 and score > 0.3:  # Stricter: ignore if signal is noise or correlation is weak
                     if self._lock_count < 5:
                         if abs(delay - self.current_delay) < 50:
                             self._lock_count += 1
@@ -446,7 +446,7 @@ class EchoCancellerNode(Node):
                 r_frame = ref_i16[i : i + self.frame_size_10ms]
                 
                 # WebRTC API
-                # #4-A: Transmite delay-ul real estimat catre WebRTC — fara asta filtrul adaptiv nu converge
+                # #4-A: Pass the estimated real delay to WebRTC — without this the adaptive filter won't converge
                 delay_ms = int(self.current_delay / self.sample_rate * 1000)
                 self.apm.set_stream_delay(delay_ms)
                 self.apm.process_reverse_stream(r_frame.tobytes())
@@ -458,8 +458,8 @@ class EchoCancellerNode(Node):
                 final_clean = np.concatenate(clean_out)
                 
             # --- DeepFilterNet Stage ---
-            # #3-B: La fiecare re-activare AEC, lasa DF sa ruleze 2 frame-uri de warmup
-            # (construieste context intern) inainte sa-i folosim output-ul.
+            # #3-B: On each AEC re-activation, let DF run 2 warmup frames
+            # (builds internal context) before we use its output.
             if not self._was_aec_active:
                 self._was_aec_active = True
                 self._df_warmup_count = 0
@@ -487,7 +487,7 @@ class EchoCancellerNode(Node):
                     # Convert back to int16
                     enhanced_np = (torch.clamp(enhanced_16k.squeeze(0), -1.0, 1.0).numpy() * 32767.0).astype(np.int16)
 
-                    # #3-B: Primele 2 frame-uri = warmup DF (ruleaza modelul dar folosim output WebRTC)
+                    # #3-B: First 2 frames = DF warmup (model runs but we use WebRTC output instead)
                     if self._df_warmup_count < 2:
                         self._df_warmup_count += 1
                     else:
@@ -496,7 +496,7 @@ class EchoCancellerNode(Node):
                     self.get_logger().error(f"❌ [DF] Enhancement Error: {e}")
         else:
             if self.wav_ref_aligned: self.wav_ref_aligned.writeframes(np.zeros(n, dtype=np.int16).tobytes())
-            self._was_aec_active = False  # #3-B: AEC inactiv, urmatoarea activare va face warmup DF
+            self._was_aec_active = False  # #3-B: AEC idle — next activation will trigger DF warmup
 
         # ── Residual Gate ─────────────────────────────────────────────────────
         # Applied only during/after robot playback (when AEC was active).

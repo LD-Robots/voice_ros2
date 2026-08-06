@@ -364,7 +364,7 @@ class TTSNode(Node):
     
     def response_callback(self, msg: Transcription):
         """Fallback for complete responses (non-streaming)."""
-        pass  # Dezactivat - folosim doar streaming
+        pass  # Disabled - we only use streaming
 
     def backend_callback(self, msg: String):
         backend = msg.data.strip() or 'legacy'
