@@ -12,6 +12,7 @@ from std_msgs.msg import Bool, Int32, Float32
 from conversational_interfaces.srv import SetXmosParam
 
 import struct
+import threading
 import usb.core
 import usb.util
 import time
@@ -66,9 +67,11 @@ class ReSpeakerUSBInterface:
         self.pid = pid
         self.dev = None
         self.TIMEOUT = 1000
+        self._lock = threading.Lock()
         self.connect()
 
     def connect(self):
+        # Must be called while holding self._lock
         try:
             self.dev = usb.core.find(idVendor=self.vid, idProduct=self.pid)
             if self.dev:
@@ -80,65 +83,74 @@ class ReSpeakerUSBInterface:
             self.dev = None
 
     def is_connected(self):
-        if self.dev is None:
-            self.connect()
-        return self.dev is not None
+        with self._lock:
+            if self.dev is None:
+                self.connect()
+            return self.dev is not None
 
     def read(self, name):
-        if not self.is_connected():
-            return None
         if name not in PARAMETERS:
-            return None
-            
-        try:
-            data = PARAMETERS[name]
-            id = data[0]
-            cmd = 0x80 | data[1]
-            if data[2] == 'int':
-                cmd |= 0x40
-            length = 8
-            
-            response = self.dev.ctrl_transfer(
-                usb.util.CTRL_IN | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
-                0, cmd, id, length, self.TIMEOUT)
-                
-            response = struct.unpack(b'ii', response.tobytes())
-            
-            if data[2] == 'int':
-                result = response[0]
-            else:
-                result = response[0] * (2.**response[1])
-            return result
-        except Exception as e:
-            # Force reconnect next time but print the error!
-            print(f"XMOS read error for {name}: {e}")
-            self.dev = None 
             return None
 
+        with self._lock:
+            if self.dev is None:
+                self.connect()
+            if self.dev is None:
+                return None
+
+            try:
+                data = PARAMETERS[name]
+                id = data[0]
+                cmd = 0x80 | data[1]
+                if data[2] == 'int':
+                    cmd |= 0x40
+                length = 8
+
+                response = self.dev.ctrl_transfer(
+                    usb.util.CTRL_IN | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
+                    0, cmd, id, length, self.TIMEOUT)
+
+                response = struct.unpack(b'ii', response.tobytes())
+
+                if data[2] == 'int':
+                    result = response[0]
+                else:
+                    result = response[0] * (2.**response[1])
+                return result
+            except Exception as e:
+                # Force reconnect next time but print the error!
+                print(f"XMOS read error for {name}: {e}")
+                self.dev = None
+                return None
+
     def write(self, name, value):
-        if not self.is_connected():
-            return False, "Not connected to USB device."
         if name not in PARAMETERS:
             return False, f"Parameter {name} not found."
-            
+
         data = PARAMETERS[name]
         if data[5] == 'ro':
             return False, f"Parameter {name} is read-only."
-            
-        try:
-            id = data[0]
-            if data[2] == 'int':
-                payload = struct.pack(b'iii', data[1], int(value), 1)
-            else:
-                payload = struct.pack(b'ifi', data[1], float(value), 0)
-                
-            self.dev.ctrl_transfer(
-                usb.util.CTRL_OUT | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
-                0, 0, id, payload, self.TIMEOUT)
-            return True, "Success"
-        except Exception as e:
-            self.dev = None # Force reconnect next time
-            return False, f"USB Error: {str(e)}"
+
+        with self._lock:
+            if self.dev is None:
+                self.connect()
+            if self.dev is None:
+                return False, "Not connected to USB device."
+
+            try:
+                id = data[0]
+                if data[2] == 'int':
+                    payload = struct.pack(b'iii', data[1], int(value), 1)
+                else:
+                    payload = struct.pack(b'ifi', data[1], float(value), 0)
+
+                self.dev.ctrl_transfer(
+                    usb.util.CTRL_OUT | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
+                    0, 0, id, payload, self.TIMEOUT)
+                return True, "Success"
+            except Exception as e:
+                self.dev = None  # Force reconnect next time
+                return False, f"USB Error: {str(e)}"
 
 class XmosHardwareNode(Node):
     def __init__(self):
