@@ -206,7 +206,7 @@ class WakeWordNode(Node):
     def audio_callback(self, msg: Audio):
         """Process audio for wake/stop word detection."""
         
-        # [Faza 3 - Optimizat]: Bypass total. Oprim orice conversie de array-uri pentru a scoate si ultimele 2% de CPU!
+        # [Phase 3 - Optimized]: Full bypass. Skip all array conversions to shed the last 2% of CPU cost.
         if getattr(self, 'session_active', False):
             if self.audio_buffer:
                 self.audio_buffer.clear()

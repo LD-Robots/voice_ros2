@@ -203,7 +203,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Barge-in (detectare voce + PyTorch stop keyword)
+        # Barge-in (voice detection + PyTorch stop keyword)
         Node(
             package='conversational_client',
             executable='barge_in_node',

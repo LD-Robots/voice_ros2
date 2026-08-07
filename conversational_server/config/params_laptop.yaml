@@ -49,15 +49,15 @@
     filler_delay_ms: 2000
     fillers_dir: "voices/fillers"
     vad_prefix_padding_ms: 300
-    vad_silence_duration_ms: 700  # Marit de la 350 la 700ms: evita turnComplete prematur pe propozitii scurte/continuari
+    vad_silence_duration_ms: 700  # Increased from 350 to 700ms: prevents premature turnComplete on short sentences or continuations
     response_create_delay_ms: 100
     continued_turn_response_delay_ms: 450
     short_transcript_dedupe_window_s: 4.0
-    playback_input_filter_enabled: true  # Filtru software anti-echo rezidual (dupa AEC WebRTC+DeepFilterNet)
-    playback_input_filter_post_playback_ms: 200   # Fereastra de protectie dupa stop playback (redusa pentru barge-in rapid)
-    playback_input_filter_min_rms_dbfs: -28.0     # Redus la -28 dBFS: permite voce mai slaba sa treaca spre Gemini
-    playback_input_filter_hits_required: 2         # Necesita 2 frame-uri consecutive de voce reala (evita spike-uri scurte)
-    playback_input_filter_hold_ms: 300             # Gate ramas deschis 300ms dupa ultimul hit de voce
+    playback_input_filter_enabled: true  # Software residual-echo filter (applied after WebRTC AEC + DeepFilterNet)
+    playback_input_filter_post_playback_ms: 200   # Protection window after stop-playback (reduced for faster barge-in response)
+    playback_input_filter_min_rms_dbfs: -28.0     # Lowered to -28 dBFS: allows quieter voice to pass through to Gemini
+    playback_input_filter_hits_required: 2         # Requires 2 consecutive real-voice frames (avoids short spikes)
+    playback_input_filter_hold_ms: 300             # Gate stays open 300ms after the last voice hit
     assistant_echo_filter_enabled: true
     assistant_echo_window_s: 8.0
     assistant_echo_similarity_threshold: 84.0
@@ -125,7 +125,7 @@
     stop_logit_margin: 0.5
     stop_hits_required: 2
     voice_enabled: true
-    min_voice_ms: 300          # Redus de la 600ms: trigger mai rapid la barge-in (300ms = 15 frame-uri)
+    min_voice_ms: 300          # Reduced from 600ms: faster barge-in trigger (300ms = 15 frames)
     min_rms_dbfs: -28.0        # Synchronized with gemini_live_node (-28.0 dBFS) for uniform barge-in sensitivity
     highpass_hz: 300.0
     zcr_min: 0.05
@@ -203,18 +203,18 @@
   ros__parameters:
     filter_length_ms: 100         # Increased to cover laptop reflections
     step_size: 0.15              # A bit more aggressive
-    max_delay_ms: 900            # Marit la 900ms: delay-ul real masurat este ~703ms (11248 samples @ 16kHz)
-    mic_gain: 1.0                # Post-AEC amplification (1.0 = off; amplificarea e acum inclusa in formula referintei)
+    max_delay_ms: 900            # Increased to 900ms: real measured delay is ~703ms (11248 samples @ 16kHz)
+    mic_gain: 1.0                # Post-AEC amplification (1.0 = off; gain is now baked into the reference formula)
     debug_recording: true
     # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings
-    deep_filter_enabled: true    # Activat: Filtrare neuronală activă cu post-filtering și adaptare dinamică
-    deep_filter_post_filter: true # Post-filtering spectral pentru atenuarea coercitivă a cozilor de ecou/reverberație (RT60)
-    deep_filter_atten_lim_db: 25.0 # Limită atenuare dB (previne distorsiunile fazice ale vocii)
-    deep_filter_dynamic_adaptation: true # Scalare dinamică a limitatorului de atenuare în funcție de starea acustică
-    webrtc_ns_level: 1           # Redus la 1 (gentle) pentru a nu tăia silabele slabe
-    webrtc_ns_enabled: true      # Activat din nou pentru reducerea zgomotului de fundal
+    deep_filter_enabled: true    # Active: neural filtering with post-filtering and dynamic adaptation
+    deep_filter_post_filter: true # Spectral post-filtering for aggressive suppression of echo/reverberation tails (RT60)
+    deep_filter_atten_lim_db: 25.0 # Attenuation limit in dB (prevents phase distortion of the voice signal)
+    deep_filter_dynamic_adaptation: true # Dynamic scaling of the attenuation limiter based on acoustic state
+    webrtc_ns_level: 1           # Reduced to 1 (gentle) to avoid cutting weak syllables
+    webrtc_ns_enabled: true      # Re-enabled for background noise reduction
     # Residual gate: zeroes out low-amplitude AEC residuals during/after robot playback.
     # Human barge-in voice (louder, >2000 RMS) passes through; robot echo fragments (quiet, <1400 RMS) are gated.
     residual_gate_enabled: true
-    residual_gate_rms_threshold: 1400  # Marit la 1400 (RMS ~-24.4 dBFS): taie ecoul rezidual de ~1200 RMS al robotului pe durata redarii
+    residual_gate_rms_threshold: 1400  # Increased to 1400 (RMS ~-24.4 dBFS): suppresses robot's residual echo at ~1200 RMS during playback

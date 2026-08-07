@@ -131,7 +131,7 @@
     stop_hits_required: 1
     voice_enabled: false
     min_voice_ms: 600
-    min_rms_dbfs: -28.0        # Sincronizat cu laptop (-28.0 dBFS) pentru sensibilitate uniforma barge-in
+    min_rms_dbfs: -28.0        # Synced with laptop (-28.0 dBFS) for uniform barge-in sensitivity
     highpass_hz: 300.0
     zcr_min: 0.05
     zcr_max: 0.35
@@ -211,7 +211,7 @@
     clean_wav_path: "aec_cleaned.wav"
     debug_recording: true
     # DeepFilterNet Settings
-    deep_filter_enabled: false          # Dezactivat: Pi nu are GPU, prea costisitor computationally
+    deep_filter_enabled: false          # Disabled: Pi has no GPU, too computationally expensive
     deep_filter_post_filter: true
     deep_filter_atten_lim_db: 25.0
     deep_filter_dynamic_adaptation: true
