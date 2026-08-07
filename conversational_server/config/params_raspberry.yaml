@@ -36,6 +36,43 @@
     rate: "+0%"
     volume: "+0%"
 
+/**/gemini_live_node:
+  ros__parameters:
+    model: "gemini-2.5-flash-native-audio-latest"
+    voice: "Charon" #"Charon" - masculine voice (calm, mature), "Puck" - masculine voice (friendly, energetic), "Aoede" - feminine voice (dynamic, vibrant)
+    input_sample_rate: 16000
+    api_sample_rate: 24000
+    enable_local_fillers: false
+    filler_chance: 0.75
+    filler_volume: 0.80
+    filler_delay_ms: 2000
+    fillers_dir: "voices/fillers"
+    vad_prefix_padding_ms: 300
+    vad_silence_duration_ms: 700
+    response_create_delay_ms: 100
+    continued_turn_response_delay_ms: 450
+    short_transcript_dedupe_window_s: 4.0
+    playback_input_filter_enabled: true
+    playback_input_filter_post_playback_ms: 200
+    playback_input_filter_min_rms_dbfs: -28.0
+    playback_input_filter_hits_required: 2
+    playback_input_filter_hold_ms: 300
+    assistant_echo_filter_enabled: true
+    assistant_echo_window_s: 8.0
+    assistant_echo_similarity_threshold: 84.0
+    google_search_enabled: true
+    doa_enabled: false
+    doa_focus_margin: 120.0
+    # Speaker-change reconnects are persona refreshes, not errors: reopen fast
+    # and debounce transient ID flips (see #1/#3 speaker-recognition fixes).
+    intentional_reconnect_delay_s: 0.3
+    speaker_reconnect_debounce_s: 6.0
+    name_capture_tool_enabled: false
+    capture_during_playback: true
+    speaker_switch_hits_required: 2
+    language_switch_hits_required: 2
+    allow_known_speaker_switch_without_address: true
+    sticky_speaker_timeout_s: 180.0
 
 # ========== CLIENT NODES ==========
 
@@ -44,6 +81,7 @@
     device_index: 3
     respeaker_mode: true
     respeaker_channel: 0
+    stereo_mono_extract: false
     gain: 1.0
     chunk_ms: 20
     debug_recording: true
@@ -54,12 +92,15 @@
     wake_word_enabled: false
     session_timeout: 30.0
     min_silence_frames: 14
+    use_hardware_vad: false
     energy_threshold: 150
+    aggressiveness: 3
 
 /**/audio_segment_node:
   ros__parameters:
     min_segment_seconds: 0.5
     max_segment_seconds: 30.0
+    capture_during_playback: true
 
 /**/audio_playback_node:
   ros__parameters:
@@ -68,14 +109,20 @@
     enable_dynamic_volume: true
     min_playback_gain: 0.15
     max_playback_gain: 1.0
+
 /**/acoustic_monitor_node:
   ros__parameters:
     monitoring_interval_s: 5.0
-    respeaker_vid: 10374 # 0x2886
-    respeaker_pid: 24    # 0x0018
     quiet_noise_threshold_dbfs: -48.0
     noisy_noise_threshold_dbfs: -35.0
     enable_respeaker_tuning: true
+
+/**/xmos_hardware_node:
+  ros__parameters:
+    respeaker_vid: 10374  # 0x2886
+    respeaker_pid: 24     # 0x0018
+    polling_rate_hz: 10.0
+
 /**/barge_in_node:
   ros__parameters:
     stop_enabled: false
@@ -84,7 +131,7 @@
     stop_hits_required: 1
     voice_enabled: false
     min_voice_ms: 600
-    min_rms_dbfs: -50.0
+    min_rms_dbfs: -28.0        # Sincronizat cu laptop (-28.0 dBFS) pentru sensibilitate uniforma barge-in
     highpass_hz: 300.0
     zcr_min: 0.05
     zcr_max: 0.35
@@ -95,6 +142,7 @@
     similarity_margin: 0.12
     enrollment_reuse_threshold: 0.58
     enrollment_reuse_margin: 0.16
+    unsupervised_enrollment_enabled: false
     # Online voiceprint adaptation: strengthen templates on confident matches.
     enable_voiceprint_adaptation: true
     adapt_min_score: 0.60
@@ -106,19 +154,6 @@
     speaker_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
     sticky_speaker_timeout_s: 180.0
-
-/**/gemini_live_node:
-  ros__parameters:
-    enable_local_fillers: false
-    filler_chance: 0.75
-    filler_volume: 0.80
-    filler_delay_ms: 2000
-    fillers_dir: "voices/fillers"
-    # Speaker-change reconnects are persona refreshes, not errors: reopen fast
-    # and debounce transient ID flips (see #1/#3 speaker-recognition fixes).
-    intentional_reconnect_delay_s: 0.3
-    speaker_reconnect_debounce_s: 6.0
-    name_capture_tool_enabled: false
 
 /**/person_memory_store_node:
   ros__parameters:
@@ -139,6 +174,7 @@
   ros__parameters:
     threshold: 0.5
     cooldown_ms: 1500
+    # custom_models is injected by the launch file (package share models directory)
     model_thresholds: "hello_robot:0.30,goodbye_robot:0.40"
 
 /**/voice_command_node:
@@ -160,17 +196,27 @@
     # immediately; the spoken "stop" cancel below is still active.
     enable_risky_confirmation: false
     confirmation_timeout_s: 12.0
+    require_same_speaker_for_confirmation: false
     risky_steps_threshold: 5
     risky_turn_angle_deg: 150.0
-    
+
 /**/echo_canceller_node:
   ros__parameters:
+    filter_length_ms: 100
+    step_size: 0.15
+    max_delay_ms: 900
+    mic_gain: 1.0
     raw_wav_path: "aec_raw.wav"
     ref_wav_path: "aec_reference.wav"
     clean_wav_path: "aec_cleaned.wav"
     debug_recording: true
-    deep_filter_enabled: false
+    # DeepFilterNet Settings
+    deep_filter_enabled: false          # Dezactivat: Pi nu are GPU, prea costisitor computationally
     deep_filter_post_filter: true
     deep_filter_atten_lim_db: 25.0
     deep_filter_dynamic_adaptation: true
-
+    webrtc_ns_level: 1
+    webrtc_ns_enabled: true
+    # Residual gate: zeroes out low-amplitude AEC residuals during/after robot playback.
+    residual_gate_enabled: true
+    residual_gate_rms_threshold: 1400
