@@ -6,10 +6,12 @@ Refactored to match legacy project configuration for better hardware compatibili
 """
 
 import os
+import sys
 import tempfile
 os.environ['PA_ALSA_PLUGHW'] = '1'  # Force PortAudio to use ALSA plughw (handles format/rate mismatch)
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio
 from std_msgs.msg import Bool
@@ -65,6 +67,7 @@ class AudioCaptureNode(Node):
         self.stream = None
         self.frame_count = 0
         self.running = True
+        self._audio_shutdown_done = False  # shutdown_audio() must be idempotent
         self.sample_buffer = []  # Accumulator for exact chunk publishing
         
         # Debug recording setup
@@ -251,37 +254,79 @@ class AudioCaptureNode(Node):
                 except Exception:
                     pass
 
-    def destroy_node(self):
+    def shutdown_audio(self):
+        """Release the PortAudio stream and the debug recording.
+
+        Kept separate from destroy_node() and made idempotent so shutdown can
+        run *before* the ROS context goes away. Left to destroy_node() alone,
+        this node survived SIGTERM and stayed alive for days, holding both a DDS
+        participant slot and the microphone; enough of those orphans and every
+        later launch failed with "Failed to find a free participant index".
+
+        abort() is used rather than stop(): stop() waits for buffered frames to
+        drain, which is exactly where shutdown hung.
+        """
+        if self._audio_shutdown_done:
+            return
+        self._audio_shutdown_done = True
+        # Make callbacks return immediately so nothing is mid-publish while the
+        # stream is torn down.
         self.running = False
-        print("🛑 Shutting down audio capture...")
-        try:
-            if self.stream:
-                self.stream.stop()
-                self.stream.close()
-            
-            if self.debug_wav:
-                self.debug_wav.close()
+
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            print("🛑 Shutting down audio capture...")
+            try:
+                stream.abort(ignore_errors=True)
+            except Exception as exc:
+                print(f"Error aborting audio stream: {exc}")
+            try:
+                stream.close(ignore_errors=True)
+            except Exception as exc:
+                print(f"Error closing audio stream: {exc}")
+
+        debug_wav, self.debug_wav = self.debug_wav, None
+        if debug_wav is not None:
+            try:
+                debug_wav.close()
                 print(f"📄 Debug recording saved to {self.debug_wav_path}")
-        except Exception as e:
-            print(f"Error closing audio stream: {e}")
-            
+            except Exception as exc:
+                print(f"Error closing debug recording: {exc}")
+
+    def destroy_node(self):
+        self.shutdown_audio()
         super().destroy_node()
+
 
 def main(args=None):
     rclpy.init(args=args)
-    node = AudioCaptureNode()
-    
+    node = None
+
     try:
+        node = AudioCaptureNode()
         # We just need to keep the node alive; audio is driven by sounddevice thread
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
+        # SIGTERM from `ros2 launch` arrives as ExternalShutdownException; without
+        # catching it the audio stream was never released.
         pass
     finally:
-        node.destroy_node()
+        if node is not None:
+            # Release the audio device first: the PortAudio callback thread is not
+            # a Python thread, so it keeps the process alive on its own.
+            node.shutdown_audio()
+            node.destroy_node()
         try:
             rclpy.shutdown()
         except Exception:
             pass
+        # PortAudio can leave a non-joinable native thread behind, which kept this
+        # process running after everything above had completed. Everything of ours
+        # is already flushed and closed, so exit rather than linger as an orphan.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
 
 if __name__ == '__main__':
     main()
