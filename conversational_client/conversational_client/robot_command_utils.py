@@ -104,17 +104,49 @@ def parse_robot_command(
         return None
 
     body = _strip_prefixes(normalized)
+    parsed = _parse_command_body(body, default_steps=default_steps, max_steps=max_steps)
+    if parsed is not None:
+        return parsed
+
+    # The command patterns are anchored, so they only fire when the command sits
+    # at the very start of the remaining text. That made the address work only for
+    # a fixed prefix list: "please robot clap" parsed, but "now robot move forward"
+    # and "let's see robot turn around" did not. Retry from just after the robot
+    # mention, so any lead-in works as long as the sentence names the robot.
+    tail = _body_after_robot_address(normalized)
+    if tail:
+        return _parse_command_body(
+            _strip_prefixes(tail),
+            default_steps=default_steps,
+            max_steps=max_steps,
+        )
+    return None
+
+
+def _parse_command_body(body: str, *, default_steps: int, max_steps: int):
     if not body:
         return None
-
-    parsed = (
+    return (
         _parse_move_forward(body, default_steps=default_steps, max_steps=max_steps)
         or _parse_raise_hand(body)
         or _parse_turn_arround(body)
         or _parse_clap(body)
         or _parse_say_hi(body)
     )
-    return parsed
+
+
+def _body_after_robot_address(normalized: str) -> str:
+    """Return whatever follows the last standalone "robot" in the sentence.
+
+    The last mention is used so "robot, ask the robot to clap" still parses from
+    the final address rather than from an earlier, incidental one.
+    """
+    last_end = -1
+    for match in re.finditer(r'\brobot\b', normalized):
+        last_end = match.end()
+    if last_end < 0:
+        return ''
+    return normalized[last_end:].strip()
 
 
 def looks_like_robot_command(text: str, *, require_direct_robot_address: bool = False) -> bool:

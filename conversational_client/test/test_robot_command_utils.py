@@ -95,3 +95,27 @@ def test_do_not_misread_normal_sentences_as_robot_commands():
         'I left my phone right here.',
         require_direct_robot_address=True,
     ) is False
+
+
+def test_command_parses_when_robot_address_is_mid_sentence():
+    """Words before "robot" used to block the anchored command patterns."""
+    for text, expected in (
+        ('Now robot move forward.', 'move_forward'),
+        ("Let's see robot turn around.", 'turn_arround'),
+        ('Ok so now robot raise your hand', 'raise_hand'),
+        ('And then robot move forward two steps', 'move_forward'),
+        ('Asculta robot mergi inainte', 'move_forward'),
+    ):
+        parsed = parse_robot_command(text, require_direct_robot_address=True)
+        assert parsed is not None, text
+        assert parsed['command_name'] == expected, text
+
+
+def test_mid_sentence_address_does_not_trigger_on_conversation():
+    for text in (
+        'robot what do you think about moving forward',
+        'robot tell me a story',
+        'the robot is nice',
+        'tell me about turning around',
+    ):
+        assert parse_robot_command(text, require_direct_robot_address=True) is None, text
