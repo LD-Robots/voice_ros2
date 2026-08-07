@@ -5,24 +5,35 @@ Starts all client nodes for voice conversation.
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
+from launch_ros.actions import Node, PushRosNamespace
 from pathlib import Path
 
 
-def _find_workspace_root():
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
+try:
+    from conversational_client.workspace_paths import find_workspace_root
+except ImportError:  # launch may run before the package is on PYTHONPATH
+    def find_workspace_root():
+        """Fallback: identify the workspace by the packages it contains."""
+        markers = (
+            Path('conversational_client') / 'package.xml',
+            Path('conversational_server') / 'package.xml',
+        )
+        override = os.environ.get('VOICE_ROS2_WS', '').strip()
+        if override and Path(override).expanduser().is_dir():
+            return Path(override).expanduser().resolve()
+        for base in (Path(__file__).resolve(), Path.cwd().resolve()):
+            for parent in [base] + list(base.parents):
+                if all((parent / marker).is_file() for marker in markers):
+                    return parent
+        return None
 
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('conversational_client')
     models_dir = os.path.join(pkg_share, 'models')
-    workspace_root = _find_workspace_root()
+    workspace_root = find_workspace_root()
     voices_dir = os.path.join(
         str(workspace_root) if workspace_root else os.getcwd(),
         'voices'
@@ -44,6 +55,15 @@ def generate_launch_description():
     enrollment_dir = os.path.join(voices_dir, 'enrollment')
 
     return LaunchDescription([
+        # ROS_DOMAIN_ID isolates this system on the DDS network. Defaults to 11,
+        # respects an already-exported ROS_DOMAIN_ID, overridable with ros_domain_id:=<N>.
+        DeclareLaunchArgument(
+            'ros_domain_id',
+            default_value=EnvironmentVariable('ROS_DOMAIN_ID', default_value='11'),
+            description='DDS domain id shared by all nodes (default 11)'
+        ),
+        SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('ros_domain_id')),
+
         DeclareLaunchArgument(
             'speaker_similarity_threshold',
             default_value='0.45',
@@ -119,7 +139,12 @@ def generate_launch_description():
             default_value='true',
             description='Enable stop-keyword based barge-in'
         ),
-        
+        DeclareLaunchArgument('namespace', default_value='voice', description='ROS namespace for all nodes (default voice)'),
+
+        # Every node runs under `namespace` (default /voice); node topic names are relative.
+        GroupAction([
+            PushRosNamespace(LaunchConfiguration('namespace')),
+
         # Audio Capture (microfon)
         Node(
             package='conversational_client',
@@ -210,6 +235,14 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # Acoustic Monitor (Noise / Environment adaptation + ReSpeaker tuning)
+        Node(
+            package='conversational_client',
+            executable='acoustic_monitor_node',
+            name='acoustic_monitor_node',
+            output='screen',
+        ),
+
         # Speaker Identification (cine vorbește)
         Node(
             package='conversational_client',
@@ -291,7 +324,9 @@ def generate_launch_description():
             parameters=[{
                 'execution_enabled': True,
                 'command_topic_enabled': True,
-                'command_topic_only': False,
+                # Safety gate only: forward approved commands to the motion team
+                # on approved_command_topic and drive no hardware directly.
+                'command_topic_only': True,
                 'approved_command_topic': '/humanoid_command',
                 'move_mode': 'twist',
                 'cmd_vel_topic': '/cmd_vel',
@@ -313,4 +348,5 @@ def generate_launch_description():
                 'risky_backward_steps_threshold': 3,
             }]
         ),
+        ]),  # end GroupAction(namespace)
     ])

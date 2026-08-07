@@ -12,7 +12,7 @@ import struct
 class RespeakerDoaNode(Node):
     def __init__(self):
         super().__init__('respeaker_doa_node')
-        self.pub_doa = self.create_publisher(Int32, '/doa_angle', 10)
+        self.pub_doa = self.create_publisher(Int32, 'doa_angle', 10)
         
         # Connect to ReSpeaker
         self.dev = usb.core.find(idVendor=0x2886, idProduct=0x0018)

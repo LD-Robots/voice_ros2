@@ -24,27 +24,20 @@ import time
 from datetime import datetime
 from pathlib import Path
 from conversational_client.robot_command_utils import looks_like_robot_command
+from conversational_client.workspace_paths import find_workspace_root
 from .prompt_config import load_prompt_defaults
 
-# Load variables from .env
+# Load variables from .env (works from install/ or src/, whatever the checkout
+# directory is called).
 try:
     from dotenv import load_dotenv
-    # Search for the .env file in voice_ros2/ (works from install/ or src/)
-    current_path = Path(__file__).resolve()
-    # Walk up until we find the voice_ros2 directory
-    while current_path.name != 'voice_ros2' and current_path != current_path.parent:
-        current_path = current_path.parent
-    
-    # If we don't find voice_ros2, try going 3 levels up from this file
-    if current_path.name != 'voice_ros2':
-        current_path = Path(__file__).resolve().parents[3]
-    
-    env_path = current_path / '.env'
-    if env_path.exists():
+    workspace_root = find_workspace_root()
+    env_path = (workspace_root / '.env') if workspace_root else None
+    if env_path and env_path.exists():
         load_dotenv(dotenv_path=env_path)
         print(f"✅ Loaded .env from: {env_path}")
     else:
-        print(f"⚠️ .env not found at: {env_path}")
+        print(f"⚠️ .env not found at: {env_path or '<workspace root not found>'}")
 except ImportError:
     print("⚠️ python-dotenv not installed. Run: pip install python-dotenv")
 
@@ -70,7 +63,8 @@ class LLMNode(Node):
         self.declare_parameter('max_tokens', 150)
         self.declare_parameter('temperature', 0.7)
         self.declare_parameter('min_chunk_chars', 40)  # Min chars per chunk
-        self.declare_parameter('transcription_topic', '/attended_transcription')
+        self.declare_parameter('transcription_topic', 'attended_transcription')
+        self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         
         default_system_prompt = str(load_prompt_defaults().get('llm_system_prompt', ''))
         
@@ -88,6 +82,7 @@ class LLMNode(Node):
         self.min_chunk_chars = self.get_parameter('min_chunk_chars').value
         self.system_prompt = self.get_parameter('system_prompt').value
         self.transcription_topic = str(self.get_parameter('transcription_topic').value)
+        self.sticky_speaker_timeout_s = float(self.get_parameter('sticky_speaker_timeout_s').value)
 
         if self.provider != 'groq':
             raise RuntimeError(
@@ -163,9 +158,10 @@ class LLMNode(Node):
         
         # Speaker identification — who is speaking now
         self.current_speaker = "Unknown"
+        self.last_known_speaker_time = 0.0
         self.speaker_sub = self.create_subscription(
             String,
-            '/speaker_id',
+            'speaker_id',
             self._speaker_id_callback,
             10
         )
@@ -174,25 +170,25 @@ class LLMNode(Node):
         self.waiting_for_robot_confirmation = False
         self.robot_status_sub = self.create_subscription(
             String,
-            '/robot_command_status',
+            'robot_command_status',
             self._robot_status_callback,
             10
         )
         self.person_context_sub = self.create_subscription(
             String,
-            '/person_context',
+            'person_context',
             self._person_context_callback,
             10
         )
         self.backend_sub = self.create_subscription(
             String,
-            '/conversation_backend',
+            'conversation_backend',
             self._backend_callback,
             10
         )
         self.control_sub = self.create_subscription(
             String,
-            '/conversation_control',
+            'conversation_control',
             self._control_callback,
             10
         )
@@ -208,21 +204,21 @@ class LLMNode(Node):
         # Publisher for streaming chunks
         self.stream_pub = self.create_publisher(
             TextChunk,
-            '/llm_stream',
+            'llm_stream',
             10
         )
         
         # Publisher for full response (compatibility)
         self.response_pub = self.create_publisher(
             Transcription,
-            '/llm_response',
+            'llm_response',
             10
         )
         
         # Publisher for TTS command (backchannel)
         self.tts_cmd_pub = self.create_publisher(
             String,
-            '/tts_command',
+            'tts_command',
             10
         )
         
@@ -394,10 +390,6 @@ class LLMNode(Node):
         # Current time
         now = time.time()
         
-        # Initialize timestamp for the last known speaker if not present
-        if not hasattr(self, 'last_known_speaker_time'):
-            self.last_known_speaker_time = 0
-            
         # STICKY SPEAKER LOGIC:
         # 1. If it's a KNOWN speaker (not Unknown), update immediately
         if new_speaker != "Unknown":
@@ -416,10 +408,10 @@ class LLMNode(Node):
                 
             # If we know someone, check how much time has passed
             else:
-                # If less than 60 seconds have passed since the last identification,
+                # If less than the sticky timeout has passed since the last identification,
                 # IGNORE "Unknown" and assume it's still the previous person.
                 time_since_last = now - self.last_known_speaker_time
-                if time_since_last < 60.0:
+                if time_since_last < self.sticky_speaker_timeout_s:
                     self.get_logger().debug(f'Ignoring "Unknown" - keeping {self.current_speaker} ({time_since_last:.1f}s)')
                 else:
                     # Too much time has passed, reset to Unknown
@@ -606,11 +598,6 @@ class LLMNode(Node):
         out.confidence = 1.0
         self.response_pub.publish(out)
     
-    def clear_history(self):
-        """Clear the conversation history."""
-        self.conversation_history = []
-        self.get_logger().debug('Conversation history cleared')
-
 
 def main(args=None):
     rclpy.init(args=args)

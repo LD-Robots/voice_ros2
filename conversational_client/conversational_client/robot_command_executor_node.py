@@ -67,9 +67,9 @@ class RobotCommandExecutorNode(Node):
         # Command-state handling
         self.declare_parameter('preempt_on_new_command', True)
         self.declare_parameter('enable_voice_cancel', True)
-        self.declare_parameter('cancel_words', 'stop,cancel,halt,opreste,anuleaza')
+        self.declare_parameter('cancel_words', 'stop,cancel,halt,opreste,anuleaza,stai')
         self.declare_parameter('enable_risky_confirmation', True)
-        self.declare_parameter('confirmation_timeout_s', 6.0)
+        self.declare_parameter('confirmation_timeout_s', 12.0)
         self.declare_parameter('confirmation_accept_words', 'yes,confirm,ok,da,confirma')
         self.declare_parameter('confirmation_reject_words', 'no,reject,nu,anuleaza')
         self.declare_parameter('require_same_speaker_for_confirmation', True)
@@ -78,7 +78,7 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('risky_turn_angle_deg', 150.0)
         self.declare_parameter('require_confirmation_for_dance', False)
         self.declare_parameter('require_confirmation_for_raise_hands', False)
-        self.declare_parameter('transcription_topic', '/attended_transcription')
+        self.declare_parameter('transcription_topic', 'attended_transcription')
 
         self.execution_enabled = bool(self.get_parameter('execution_enabled').value)
         self.min_command_confidence = float(self.get_parameter('min_command_confidence').value)
@@ -136,13 +136,13 @@ class RobotCommandExecutorNode(Node):
 
         self.command_sub = self.create_subscription(
             RobotCommand,
-            '/robot_command',
+            'robot_command',
             self._command_callback,
             10
         )
         self.tts_cmd_pub = self.create_publisher(
             String,
-            '/tts_command',
+            'tts_command',
             10
         )
         self.transcription_sub = self.create_subscription(
@@ -153,7 +153,7 @@ class RobotCommandExecutorNode(Node):
         )
         self.speaker_sub = self.create_subscription(
             String,
-            '/speaker_id',
+            'speaker_id',
             self._speaker_callback,
             10
         )
@@ -163,15 +163,25 @@ class RobotCommandExecutorNode(Node):
             self.approved_command_topic,
             10
         )
-        self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
-        self.move_topic_pub = self.create_publisher(String, self.move_topic, 10)
-        self.behavior_pub = self.create_publisher(String, self.behavior_topic, 10)
-        self.status_pub = self.create_publisher(String, '/robot_command_status', 10)
-        self.behavior_action_client = ActionClient(
-            self,
-            HumanoidMotion,
-            self.behavior_action_name,
-        )
+        self.status_pub = self.create_publisher(String, 'robot_command_status', 10)
+        # In gate-only mode this node is a safety gate, not an actuator. Don't
+        # even advertise the hardware interfaces, so the motion stack is
+        # unambiguous about who drives what (and so an idle voice stack never
+        # shows up as a /cmd_vel publisher).
+        if self.command_topic_only:
+            self.cmd_vel_pub = None
+            self.move_topic_pub = None
+            self.behavior_pub = None
+            self.behavior_action_client = None
+        else:
+            self.cmd_vel_pub = self.create_publisher(Twist, self.cmd_vel_topic, 10)
+            self.move_topic_pub = self.create_publisher(String, self.move_topic, 10)
+            self.behavior_pub = self.create_publisher(String, self.behavior_topic, 10)
+            self.behavior_action_client = ActionClient(
+                self,
+                HumanoidMotion,
+                self.behavior_action_name,
+            )
 
         self.raise_hands_client = self.create_client(Trigger, self.raise_hands_service)
         self.lower_hands_client = self.create_client(Trigger, self.lower_hands_service)
@@ -196,16 +206,34 @@ class RobotCommandExecutorNode(Node):
         self._pending_lock = threading.Lock()
 
         self._running = True
-        self._worker = threading.Thread(target=self._worker_loop, daemon=True, name='robot-command-worker')
-        self._worker.start()
+        # Gate mode forwards synchronously from the callback, so there is nothing
+        # for a worker to execute and nothing to preempt. Running the queue anyway
+        # only produced misleading "Active execution canceled" noise.
+        self._worker = None
+        if not self.command_topic_only:
+            self._worker = threading.Thread(
+                target=self._worker_loop, daemon=True, name='robot-command-worker'
+            )
+            self._worker.start()
         self._confirm_timer = self.create_timer(0.25, self._confirmation_timer_callback)
 
-        self.get_logger().info(
-            'Robot Command Executor started: '
-            f'execution_enabled={self.execution_enabled}, move_mode={self.move_mode}, behavior_mode={self.behavior_mode}, '
-            f'approved_command_topic={self.approved_command_topic}, command_topic_only={self.command_topic_only}, '
-            f'preempt_on_new_command={self.preempt_on_new_command}, risky_confirmation={self.enable_risky_confirmation}'
-        )
+        if self.command_topic_only:
+            # Don't advertise move_mode/behavior_mode here: they are inert in gate
+            # mode, and printing them made the node look like it still actuates.
+            self.get_logger().info(
+                'Robot Command GATE started (drives no hardware): '
+                f'execution_enabled={self.execution_enabled}, '
+                f'forwarding approved commands to {self.approved_command_topic}, '
+                f'voice_cancel={self.enable_voice_cancel}, '
+                f'risky_confirmation={self.enable_risky_confirmation}'
+            )
+        else:
+            self.get_logger().info(
+                'Robot Command Executor started (drives hardware directly): '
+                f'execution_enabled={self.execution_enabled}, move_mode={self.move_mode}, behavior_mode={self.behavior_mode}, '
+                f'approved_command_topic={self.approved_command_topic}, '
+                f'preempt_on_new_command={self.preempt_on_new_command}, risky_confirmation={self.enable_risky_confirmation}'
+            )
 
     def destroy_node(self):
         self._running = False
@@ -238,6 +266,9 @@ class RobotCommandExecutorNode(Node):
             return
 
         self._clear_pending_confirmation('replaced by a new command')
+        if self.command_topic_only:
+            self._dispatch_approved(msg)
+            return
         self._enqueue_command(msg, preempt=self.preempt_on_new_command)
 
     def _transcription_callback(self, msg: Transcription):
@@ -264,7 +295,11 @@ class RobotCommandExecutorNode(Node):
 
         if self.require_same_speaker_for_confirmation:
             current_speaker = self.current_speaker if self.current_speaker else 'Unknown'
-            if pending_speaker != 'Unknown' and current_speaker != pending_speaker:
+            # Reject only a DIFFERENT KNOWN speaker. Speaker ID drops to Unknown
+            # constantly, so requiring an exact match here silently swallowed
+            # legitimate yes/no answers and every risky command timed out.
+            if (pending_speaker != 'Unknown'
+                    and current_speaker not in ('Unknown', pending_speaker)):
                 self.get_logger().warn(
                     'Ignoring confirmation from a different speaker: '
                     f'expected={pending_speaker}, got={current_speaker}'
@@ -321,6 +356,23 @@ class RobotCommandExecutorNode(Node):
             self._execute_behavior(intent, msg)
             return
         self.get_logger().warn(f'Unsupported intent: {intent}')
+
+    def _dispatch_approved(self, msg: RobotCommand):
+        """Gate mode: validate, forward to the motion team, done.
+
+        Mirrors the Gemini gate node — this stack recognises and vets commands,
+        the motion team owns actuation and sequencing.
+        """
+        intent = msg.intent.strip().lower()
+        if intent == 'stop':
+            self._clear_queue()
+        self._publish_approved_command(msg)
+        self._publish_status(f'published_approved_command:{intent}')
+        self.get_logger().info(
+            f'➡️  Forwarded to motion team on {self.approved_command_topic}: '
+            f'intent={intent}, direction={msg.direction or "none"}, steps={msg.steps}, '
+            f'speaker={msg.speaker or "Unknown"}, params={msg.parameters_json or "{}"}'
+        )
 
     def _publish_approved_command(self, msg: RobotCommand):
         out = RobotCommand()
@@ -605,6 +657,11 @@ class RobotCommandExecutorNode(Node):
     def _cancel_active_execution(self, reason: str):
         self._cancel_event.set()
         self._stop_motion()
+        if self.command_topic_only:
+            # Nothing of ours is ever executing in gate mode, so announcing a
+            # cancellation is both untrue and the exact line that made this look
+            # like the old actuator architecture.
+            return
         try:
             if rclpy.ok():
                 self.get_logger().info(f'Active execution canceled: {reason}')
@@ -614,6 +671,10 @@ class RobotCommandExecutorNode(Node):
             pass
 
     def _stop_motion(self):
+        # Cancel paths run in gate-only mode too, but there is no motion of ours
+        # to stop there — the motion team owns the actuators.
+        if self.cmd_vel_pub is None:
+            return
         try:
             if rclpy.ok():
                 self.cmd_vel_pub.publish(Twist())

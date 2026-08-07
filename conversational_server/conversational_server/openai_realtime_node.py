@@ -8,15 +8,17 @@ assistant audio back into the existing ROS2 audio playback pipeline.
 import base64
 import json
 import os
+import random
 import threading
 import time
+import wave
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from conversational_interfaces.msg import Audio, TextChunk, Transcription, RobotCommand
+from conversational_interfaces.msg import Audio, TextChunk, Transcription, RobotCommand, WakeWord
 from conversational_client.conversation_utils import (
     advance_attention_focus,
     can_accept_control_action,
@@ -27,7 +29,7 @@ from conversational_client.conversation_utils import (
     infer_addressing_intent,
     is_reengagement_phrase,
 )
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Int32, String
 from .language_utils import ConversationLanguageTracker
 from .openai_web_search import (
     DEFAULT_WEB_SEARCH_CONTEXT_SIZE,
@@ -52,6 +54,17 @@ from .realtime_text_utils import (
     normalize_realtime_text,
     should_preserve_paused_transcript,
 )
+from .realtime_tools import (
+    GET_SPEAKER_INFO_FUNCTION_NAME,
+    REMEMBER_PERSON_FUNCTION_NAME,
+    REPORT_EMOTION_FUNCTION_NAME,
+    SET_PAUSE_FUNCTION_NAME,
+    build_get_speaker_info_tool,
+    build_remember_person_tool,
+    build_report_emotion_tool,
+    build_set_conversation_pause_tool,
+    normalize_emotion,
+)
 from .realtime_turn_utils import (
     can_request_realtime_response,
     continued_turn_response_delay_ms,
@@ -71,10 +84,28 @@ except ImportError:
     DOTENV_AVAILABLE = False
 
 
+# Response reasons that are NOT a reply to a user turn. Server VAD never
+# creates these, so they stay allowed even when the server owns turn-taking
+# (local_response_gating=False).
+SERVER_MODE_ALLOWED_REASONS = ('tool_output_ready', 'resume_from_pause', 'wake_word_greeting')
+
+
 def _find_workspace_root() -> Path | None:
+    """Resolve the workspace root portably (no hardcoded directory name)."""
+    try:
+        from conversational_client.workspace_paths import find_workspace_root
+    except ImportError:
+        pass
+    else:
+        return find_workspace_root()
+
+    markers = (
+        Path('conversational_client') / 'package.xml',
+        Path('conversational_server') / 'package.xml',
+    )
     for base in (Path(__file__).resolve(), Path.cwd().resolve()):
         for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
+            if all((parent / marker).is_file() for marker in markers):
                 return parent
     return None
 
@@ -118,7 +149,18 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('api_sample_rate', 24000)
         self.declare_parameter('capture_during_playback', True)
         self.declare_parameter('input_transcription_enabled', True)
-        self.declare_parameter('input_transcription_model', 'gpt-4o-mini-transcribe')
+        self.declare_parameter('input_transcription_model', 'gpt-4o-transcribe')
+        # Empty = auto-detect. Pin only if the deployment is single-language;
+        # this stack is bilingual RO/EN, so bias with the prompt instead.
+        self.declare_parameter('input_transcription_language', '')
+        self.declare_parameter(
+            'input_transcription_prompt',
+            'Bilingual Romanian and English conversation with a humanoid robot. '
+            'Spoken robot commands include: robot stop, robot move forward, '
+            'robot move backward, robot turn around, robot turn left, robot turn right, '
+            'robot raise hands, robot lower hands, robot wave, robot dance, '
+            'robot sit down, robot stand up.',
+        )
         self.declare_parameter('vad_threshold', 0.90)
         self.declare_parameter('vad_prefix_padding_ms', 400)
         self.declare_parameter('vad_silence_duration_ms', 550)
@@ -160,6 +202,20 @@ class OpenAIRealtimeNode(Node):
         self.declare_parameter('utterance_capture_min_ms', 800)
         self.declare_parameter('name_context_wait_ms', 950)
         self.declare_parameter('wait_for_user_tool_enabled', True)
+        # Robot-context tools (emotion / personalization / name capture / pause).
+        self.declare_parameter('emotion_tool_enabled', True)
+        self.declare_parameter('speaker_info_tool_enabled', True)
+        self.declare_parameter('name_capture_tool_enabled', True)
+        self.declare_parameter('pause_tool_enabled', True)
+        # Local fillers mask response latency with pre-recorded audio.
+        self.declare_parameter('enable_local_fillers', False)
+        self.declare_parameter('filler_chance', 0.75)
+        self.declare_parameter('filler_volume', 0.80)
+        self.declare_parameter('filler_delay_ms', 2000)
+        self.declare_parameter('fillers_dir', '')
+        # ReSpeaker direction-of-arrival, injected as spatial context.
+        self.declare_parameter('doa_enabled', True)
+        self.declare_parameter('doa_focus_margin', 120.0)
         self.declare_parameter('reasoning_enabled', True)
         self.declare_parameter('reasoning_effort', 'medium')
         self.declare_parameter('web_search_enabled', True)
@@ -191,6 +247,12 @@ class OpenAIRealtimeNode(Node):
         self.input_transcription_model = str(
             self.get_parameter('input_transcription_model').value
         )
+        self.input_transcription_language = str(
+            self.get_parameter('input_transcription_language').value
+        ).strip()
+        self.input_transcription_prompt = str(
+            self.get_parameter('input_transcription_prompt').value
+        ).strip()
         self.vad_threshold = float(self.get_parameter('vad_threshold').value)
         self.vad_prefix_padding_ms = int(self.get_parameter('vad_prefix_padding_ms').value)
         self.vad_silence_duration_ms = int(
@@ -280,6 +342,31 @@ class OpenAIRealtimeNode(Node):
         self.wait_for_user_tool_enabled = bool(
             self.get_parameter('wait_for_user_tool_enabled').value
         )
+        self.emotion_tool_enabled = bool(self.get_parameter('emotion_tool_enabled').value)
+        self.speaker_info_tool_enabled = bool(
+            self.get_parameter('speaker_info_tool_enabled').value
+        )
+        self.name_capture_tool_enabled = bool(
+            self.get_parameter('name_capture_tool_enabled').value
+        )
+        self.pause_tool_enabled = bool(self.get_parameter('pause_tool_enabled').value)
+        self.doa_enabled = bool(self.get_parameter('doa_enabled').value)
+        self.doa_focus_margin = float(self.get_parameter('doa_focus_margin').value)
+        self.current_doa = None
+        self.enable_local_fillers = bool(self.get_parameter('enable_local_fillers').value)
+        self.filler_chance = float(self.get_parameter('filler_chance').value)
+        self.filler_volume = float(self.get_parameter('filler_volume').value)
+        self.filler_delay_ms = max(0, int(self.get_parameter('filler_delay_ms').value))
+        self.fillers_dir = str(self.get_parameter('fillers_dir').value).strip()
+        if not os.path.isdir(self.fillers_dir):
+            workspace_root = _find_workspace_root()
+            fallback = (workspace_root / 'voices' / 'fillers') if workspace_root else None
+            if fallback is not None and fallback.is_dir():
+                self.fillers_dir = str(fallback)
+        self.fillers_cache: dict[str, list] = {'ro': [], 'en': []}
+        self._filler_timer = None
+        if self.enable_local_fillers:
+            self._precache_fillers()
         self.reasoning_enabled = bool(self.get_parameter('reasoning_enabled').value)
         self.reasoning_effort = str(self.get_parameter('reasoning_effort').value).strip()
         self.web_search_enabled = bool(self.get_parameter('web_search_enabled').value)
@@ -432,80 +519,108 @@ class OpenAIRealtimeNode(Node):
         self._tool_call_lock = threading.Lock()
         self._pending_diarization_policy = None
         self._pending_diarization_policy_timer = None
+        # Filler state: only mask latency when the user really spoke and the
+        # model has not begun answering yet.
+        self._current_turn_audio_started = False
+        self._user_audio_frames_sent = 0
+        self._active_turn_id = ''
+        self.last_user_emotion = ''
         
         # State pentru Resampling fara drift (24kHz -> 16kHz)
         self._resample_accumulator = 0.0
 
-        self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
-        self.user_audio_segment_pub = self.create_publisher(Audio, '/realtime_user_audio_segment', 10)
-        self.transcription_pub = self.create_publisher(Transcription, '/transcription', 10)
-        self.stream_pub = self.create_publisher(TextChunk, '/llm_stream', 10)
-        self.response_pub = self.create_publisher(Transcription, '/llm_response', 10)
-        self.pause_state_pub = self.create_publisher(Bool, '/conversation_pause', 10)
-        self.tts_stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
-        self.status_pub = self.create_publisher(String, '/openai_realtime_status', 10)
-        self.response_policy_pub = self.create_publisher(String, '/realtime_response_policy', 10)
+        self.audio_pub = self.create_publisher(Audio, 'audio_out', 10)
+        self.user_audio_segment_pub = self.create_publisher(Audio, 'realtime_user_audio_segment', 10)
+        self.transcription_pub = self.create_publisher(Transcription, 'transcription', 10)
+        self.stream_pub = self.create_publisher(TextChunk, 'llm_stream', 10)
+        self.response_pub = self.create_publisher(Transcription, 'llm_response', 10)
+        self.pause_state_pub = self.create_publisher(Bool, 'conversation_pause', 10)
+        self.tts_stop_pub = self.create_publisher(Bool, 'stop_playback', 10)
+        self.status_pub = self.create_publisher(String, 'openai_realtime_status', 10)
+        self.response_policy_pub = self.create_publisher(String, 'realtime_response_policy', 10)
+        # report_user_emotion -> downstream consumers (expression, logging, HRI)
+        self.user_emotion_pub = self.create_publisher(String, 'user_emotion', 10)
+        # remember_person -> person_memory_store_node owns the actual enrollment
+        self.introduced_name_pub = self.create_publisher(String, 'introduced_name', 10)
 
-        self.audio_sub = self.create_subscription(Audio, '/audio_raw', self.audio_callback, 10)
+        self.audio_sub = self.create_subscription(Audio, 'audio_raw', self.audio_callback, 10)
         self.session_sub = self.create_subscription(
             Bool,
-            '/session_active',
+            'session_active',
             self.session_callback,
             10,
         )
         self.speaking_sub = self.create_subscription(
             Bool,
-            '/is_speaking',
+            'is_speaking',
             self.speaking_callback,
             10,
         )
-        self.stop_sub = self.create_subscription(Bool, '/stop_playback', self.stop_callback, 10)
+        self.stop_sub = self.create_subscription(Bool, 'stop_playback', self.stop_callback, 10)
         self.progress_sub = self.create_subscription(
             String,
-            '/audio_playback_progress',
+            'audio_playback_progress',
             self.playback_progress_callback,
             10,
         )
         self.speaker_sub = self.create_subscription(
             String,
-            '/speaker_id',
+            'speaker_id',
             self.speaker_callback,
             10,
         )
         self.speaker_candidate_sub = self.create_subscription(
             String,
-            '/speaker_id_candidate',
+            'speaker_id_candidate',
             self.speaker_candidate_callback,
             10,
         )
         self.robot_command_sub = self.create_subscription(
             RobotCommand,
-            '/robot_command',
+            'robot_command',
             self.robot_command_callback,
             10,
         )
         self.robot_status_sub = self.create_subscription(
             String,
-            '/robot_command_status',
+            'robot_command_status',
             self.robot_status_callback,
             10,
         )
         self.backend_sub = self.create_subscription(
             String,
-            '/conversation_backend',
+            'conversation_backend',
             self.backend_callback,
             10,
         )
         self.person_context_sub = self.create_subscription(
             String,
-            '/person_context',
+            'person_context',
             self.person_context_callback,
             10,
         )
         self.pause_sub = self.create_subscription(
             Bool,
-            '/conversation_pause',
+            'conversation_pause',
             self.pause_callback,
+            10,
+        )
+        self.doa_sub = self.create_subscription(
+            Int32,
+            'doa_angle',
+            self.doa_callback,
+            10,
+        )
+        self.vad_sub = self.create_subscription(
+            Bool,
+            'voice_activity',
+            self.vad_callback,
+            10,
+        )
+        self.wake_word_sub = self.create_subscription(
+            WakeWord,
+            'wake_word',
+            self.wake_word_callback,
             10,
         )
 
@@ -520,6 +635,7 @@ class OpenAIRealtimeNode(Node):
         self._connected.clear()
         self._cancel_pending_response_create()
         self._cancel_pending_diarization_policy()
+        self._cancel_filler()
         try:
             if self._ws_app is not None:
                 self._ws_app.close()
@@ -571,6 +687,10 @@ class OpenAIRealtimeNode(Node):
             self.get_logger().info('OpenAI conversation paused: listening without responding')
             self._cancel_pending_response_create()
             self._truncate_current_audio('conversation_paused')
+            # Hard-stop whatever is already in the speaker queue: truncating the
+            # server-side item does nothing for audio the playback node already has.
+            self._mark_response_inactive()
+            self.tts_stop_pub.publish(Bool(data=True))
         else:
             self.get_logger().info('OpenAI conversation resumed')
         self._refresh_session()
@@ -680,6 +800,162 @@ class OpenAIRealtimeNode(Node):
         self.language_tracker.seed(self.person_context.get('preferred_language', ''))
         self._refresh_session()
 
+    def doa_callback(self, msg: Int32):
+        """Track where the current speaker is, for spatial awareness in the prompt."""
+        if not self.doa_enabled:
+            return
+        try:
+            angle = int(msg.data)
+        except (TypeError, ValueError):
+            return
+        if angle < 0:
+            return
+        previous = self.current_doa
+        self.current_doa = angle
+        # Only rebuild the session on a meaningful move — a session update per
+        # 10 Hz DOA sample would thrash the connection.
+        if previous is None or abs(angle - previous) >= self.doa_focus_margin:
+            self.get_logger().debug(f'DOA moved: {previous} -> {angle} deg')
+            self._refresh_session()
+
+    def wake_word_callback(self, msg: WakeWord):
+        """Greet the user when the wake word fires.
+
+        The legacy pipeline plays a cached 'ack' sound here, but tts_node
+        suppresses that outside the legacy backend — so without this the robot
+        stayed completely silent after "hello robot". Instead of a canned sound,
+        inject a system turn and let the model greet in its own voice.
+        """
+        if self.current_backend != 'openai_realtime':
+            return
+        if not self._connected.is_set():
+            return
+        word = (msg.word or '').strip().lower()
+        # Only the hello model greets; the stop/goodbye models must not.
+        if 'hello' not in word and 'wake' not in word:
+            return
+
+        preferred_name = self._voice_correlated_preferred_name()
+        who = f"The user '{preferred_name}'" if preferred_name else 'The user'
+        greeting = (
+            f"[System: {who} just said 'Hello Robot' to get your attention. "
+            'Greet them warmly in one short sentence, then wait for their request.]'
+        )
+        if not self._send_event({
+            'type': 'conversation.item.create',
+            'item': {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': greeting}],
+            },
+        }):
+            return
+        self.get_logger().info(f"Wake word '{word}' -> injecting greeting turn")
+        self._request_response_create('', reason='wake_word_greeting')
+
+    def vad_callback(self, msg: Bool):
+        """Play a local filler when the user stops speaking, to mask model latency."""
+        if not self.enable_local_fillers or msg.data:
+            return
+        if not self.session_active or self.current_backend != 'openai_realtime':
+            return
+        if self.conversation_paused or self.waiting_for_robot_confirmation:
+            return
+        # Only fill a real gap: the user must have actually spoken, and the model
+        # must not have started answering already.
+        if self.robot_speaking or self._current_turn_audio_started:
+            return
+        if self._user_audio_frames_sent < 15:
+            return
+        self._schedule_filler()
+
+    def _schedule_filler(self):
+        if self._filler_timer is not None:
+            return
+        delay_s = self.filler_delay_ms / 1000.0
+
+        def _fire():
+            self._filler_timer = None
+            # Re-check: the answer may have arrived during the delay, which is
+            # exactly the case where a filler would talk over the robot.
+            if self.robot_speaking or self._current_turn_audio_started:
+                return
+            if self.conversation_paused or self.waiting_for_robot_confirmation:
+                return
+            self._play_filler()
+
+        self._filler_timer = threading.Timer(delay_s, _fire)
+        self._filler_timer.daemon = True
+        self._filler_timer.start()
+
+    def _cancel_filler(self):
+        if self._filler_timer is not None:
+            self._filler_timer.cancel()
+            self._filler_timer = None
+
+    def _precache_fillers(self):
+        """Load the filler WAVs once at startup so playback costs no disk I/O."""
+        ro_files = ['hmm_ro.wav', 'pai_ro.wav', 'aaa_ro.wav', 'sa_vedem_ro.wav']
+        en_files = ['hmm_en.wav', 'well_en.wav', 'let_see_en.wav', 'uhm_en.wav']
+
+        if not self.fillers_dir or not os.path.isdir(self.fillers_dir):
+            self.get_logger().warn(
+                f'Local fillers enabled but directory is missing: {self.fillers_dir!r}'
+            )
+            return
+
+        for lang, files in (('ro', ro_files), ('en', en_files)):
+            for fname in files:
+                fpath = os.path.join(self.fillers_dir, fname)
+                if not os.path.exists(fpath):
+                    self.get_logger().warn(f'Filler file not found: {fpath}')
+                    continue
+                try:
+                    with wave.open(fpath, 'rb') as handle:
+                        rate = handle.getframerate()
+                        channels = handle.getnchannels()
+                        pcm = np.frombuffer(
+                            handle.readframes(handle.getnframes()),
+                            dtype=np.int16,
+                        )
+                    self.fillers_cache[lang].append({
+                        'name': fname,
+                        'pcm': pcm,
+                        'rate': rate,
+                        'channels': channels,
+                    })
+                    self.get_logger().info(
+                        f'Loaded filler: {fname} ({rate}Hz, {channels}ch, {len(pcm)} samples)'
+                    )
+                except Exception as exc:
+                    self.get_logger().error(f'Error loading filler {fname}: {exc}')
+
+    def _play_filler(self):
+        lang = self.language_tracker.current_language or 'ro'
+        if not self.fillers_cache.get(lang):
+            lang = 'ro'
+        cache_list = self.fillers_cache.get(lang) or []
+        if not cache_list or random.random() >= self.filler_chance:
+            return
+
+        filler = random.choice(cache_list)
+        try:
+            pcm = (filler['pcm'].astype(np.float32) * self.filler_volume).astype(np.int16)
+            out = Audio()
+            out.sample_rate = filler['rate']
+            out.channels = filler['channels']
+            out.data = pcm.tolist()
+            # A distinct stream_id lets audio_playback_node drop the filler the
+            # moment the real response starts streaming.
+            out.stream_id = f'{self._active_turn_id}_filler'
+            out.item_id = 'local_filler'
+            self.audio_pub.publish(out)
+            self.get_logger().info(
+                f"🎙️ Playing local filler: {filler['name']} ({lang.upper()})"
+            )
+        except Exception as exc:
+            self.get_logger().error(f'Error playing local filler: {exc}')
+
     def robot_command_callback(self, msg: RobotCommand):
         # Keep robot motion logic local; suppress assistant chatter for commands.
         self._truncate_current_audio('robot_command')
@@ -758,6 +1034,7 @@ class OpenAIRealtimeNode(Node):
             'audio': encoded,
         })
         self._audio_chunks_sent += 1
+        self._user_audio_frames_sent += 1
         if self._audio_chunks_sent % 50 == 0:
             self.get_logger().info(
                 f'Streaming audio to OpenAI Realtime ({self._audio_chunks_sent} chunks sent)'
@@ -899,8 +1176,19 @@ class OpenAIRealtimeNode(Node):
         if not delta:
             return
 
+        # Drop the model's speech while paused or while the gate is waiting for a
+        # spoken confirmation. A system-prompt "stay silent" is not honoured by a
+        # native-audio model, so the audio has to be dropped here. Input
+        # transcription deliberately keeps running so the resume phrase (or the
+        # yes/no) is still heard.
+        if self.conversation_paused or self.waiting_for_robot_confirmation:
+            return
+
         self._mark_response_active(str(event.get('response_id', '') or ''))
         response_id = str(event.get('response_id', '') or '')
+        # The real answer is on its way: no filler may follow it.
+        self._current_turn_audio_started = True
+        self._cancel_filler()
         if response_id and response_id not in self._seen_output_audio_for_response:
             self._seen_output_audio_for_response.add(response_id)
             self.get_logger().info(f'OpenAI Realtime started audio output for response {response_id}')
@@ -962,6 +1250,12 @@ class OpenAIRealtimeNode(Node):
         response_id = str(response.get('id', '') or '')
         output_items = response.get('output', []) or []
 
+        # Turn boundary: reset the filler gate so the next user turn can be masked.
+        self._current_turn_audio_started = False
+        self._user_audio_frames_sent = 0
+        self._active_turn_id = response_id
+        self._cancel_filler()
+
         for item in output_items:
             item_id = str(item.get('id', '') or '')
             content = item.get('content', []) or []
@@ -1008,6 +1302,17 @@ class OpenAIRealtimeNode(Node):
             'threshold': self.vad_threshold,
             'prefix_padding_ms': self.vad_prefix_padding_ms,
             'silence_duration_ms': self.vad_silence_duration_ms,
+            # create_response defaults to TRUE server-side: the API answers the
+            # moment its VAD hears silence. That bypasses every local gate this
+            # node exists for (attention focus, diarization policy, transcript
+            # filters, wait_for_user) AND races our own response.create — the
+            # server answered ~5ms after speech_stop, then our deferred request
+            # fired again when that response finished, so every user turn got
+            # TWO spoken answers. With local gating on, this node is the sole
+            # authority on when to speak.
+            'create_response': not self.local_response_gating,
+            # Keep server-side barge-in: new user speech still cancels playback.
+            'interrupt_response': True,
         }
 
         session = {
@@ -1035,15 +1340,32 @@ class OpenAIRealtimeNode(Node):
             tools.append(build_realtime_wait_for_user_tool())
         if self.web_search_enabled:
             tools.append(build_realtime_web_search_tool())
+        if self.emotion_tool_enabled:
+            tools.append(build_report_emotion_tool())
+        if self.speaker_info_tool_enabled:
+            tools.append(build_get_speaker_info_tool())
+        if self.name_capture_tool_enabled:
+            tools.append(build_remember_person_tool())
+        if self.pause_tool_enabled:
+            tools.append(build_set_conversation_pause_tool())
         if tools:
             session['tools'] = tools
             session['tool_choice'] = 'auto'
         if self._reasoning_config_enabled():
             session['reasoning'] = {'effort': self.reasoning_effort}
         if self.input_transcription_enabled:
-            session['audio']['input']['transcription'] = {
-                'model': self.input_transcription_model,
-            }
+            transcription = {'model': self.input_transcription_model}
+            # Without a language hint the transcriber free-guesses and lands on
+            # whatever fits the acoustics — observed real output for a bilingual
+            # RO/EN speaker: Korean '어', Japanese '頑張って。', and command
+            # phrases mangled beyond recognition ("robot move forward" ->
+            # "Rjowmet mondfoward."). Those wreck command matching AND trip the
+            # unsupported-script filter, which silently drops the turn.
+            if self.input_transcription_language:
+                transcription['language'] = self.input_transcription_language
+            if self.input_transcription_prompt:
+                transcription['prompt'] = self.input_transcription_prompt
+            session['audio']['input']['transcription'] = transcription
 
         self._send_event({
             'type': 'session.update',
@@ -1258,6 +1580,43 @@ class OpenAIRealtimeNode(Node):
                 'or any request to look something up. '
                 'Do not use web_search for stable facts, casual chat, local robot commands, or personal-memory questions. '
                 'Do not pretend to have browsed if you did not use the tool.'
+            )
+        if self.speaker_info_tool_enabled:
+            extras.append(
+                "You have a get_speaker_info tool that returns the CURRENT speaker's "
+                'preferred spoken name, preferred language, and known facts. The speaker '
+                'can change mid-conversation, so call get_speaker_info whenever you need '
+                'to address someone by name or recall what you know about them, rather '
+                'than assuming the context above is still current.'
+            )
+        if self.emotion_tool_enabled:
+            extras.append(
+                "Whenever you detect a clear emotional state in the user's voice, call "
+                'the report_user_emotion tool with the emotion and a brief reason, and '
+                'mirror it in your delivery: match happy, enthusiastic, or playful energy '
+                'with a brighter, livelier voice; counterbalance sad, tired, or anxious '
+                'with a softer, calmer, reassuring tone; and answer frustration with a '
+                'steady, empathetic voice. Reporting the emotion is silent — keep '
+                'answering the user normally in the same turn.'
+            )
+        if self.name_capture_tool_enabled:
+            extras.append(
+                'When the user introduces themselves by name, in any language or phrasing, '
+                'call the remember_person tool with that name so the robot can learn their voice.'
+            )
+        if self.pause_tool_enabled:
+            extras.append(
+                'You have a set_conversation_pause tool. When the user asks you to wait, '
+                'hold on, give them a moment, or pause, call it with paused=true and then '
+                'stay silent — they may talk to other people meanwhile. Call it with '
+                'paused=false only when the same user says they are back, ready, or want '
+                'to continue.'
+            )
+        if self.doa_enabled and self.current_doa is not None:
+            extras.append(
+                f'The current speaker is at approximately {self.current_doa} degrees '
+                'relative to the robot. Use this only for spatial awareness; never read '
+                'the angle out loud.'
             )
         return ' '.join([self.base_instructions, *extras]).strip()
 
@@ -1610,6 +1969,11 @@ class OpenAIRealtimeNode(Node):
         self._resume_requested = False
 
     def _request_response_create(self, item_id: str, *, reason: str) -> bool:
+        # When local gating is off the server auto-answers user turns, so asking
+        # for another response here would double up. Node-initiated reasons are
+        # still allowed: server VAD never creates those.
+        if not self.local_response_gating and reason not in SERVER_MODE_ALLOWED_REASONS:
+            return False
         self._cancel_pending_response_create()
         allowed, block_reason = can_request_realtime_response(
             user_speaking=self._user_speaking,
@@ -1983,9 +2347,17 @@ class OpenAIRealtimeNode(Node):
         call_id = str(item.get('call_id', '') or event.get('call_id', '') or '').strip()
         arguments = str(item.get('arguments', '') or event.get('arguments', '') or '')
 
+        known_tools = (
+            WEB_SEARCH_FUNCTION_NAME,
+            WAIT_FOR_USER_FUNCTION_NAME,
+            REPORT_EMOTION_FUNCTION_NAME,
+            GET_SPEAKER_INFO_FUNCTION_NAME,
+            REMEMBER_PERSON_FUNCTION_NAME,
+            SET_PAUSE_FUNCTION_NAME,
+        )
         if item_type and item_type != 'function_call':
             return
-        if name not in (WEB_SEARCH_FUNCTION_NAME, WAIT_FOR_USER_FUNCTION_NAME) or not call_id:
+        if name not in known_tools or not call_id:
             return
 
         with self._tool_call_lock:
@@ -1998,6 +2370,21 @@ class OpenAIRealtimeNode(Node):
 
         if name == WAIT_FOR_USER_FUNCTION_NAME:
             self._execute_wait_for_user_tool_call(call_id)
+            return
+
+        # The context tools answer synchronously — no network call, so there is
+        # no reason to push them onto a worker thread.
+        if name == REPORT_EMOTION_FUNCTION_NAME:
+            self._execute_report_emotion_tool_call(call_id, arguments)
+            return
+        if name == GET_SPEAKER_INFO_FUNCTION_NAME:
+            self._execute_get_speaker_info_tool_call(call_id)
+            return
+        if name == REMEMBER_PERSON_FUNCTION_NAME:
+            self._execute_remember_person_tool_call(call_id, arguments)
+            return
+        if name == SET_PAUSE_FUNCTION_NAME:
+            self._execute_set_pause_tool_call(call_id, arguments)
             return
 
         self.get_logger().info(f'OpenAI Realtime requested web search via tool call {call_id}')
@@ -2021,6 +2408,104 @@ class OpenAIRealtimeNode(Node):
         })
         self._clear_deferred_response()
         self.get_logger().debug(f'OpenAI Realtime chose to wait without response ({call_id})')
+
+    @staticmethod
+    def _parse_tool_arguments(arguments: str) -> dict:
+        try:
+            parsed = json.loads(arguments) if arguments else {}
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _send_tool_output(self, call_id: str, payload: dict) -> bool:
+        return self._send_event({
+            'type': 'conversation.item.create',
+            'item': {
+                'type': 'function_call_output',
+                'call_id': call_id,
+                'output': json.dumps(payload, separators=(',', ':')),
+            },
+        })
+
+    def _execute_report_emotion_tool_call(self, call_id: str, arguments: str):
+        """Publish the emotion the model heard so the rest of the robot can react."""
+        args = self._parse_tool_arguments(arguments)
+        emotion = normalize_emotion(str(args.get('emotion', '') or ''))
+        reason = str(args.get('reason', '') or '').strip()
+        speaker = self.current_speaker
+
+        self.last_user_emotion = emotion
+        msg = String()
+        msg.data = json.dumps(
+            {'speaker': speaker, 'emotion': emotion, 'reason': reason},
+            separators=(',', ':'),
+        )
+        self.user_emotion_pub.publish(msg)
+        self.get_logger().info(
+            f"🎭 User emotion: {emotion.upper()} for speaker '{speaker}' (reason: '{reason}')"
+        )
+        self._send_tool_output(call_id, {'ok': True, 'emotion': emotion})
+
+    def _execute_get_speaker_info_tool_call(self, call_id: str):
+        """Answer with live speaker context.
+
+        Reading ``self.person_context`` at call time (rather than baking it into
+        the session instructions) is what lets personalization follow a speaker
+        change without rebuilding the session.
+        """
+        context = self.person_context or {}
+        preferred_name = str(context.get('preferred_name', '') or '').strip()
+        payload = {
+            'speaker_label': self.current_speaker,
+            'known': bool(preferred_name) and self.current_speaker != 'Unknown',
+            'preferred_name': preferred_name,
+            'preferred_language': str(context.get('preferred_language', '') or '').strip(),
+            'facts': context.get('facts', []) or [],
+        }
+        self.get_logger().debug(f'get_speaker_info -> {payload}')
+        self._send_tool_output(call_id, payload)
+
+    def _execute_remember_person_tool_call(self, call_id: str, arguments: str):
+        """Forward a model-detected self-introduction to the enrollment path.
+
+        The model decides *that* an introduction happened (any language or
+        phrasing); person_memory_store_node still owns the audio buffer, the
+        Unknown-speaker gate, and the actual voiceprint enrollment.
+        """
+        args = self._parse_tool_arguments(arguments)
+        name = str(args.get('name', '') or '').strip()
+        language = str(args.get('language', '') or '').strip()
+        if not name:
+            self._send_tool_output(call_id, {'ok': False, 'error': 'no name provided'})
+            return
+
+        msg = String()
+        msg.data = json.dumps(
+            {'preferred_name': name, 'preferred_language': language},
+            separators=(',', ':'),
+        )
+        self.introduced_name_pub.publish(msg)
+        self.get_logger().info(f"remember_person -> enrollment request for '{name}'")
+        self._send_tool_output(call_id, {'ok': True, 'name': name})
+
+    def _execute_set_pause_tool_call(self, call_id: str, arguments: str):
+        """Pause/resume by model intent instead of by transcript regex.
+
+        Resolving this semantically is what makes "hold on a sec" work in any
+        language and phrasing, including ones the phrase lists never cover.
+        """
+        args = self._parse_tool_arguments(arguments)
+        paused = bool(args.get('paused', False))
+
+        # Acknowledge BEFORE flipping state: _apply_pause_state hard-stops
+        # in-flight speech, and the tool output must still reach the session.
+        self._send_tool_output(call_id, {'ok': True, 'paused': paused})
+        if paused == self.conversation_paused:
+            return
+        self.get_logger().info(
+            f'set_conversation_pause -> {"paused" if paused else "resumed"} (by model intent)'
+        )
+        self._apply_pause_state(paused, publish=True)
 
     def _execute_web_search_tool_call(self, call_id: str, arguments: str):
         query = ''

@@ -82,18 +82,18 @@ class AttentionManagerNode(Node):
         self.last_addressing_intent = None
         self.last_multi_speaker_context = False
 
-        self.session_sub = self.create_subscription(Bool, '/session_active', self._session_callback, 10)
-        self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self._pause_callback, 10)
-        self.speaker_sub = self.create_subscription(String, '/speaker_id', self._speaker_callback, 10)
+        self.session_sub = self.create_subscription(Bool, 'session_active', self._session_callback, 10)
+        self.pause_sub = self.create_subscription(Bool, 'conversation_pause', self._pause_callback, 10)
+        self.speaker_sub = self.create_subscription(String, 'speaker_id', self._speaker_callback, 10)
         self.transcription_sub = self.create_subscription(
             Transcription,
-            '/transcription',
+            'transcription',
             self._transcription_callback,
             10,
         )
 
-        self.attended_pub = self.create_publisher(Transcription, '/attended_transcription', 10)
-        self.status_pub = self.create_publisher(String, '/attention_status', 10)
+        self.attended_pub = self.create_publisher(Transcription, 'attended_transcription', 10)
+        self.status_pub = self.create_publisher(String, 'attention_status', 10)
 
         self.get_logger().info('Attention Manager started')
 

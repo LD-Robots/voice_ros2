@@ -1,16 +1,19 @@
 # Laptop Configuration (Full Sweep)
 # Optimized for general testing with ReSpeaker support
+#
+# All nodes run under the /voice namespace (see launch files), so node keys use
+# the /**/ wildcard prefix to match regardless of namespace.
 
 # ========== SERVER NODES ==========
 
-backend_manager_node:
+/**/backend_manager_node:
   ros__parameters:
     preferred_backend: "openai_realtime"
     fallback_backend: "legacy"
     offline_timeout_s: 1000.0
     auto_return_to_preferred: true
 
-asr_node:
+/**/asr_node:
   ros__parameters:
     model_size: "small"
     device: "cpu"
@@ -19,15 +22,16 @@ asr_node:
     beam_size: 5
     initial_prompt: "A bilingual conversation in Romanian and English."
 
-llm_node:
+/**/llm_node:
   ros__parameters:
     provider: "groq"
     model: "llama-3.1-8b-instant"
     max_tokens: 150
     temperature: 0.7
     min_chunk_chars: 20
+    sticky_speaker_timeout_s: 180.0
 
-tts_node:
+/**/tts_node:
   ros__parameters:
     voice_en: "en-IE-EmilyNeural"
     voice_ro: "ro-RO-AlinaNeural"
@@ -35,36 +39,70 @@ tts_node:
     rate: "+0%"
     volume: "+0%"
 
-openai_realtime_node:
+/**/openai_realtime_node:
   ros__parameters:
-    model: "gpt-realtime-2"
+    # gpt-realtime-2.1 = newest + best speech-to-speech (reasoning + tool use).
+    # Audio $32/$64 per 1M tokens (~$0.05/min). Swap to "gpt-realtime-2.1-mini"
+    # ($10/$20 per 1M, ~$0.016/min) for cheap continuous running.
+    model: "gpt-realtime-2.1"
     voice: "cedar"
     api_base_url: "wss://api.openai.com/v1/realtime"
+    # Transcription of the USER's audio (drives command matching + turn filters).
+    # gpt-4o-mini-transcribe mangled command phrases and free-guessed languages.
+    input_transcription_model: "gpt-4o-transcribe"
+    input_transcription_language: ""   # empty = auto (this stack is bilingual RO/EN)
     input_sample_rate: 16000
     api_sample_rate: 24000
     reasoning_enabled: true
     reasoning_effort: "medium"
     wait_for_user_tool_enabled: true
     vad_threshold: 0.80
-    vad_prefix_padding_ms: 400
-    vad_silence_duration_ms: 600
+    vad_prefix_padding_ms: 300
+    vad_silence_duration_ms: 700  # 700ms: evita finalizarea prematura a turei pe propozitii scurte/continuari
     response_create_delay_ms: 100
     continued_turn_response_delay_ms: 450
     short_transcript_dedupe_window_s: 4.0
-    playback_input_filter_enabled: true
-    playback_input_filter_post_playback_ms: 800
-    playback_input_filter_min_rms_dbfs: -35.0
-    playback_input_filter_hits_required: 3
+    # This node owns turn-taking: attention focus, diarization policy and the
+    # wait_for_user tool all decide per turn whether to answer. It therefore
+    # disables the Realtime API's own auto-response (turn_detection.create_response),
+    # which would otherwise answer first and cause a double reply.
+    # Set false to hand turn-taking back to the server (loses the local gating).
+    local_response_gating: true
+    playback_input_filter_enabled: true  # Filtru software anti-echo rezidual (dupa AEC WebRTC+DeepFilterNet)
+    playback_input_filter_post_playback_ms: 200   # Fereastra de protectie dupa stop playback (redusa pentru barge-in rapid)
+    # MEASURED: after the output-sink fix the laptop mic hears the robot at
+    # mic_rms=0.0530 = -25.5 dBFS (AEC auto-calibration). At -28 that echo passed
+    # straight to OpenAI, whose server VAD read it as the user speaking and
+    # cancelled the robot mid-sentence ("Cancellation failed: no active response").
+    # Human speech in the same room measures -16..-10 dBFS, so -20 separates them.
+    playback_input_filter_min_rms_dbfs: -20.0
+    playback_input_filter_hits_required: 2        # 2 frame-uri consecutive de voce reala (evita spike-uri scurte)
+    playback_input_filter_hold_ms: 300            # Gate ramas deschis 300ms dupa ultimul hit de voce
     assistant_echo_filter_enabled: true
     assistant_echo_window_s: 8.0
     assistant_echo_similarity_threshold: 84.0
     web_search_enabled: true
     web_search_model: "gpt-4o-mini"
     web_search_context_size: "medium"
+    # Tools: emotion reporting, speaker lookup, name capture, pause/resume by intent
+    emotion_tool_enabled: true
+    speaker_info_tool_enabled: true
+    name_capture_tool_enabled: true
+    pause_tool_enabled: true
+    # Local fillers mask response latency (needs voices/fillers/*.wav)
+    enable_local_fillers: false
+    filler_chance: 0.75
+    filler_volume: 0.80
+    filler_delay_ms: 2000
+    # DOA (ReSpeaker direction of arrival) injected as spatial context
+    doa_enabled: true
+    doa_focus_margin: 120.0
     capture_during_playback: true
     speaker_switch_hits_required: 2
     language_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
+    sticky_speaker_timeout_s: 180.0
+    # Multi-party dialogue: semantic addressing + diarization arbitration
     semantic_addressing_enabled: true
     loud_environment_mode: true
     multi_speaker_window_s: 8.0
@@ -75,7 +113,7 @@ openai_realtime_node:
     diarization_candidate_confidence_threshold: 0.55
     diarization_response_wait_ms: 1200
 
-diarization_assist_node:
+/**/diarization_assist_node:
   ros__parameters:
     enabled: true
     model: "gpt-4o-transcribe-diarize"
@@ -90,65 +128,97 @@ diarization_assist_node:
     reference_seconds: 8.0
     min_dominant_share: 0.55
 
-pipecat_audio_node:
+/**/pipecat_audio_node:
   ros__parameters:
     pipecat_log_level: "ERROR"
     verbose_pipeline_logs: false
 
 # ========== CLIENT NODES ==========
 
-audio_capture_node:
+/**/audio_capture_node:
   ros__parameters:
     device_index: -1       # -1 = auto-detect (ReSpeaker will be found automatically)
     respeaker_mode: false  # not needed: 1-channel firmware outputs mono natively
     respeaker_channel: 0
     stereo_mono_extract: true
-    gain: 1.0
-    chunk_ms: 60
+    gain: 3.0              # 3.0 when inside head (needs amplification), 1.0 when outside (avoid clipping)
+    chunk_ms: 20
     debug_recording: true
-    debug_wav_path: "/tmp/debug_mic_capture.wav"
+    # debug_wav_path is injected by the launch file (workspace_root/openai_debug_mic.wav)
 
-vad_node:
+/**/vad_node:
   ros__parameters:
     wake_word_enabled: true
     session_timeout: 30.0
     min_silence_frames: 14
     use_hardware_vad: false
+    energy_threshold: 150
+    aggressiveness: 3
 
-audio_segment_node:
+/**/audio_segment_node:
   ros__parameters:
     min_segment_seconds: 0.5
     max_segment_seconds: 30.0
+    capture_during_playback: true
 
-audio_playback_node:
+/**/audio_playback_node:
   ros__parameters:
     sample_rate: 16000
     gain: 0.5
-    force_os_volume_percent: 80
-barge_in_node:
+    enable_dynamic_volume: true
+    # Volume adapts to room noise: -60 dBFS -> min_playback_gain, -25 dBFS -> max.
+    # A normal quiet room sits near -58 dBFS, i.e. AT the floor — so min_playback_gain
+    # is the everyday operating volume, not an edge case. At 0.15 the robot was
+    # whispering at 18% and was effectively inaudible.
+    min_playback_gain: 0.55
+    max_playback_gain: 1.0
+    # Output sink. MUST be set explicitly: plugging in the ReSpeaker mic array
+    # also registers an output sink, and it can become the system default — the
+    # robot then talks into the array's unused headphone jack, silently.
+    # Discover with:  pactl list sinks short
+    output_sink: "alsa_output.pci-0000_00_1f.3-platform-skl_hda_dsp_generic.HiFi__hw_sofhdadsp__sink"
+
+
+/**/acoustic_monitor_node:
+  ros__parameters:
+    monitoring_interval_s: 5.0
+    respeaker_vid: 10374 # 0x2886
+    respeaker_pid: 24    # 0x0018
+    quiet_noise_threshold_dbfs: -48.0
+    noisy_noise_threshold_dbfs: -35.0
+    enable_respeaker_tuning: true
+
+/**/barge_in_node:
   ros__parameters:
     stop_enabled: false
     stop_prob_threshold: 0.80
     stop_logit_margin: 0.5
     stop_hits_required: 2
     voice_enabled: true
-    min_voice_ms: 600
-    min_rms_dbfs: -7.0
+    min_voice_ms: 300          # 300ms = 15 frame-uri: trigger rapid la barge-in
+    min_rms_dbfs: -28.0        # Sincronizat cu openai_realtime_node pentru sensibilitate uniforma
     highpass_hz: 300.0
     zcr_min: 0.05
     zcr_max: 0.35
 
-speaker_id_node:
+/**/speaker_id_node:
   ros__parameters:
-    similarity_threshold: 0.45
-    similarity_margin: 0.12
+    similarity_threshold: 0.30
+    similarity_margin: 0.08
     enrollment_reuse_threshold: 0.58
     enrollment_reuse_margin: 0.16
+    unsupervised_enrollment_enabled: false
+    # Online voiceprint adaptation: strengthen templates on confident matches.
+    enable_voiceprint_adaptation: true
+    adapt_min_score: 0.60
+    adapt_min_margin: 0.10
+    adapt_min_interval_s: 20.0
 
-attention_manager_node:
+/**/attention_manager_node:
   ros__parameters:
     speaker_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
+    sticky_speaker_timeout_s: 180.0
     semantic_addressing_enabled: true
     loud_environment_mode: true
     multi_speaker_window_s: 8.0
@@ -156,34 +226,48 @@ attention_manager_node:
     indirect_address_score_threshold: 0.62
     loud_indirect_address_score_threshold: 0.74
 
-person_memory_store_node:
+/**/person_memory_store_node:
   ros__parameters:
     auto_enroll_unknown_speakers: true
     min_enrollment_segment_seconds: 1.2
+    # Realtime transcripts lag the audio; keep this well above that latency or
+    # real self-introductions get rejected as "segment too old".
+    max_enrollment_segment_age_s: 20.0
+    max_enrollment_clip_seconds: 12.0
     speaker_switch_hits_required: 2
+    sticky_speaker_timeout_s: 180.0
 
-conversation_control_node:
+/**/conversation_control_node:
   ros__parameters:
     speaker_switch_hits_required: 2
+    sticky_speaker_timeout_s: 180.0
 
-wake_word_node:
+/**/wake_word_node:
   ros__parameters:
     threshold: 0.5
     cooldown_ms: 1500
-    model_thresholds: "hello_robot:0.30,goodbye_robot:0.75"
+    # custom_models is injected by the launch file (package share models directory)
+    model_thresholds: "hello_robot:0.20,goodbye_robot:0.60"
 
-voice_command_node:
+/**/voice_command_node:
   ros__parameters:
     min_transcription_confidence: 0.45
     default_steps: 1
     max_steps: 20
     enable_tts_ack: false
 
-robot_command_executor_node:
+/**/robot_command_executor_node:
   ros__parameters:
     execution_enabled: true
     command_topic_enabled: true
-    command_topic_only: false
+    # Gemini architecture: this node is a SAFETY GATE, not an actuator. It
+    # validates the command and forwards it to the motion team on the single
+    # approved_command_topic bus, then stops. It drives no hardware itself.
+    # Everything below (move_mode/cmd_vel_topic/behavior_*/the six services) is
+    # INERT while this is true — kept so direct driving can be re-enabled.
+    command_topic_only: true
+    # Motion-team interfaces are ABSOLUTE on purpose: they live outside the
+    # /voice namespace so the motion stack sees them unprefixed.
     approved_command_topic: "/humanoid_command"
     move_mode: "twist"
     cmd_vel_topic: "/cmd_vel"
@@ -199,21 +283,35 @@ robot_command_executor_node:
     stand_service: "/stand"
     preempt_on_new_command: true
     enable_voice_cancel: true
-    enable_risky_confirmation: true
+    # Risky-command confirmation is OFF: the spoken yes/no could not be received
+    # reliably (the model transcribed "yes" into other scripts, e.g. Devanagari
+    # "यस", which the unsupported_script filter drops, and the transcript often
+    # arrived after confirmation_timeout_s). Commands now dispatch immediately.
+    # The spoken "stop" cancel below is still active as a zero-latency safety net.
+    enable_risky_confirmation: false
     confirmation_timeout_s: 12.0
+    require_same_speaker_for_confirmation: false
     risky_steps_threshold: 5
     risky_backward_steps_threshold: 3
 
-echo_canceller_node:
+/**/echo_canceller_node:
   ros__parameters:
-    filter_length_ms: 100         # Crescut pentru a acoperi reflexiile din laptop
-    step_size: 0.15              # Putin mai agresiv
-    max_delay_ms: 3000           # Crescut la 3 secunde pentru a acoperi latenta extrema
+    filter_length_ms: 100         # Increased to cover laptop reflections
+    step_size: 0.15              # A bit more aggressive
+    max_delay_ms: 900            # Delay-ul real masurat este ~703ms (11248 samples @ 16kHz)
+    mic_gain: 1.0                # Post-AEC amplification (1.0 = off; amplificarea e inclusa in formula referintei)
+    capture_gain: 3.0            # Trebuie sincronizat cu audio_capture_node.gain
+    playback_gain: 0.5           # Trebuie sincronizat cu audio_playback_node.gain
     debug_recording: true
-    raw_wav_path: "/tmp/aec_raw.wav"
-    ref_wav_path: "/tmp/aec_reference.wav"
-    clean_wav_path: "/tmp/aec_cleaned.wav"
-    
+    # raw_wav_path, ref_wav_path, clean_wav_path are injected by the launch file
     # DeepFilterNet Settings
-    deep_filter_enabled: true
-    deep_filter_attenuation: 100  # Percentage of noise reduction (0-100)
+    deep_filter_enabled: true    # Filtrare neuronală activă cu post-filtering și adaptare dinamică
+    deep_filter_post_filter: true # Post-filtering spectral pentru atenuarea cozilor de ecou/reverberație (RT60)
+    deep_filter_atten_lim_db: 25.0 # Limită atenuare dB (previne distorsiunile fazice ale vocii)
+    deep_filter_dynamic_adaptation: true # Scalare dinamică a limitatorului în funcție de starea acustică
+    webrtc_ns_level: 1           # 1 (gentle) pentru a nu tăia silabele slabe
+    webrtc_ns_enabled: true      # Reducerea zgomotului de fundal
+    # Residual gate: zeroes out low-amplitude AEC residuals during/after robot playback.
+    # Human barge-in voice (louder, >2000 RMS) passes; robot echo fragments (<1400 RMS) are gated.
+    residual_gate_enabled: true
+    residual_gate_rms_threshold: 1400  # RMS ~-24.4 dBFS: taie ecoul rezidual de ~1200 RMS pe durata redarii

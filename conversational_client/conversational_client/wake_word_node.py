@@ -25,16 +25,20 @@ from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool, String
 import numpy as np
 import time
-import os
 from pathlib import Path
 
 # Try to import OpenWakeWord
 try:
     import logging
-    # Suppress "Tried to import the tflite runtime" warning
-    logging.getLogger().setLevel(logging.ERROR)
-    from openwakeword.model import Model as OWWModel
-    logging.getLogger().setLevel(logging.INFO)  # Restore
+    import warnings
+
+    # Suppress "Tried to import the tflite runtime" and other model-loading noise
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=UserWarning)
+        logging.getLogger().setLevel(logging.ERROR)
+        from openwakeword.model import Model as OWWModel
+        logging.getLogger().setLevel(logging.INFO)  # Restore
+
     OPENWAKEWORD_AVAILABLE = True
 except ImportError:
     OPENWAKEWORD_AVAILABLE = False
@@ -127,13 +131,14 @@ class WakeWordNode(Node):
         # ─────────────────────────────────────────────────────────
         self.session_active = False  # True when the session is active
         self.audio_buffer = []       # Buffer for audio accumulation
+        self.current_backend = 'legacy'  # Track active backend
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - receive microphone audio
         # ─────────────────────────────────────────────────────────
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            'audio_raw',
             self.audio_callback,
             10
         )
@@ -141,22 +146,30 @@ class WakeWordNode(Node):
         # ─────────────────────────────────────────────────────────
         # PUBLISHERS
         # ─────────────────────────────────────────────────────────
-        self.wake_pub = self.create_publisher(Bool, '/wake_detected', 10)
-        self.wake_word_pub = self.create_publisher(WakeWord, '/wake_word', 10)
-        self.session_pub = self.create_publisher(Bool, '/session_active', 10)
-        self.end_session_pub = self.create_publisher(Bool, '/end_session', 10)
-        self.tts_stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
+        self.wake_pub = self.create_publisher(Bool, 'wake_detected', 10)
+        self.wake_word_pub = self.create_publisher(WakeWord, 'wake_word', 10)
+        self.session_pub = self.create_publisher(Bool, 'session_active', 10)
+        self.end_session_pub = self.create_publisher(Bool, 'end_session', 10)
+        self.tts_stop_pub = self.create_publisher(Bool, 'tts_stop', 10)
         
         # Publisher for TTS commands (cache playback)
-        self.tts_cmd_pub = self.create_publisher(String, '/tts_command', 10)
+        self.tts_cmd_pub = self.create_publisher(String, 'tts_command', 10)
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER for external session end
         # ─────────────────────────────────────────────────────────
         self.external_end_sub = self.create_subscription(
             Bool,
-            '/end_session_external',
+            'end_session_external',
             self.external_end_session_callback,
+            10
+        )
+
+        # Track active backend to adjust behaviour
+        self.backend_sub = self.create_subscription(
+            String,
+            'conversation_backend',
+            self._backend_callback,
             10
         )
         
@@ -199,6 +212,11 @@ class WakeWordNode(Node):
         # Add to buffer
         self.audio_buffer.extend(audio.tolist())
 
+        # Prevent backlog accumulation (cap buffer at 2 seconds of audio)
+        MAX_BUFFER_SAMPLES = 16000 * 2
+        if len(self.audio_buffer) > MAX_BUFFER_SAMPLES:
+            self.audio_buffer = self.audio_buffer[-MAX_BUFFER_SAMPLES:]
+
         # Track chunk count for periodic logging
         if not hasattr(self, 'audio_debug_count'): self.audio_debug_count = 0
         self.audio_debug_count += 1
@@ -207,7 +225,7 @@ class WakeWordNode(Node):
         # for optimal performance (though it handles streaming internally).
         MIN_SAMPLES = 1280
         
-        if len(self.audio_buffer) >= MIN_SAMPLES:
+        while len(self.audio_buffer) >= MIN_SAMPLES:
             # Extract exactly MIN_SAMPLES
             audio_chunk = np.array(self.audio_buffer[:MIN_SAMPLES], dtype=np.int16)
             
@@ -223,7 +241,7 @@ class WakeWordNode(Node):
             #     if len(self.debug_wav_buffer) >= 48000:
             #         try:
             #             import soundfile as sf
-            #             wav_path = '/home/delia/ros2_ws/debug_wake_audio.wav'
+            #             wav_path = os.path.expanduser('~/debug_wake_audio.wav')
                         
             #             # Convert to numpy int16 array explicitly
             #             wav_data = np.array(self.debug_wav_buffer, dtype=np.int16)
@@ -261,7 +279,7 @@ class WakeWordNode(Node):
 
                     if self.audio_debug_count % 25 == 0:
                         scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in prediction.items()])
-                        self.get_logger().debug(f'👀 Scores: {scores_str}')
+                        self.get_logger().info(f'👀 Scores: {scores_str}')
                     
                 except Exception as e:
                     self.get_logger().error(f'OpenWakeWord prediction error: {e}')
@@ -327,7 +345,7 @@ class WakeWordNode(Node):
         wake_event = WakeWord()
         wake_event.header.stamp = self.get_clock().now().to_msg()
         wake_event.word = model_name
-        wake_event.score = float(score)
+        wake_event.score = score
         self.wake_word_pub.publish(wake_event)
         
         # Publish to /wake_detected
@@ -340,10 +358,12 @@ class WakeWordNode(Node):
         session_msg.data = True
         self.session_pub.publish(session_msg)
         
-        # Send acknowledgement command to TTS
-        tts_cmd = String()
-        tts_cmd.data = 'ack_en'
-        self.tts_cmd_pub.publish(tts_cmd)
+        # Send acknowledgement to TTS only for legacy backend.
+        # A speech-to-speech backend responds naturally to the injected greeting.
+        if self.current_backend == 'legacy':
+            tts_cmd = String()
+            tts_cmd.data = 'ack_en'
+            self.tts_cmd_pub.publish(tts_cmd)
     
     # ═══════════════════════════════════════════════════════════════════
     # TTS STOP (BARGE-IN ONLY)
@@ -384,10 +404,12 @@ class WakeWordNode(Node):
             session_msg.data = False
             self.session_pub.publish(session_msg)
             
-            # Send goodbye to TTS
-            tts_cmd = String()
-            tts_cmd.data = 'goodbye_en'
-            self.tts_cmd_pub.publish(tts_cmd)
+            # Send goodbye to TTS only for legacy backend.
+            # A speech-to-speech backend says goodbye in its own response.
+            if self.current_backend == 'legacy':
+                tts_cmd = String()
+                tts_cmd.data = 'goodbye_en'
+                self.tts_cmd_pub.publish(tts_cmd)
     
     def external_end_session_callback(self, msg: Bool):
         """Callback for ending the session externally."""
@@ -398,6 +420,10 @@ class WakeWordNode(Node):
             session_msg = Bool()
             session_msg.data = False
             self.session_pub.publish(session_msg)
+
+    def _backend_callback(self, msg: String):
+        """Track the active conversation backend."""
+        self.current_backend = (msg.data or '').strip() or 'legacy'
     
     def reset_session(self):
         """Reset the session to standby."""

@@ -18,22 +18,17 @@ from rclpy.node import Node
 from conversational_interfaces.msg import Transcription, TextChunk, Audio
 from std_msgs.msg import Bool, String
 import asyncio
+import getpass
 import os
 import numpy as np
+import tempfile
 import threading
 import queue
-import time
 import scipy.signal  # For resampling
 import re
-import wave
 from pathlib import Path
 
-def _find_workspace_root():
-    for base in (Path(__file__).resolve(), Path.cwd().resolve()):
-        for parent in [base] + list(base.parents):
-            if parent.name == 'voice_ros2':
-                return parent
-    return None
+from conversational_client.workspace_paths import find_workspace_root
 
 try:
     from num2words import num2words
@@ -91,7 +86,13 @@ class TTSNode(Node):
         self.target_sample_rate = 16000
         
         # === WAV CACHE - pre-generated common phrases ===
-        self.cache_dir = '/tmp/tts_cache'
+        # Overridable, and per-user by default: a fixed /tmp/tts_cache collides
+        # between accounts on a shared machine and is not writable everywhere.
+        self.declare_parameter('cache_dir', '')
+        configured_cache_dir = str(self.get_parameter('cache_dir').value).strip()
+        self.cache_dir = os.path.expanduser(configured_cache_dir) if configured_cache_dir else (
+            os.path.join(tempfile.gettempdir(), f'tts_cache_{getpass.getuser()}')
+        )
         os.makedirs(self.cache_dir, exist_ok=True)
         
         # Common phrases for cache
@@ -100,14 +101,20 @@ class TTSNode(Node):
             'filler_en': ('One moment please...', 'en'),
             'goodbye_en': ('Goodbye. I will be here when you need me again.', 'en'),
             'error_en': ('Sorry, I encountered an error.', 'en'),
-            'confirm_en': ('Are you sure? Please say yes or no.', 'en'),
+            'confirm_en': ('Confirm? Yes or no.', 'en'),
+            'confirm_ro': ('Confirmi? Da sau nu.', 'ro'),
+            'pause_en': ('Conversation paused.', 'en'),
+            'pause_ro': ('Conversație pusă pe pauză.', 'ro'),
         }
+        # Only safety-critical prompts may speak in ANY backend (e.g. the risky-command
+        # confirmation, which the gate needs even in realtime mode). Greetings / acks /
+        # fillers / goodbyes are legacy-only and are suppressed automatically in realtime
+        # mode by the `current_backend != 'legacy'` guard in command_callback().
         self.system_commands = {
-            'ack_en',
-            'goodbye_en',
-            'error_en',
             'confirm_en',
-            'filler_en',
+            'confirm_ro',
+            'pause_en',
+            'pause_ro',
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         
@@ -131,13 +138,13 @@ class TTSNode(Node):
         from std_msgs.msg import String
         self.command_sub = self.create_subscription(
             String,
-            '/tts_command',
+            'tts_command',
             self.command_callback,
             10
         )
         self.backend_sub = self.create_subscription(
             String,
-            '/conversation_backend',
+            'conversation_backend',
             self.backend_callback,
             10
         )
@@ -145,7 +152,7 @@ class TTSNode(Node):
         # Subscriber for STREAMING chunks (PREFERRED)
         self.stream_sub = self.create_subscription(
             TextChunk,
-            '/llm_stream',
+            'llm_stream',
             self.stream_callback,
             10
         )
@@ -153,7 +160,7 @@ class TTSNode(Node):
         # Subscriber for complete response (FALLBACK)
         self.response_sub = self.create_subscription(
             Transcription,
-            '/llm_response',
+            'llm_response',
             self.response_callback,
             10
         )
@@ -161,21 +168,21 @@ class TTSNode(Node):
         # Publisher for synthesized audio
         self.audio_pub = self.create_publisher(
             Audio,
-            '/audio_out',
+            'audio_out',
             10
         )
         
         # Publisher for speaking status
         self.speaking_pub = self.create_publisher(
             Bool,
-            '/tts_speaking',
+            'tts_speaking',
             10
         )
         
         # Subscriber for stop TTS
         self.stop_sub = self.create_subscription(
             Bool,
-            '/stop_playback',
+            'stop_playback',
             self.stop_callback,
             10
         )
@@ -212,7 +219,7 @@ class TTSNode(Node):
         """Pre-generate audio for common phrases or load static files."""
         self.get_logger().info('🔄 Initializing TTS cache (prioritizing OpenAI static voices)...')
         
-        workspace_root = _find_workspace_root()
+        workspace_root = find_workspace_root()
         static_dir = None
         if workspace_root:
             static_dir = workspace_root / 'conversational_server' / 'resources' / 'static_audio'
