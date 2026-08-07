@@ -110,8 +110,12 @@ class ReSpeakerUSBInterface:
                     usb.util.CTRL_IN | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
                     0, cmd, id, length, self.TIMEOUT)
 
-                response = struct.unpack(b'ii', response.tobytes())
+                try:
+                    raw = response.tobytes()
+                except AttributeError:
+                    raw = response.tostring()
 
+                response = struct.unpack(b'ii', raw)
                 if data[2] == 'int':
                     result = response[0]
                 else:
