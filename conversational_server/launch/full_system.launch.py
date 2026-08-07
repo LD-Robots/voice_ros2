@@ -210,6 +210,13 @@ def generate_launch_description():
 
         Node(
             package='conversational_client',
+            executable='xmos_hardware_node',
+            name='xmos_hardware_node',
+            parameters=[config_file_path]
+        ),
+
+        Node(
+            package='conversational_client',
             executable='echo_canceller_node',
             name='echo_canceller_node',
             parameters=[config_file_path, {
