@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Transcription.msg"
   "msg/TextChunk.msg"
   "msg/WakeWord.msg"
+  "srv/SetXmosParam.srv"
   DEPENDENCIES std_msgs
 )
 
