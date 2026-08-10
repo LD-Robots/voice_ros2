@@ -26,6 +26,7 @@ from std_msgs.msg import Bool, String
 import numpy as np
 import time
 from pathlib import Path
+import json
 
 # Try to import OpenWakeWord
 try:
@@ -79,6 +80,7 @@ class WakeWordNode(Node):
         self.declare_parameter('model_thresholds', '')
         
         self.threshold = self.get_parameter('threshold').value
+        self.base_global_threshold = self.threshold
         self.sample_rate = self.get_parameter('sample_rate').value
         self.cooldown_ms = self.get_parameter('cooldown_ms').value
         custom_models_str = self.get_parameter('custom_models').value
@@ -106,6 +108,7 @@ class WakeWordNode(Node):
                             'path': str(path),
                             'kind': kind,
                             'threshold': self.threshold,
+                            'base_threshold': self.threshold,
                             'last_hit': 0.0
                         }
                         self.get_logger().debug(f'  ✓ Loaded model: {label} (kind={kind})')
@@ -123,6 +126,7 @@ class WakeWordNode(Node):
                         if label in self.keywords:
                             try:
                                 self.keywords[label]['threshold'] = float(thr)
+                                self.keywords[label]['base_threshold'] = float(thr)
                             except ValueError:
                                 pass
         
@@ -165,11 +169,18 @@ class WakeWordNode(Node):
             10
         )
 
-        # Track active backend to adjust behaviour
         self.backend_sub = self.create_subscription(
             String,
             'conversation_backend',
             self._backend_callback,
+            10
+        )
+        
+        # Subscriber for dynamic threshold adjustment based on acoustic environment
+        self.env_sub = self.create_subscription(
+            String,
+            'acoustic_environment',
+            self.env_callback,
             10
         )
         
@@ -299,6 +310,10 @@ class WakeWordNode(Node):
         """Check predictions and trigger actions."""
         now_ms = time.time() * 1000
         
+        best_model = None
+        best_score = 0.0
+        best_kind = 'wake'
+        
         for model_name, scores in prediction.items():
             if isinstance(scores, dict):
                 score = max(scores.values()) if scores else 0.0
@@ -319,25 +334,32 @@ class WakeWordNode(Node):
             # Check threshold and cooldown
             cooldown_passed = (now_ms - last_hit) > self.cooldown_ms
             
+            # Select the keyword with the HIGHEST score if multiple cross the threshold
             if score >= threshold and cooldown_passed:
-                # Update last_hit
-                if model_name in self.keywords:
-                    self.keywords[model_name]['last_hit'] = now_ms
-                
-                self.get_logger().debug(f'🔔 Detected "{model_name}" (kind={kind}, score={score:.2f})')
-                
-                if kind == 'stop':
-                    # STOP total + End Session (ex: "goodbye robot")
-                    self._end_session(model_name, score)
-                elif kind == 'barge_in':
-                    # STOP TTS only, session remains active (e.g., "stop robot")
-                    self._trigger_barge_in(model_name, score)
-                else:  # wake
-                    if not self.session_active:
-                        self._activate_session(model_name, score)
-                    else:
-                        # If already active, we can do an optional re-activate/ack
-                        self.get_logger().debug('ℹ️ Session already active (wake word ignored)')
+                if score > best_score:
+                    best_score = score
+                    best_model = model_name
+                    best_kind = kind
+                    
+        if best_model is not None:
+            # Update last_hit
+            if best_model in self.keywords:
+                self.keywords[best_model]['last_hit'] = now_ms
+            
+            self.get_logger().info(f'🔔 Detected "{best_model}" (kind={best_kind}, score={best_score:.2f})')
+            
+            if best_kind == 'stop':
+                # STOP total + End Session (ex: "goodbye robot")
+                self._end_session(best_model, best_score)
+            elif best_kind == 'barge_in':
+                # STOP TTS only, session remains active (e.g., "stop robot")
+                self._trigger_barge_in(best_model, best_score)
+            else:  # wake
+                if not self.session_active:
+                    self._activate_session(best_model, best_score)
+                else:
+                    # If already active, we can do an optional re-activate/ack
+                    self.get_logger().debug('ℹ️ Session already active (wake word ignored)')
     
     # ═══════════════════════════════════════════════════════════════════
     # SESSION ACTIVATION (wake word)
@@ -405,6 +427,9 @@ class WakeWordNode(Node):
         if self.session_active:
             self.session_active = False
             
+            if self.oww_model:
+                self.oww_model.reset()
+                
             # Publish session state
             session_msg = Bool()
             session_msg.data = False
@@ -421,6 +446,10 @@ class WakeWordNode(Node):
         """Callback for ending the session externally."""
         if msg.data and self.session_active:
             self.session_active = False
+            
+            if self.oww_model:
+                self.oww_model.reset()
+                
             self.get_logger().info('🔴 Session ENDED externally')
             
             session_msg = Bool()
@@ -431,9 +460,39 @@ class WakeWordNode(Node):
         """Track the active conversation backend."""
         self.current_backend = (msg.data or '').strip() or 'legacy'
     
+    def env_callback(self, msg: String):
+        """Dynamically adjust wake-word thresholds based on acoustic environment."""
+        try:
+            data = json.loads(msg.data)
+            state = data.get('state', 'moderate')
+            
+            if state == 'quiet':
+                offset = -0.15
+            elif state == 'noisy':
+                offset = 0.15
+            else:
+                offset = 0.0
+                
+            # Apply to global threshold
+            self.threshold = max(0.1, min(0.99, self.base_global_threshold + offset))
+            
+            # Apply to each custom model threshold
+            for label, kw_cfg in self.keywords.items():
+                base = kw_cfg.get('base_threshold', self.base_global_threshold)
+                kw_cfg['threshold'] = max(0.1, min(0.99, base + offset))
+                
+            self.get_logger().info(
+                f'🎚️ [WakeWord] Dynamic threshold adjusted for {state.upper()} environment (offset: {offset:+.2f}). Global: {self.threshold:.2f}'
+            )
+            
+        except Exception as e:
+            self.get_logger().error(f'Error parsing acoustic environment in WakeWord: {e}')
+    
     def reset_session(self):
         """Reset the session to standby."""
         self.session_active = False
+        if self.oww_model:
+            self.oww_model.reset()
         self.get_logger().info('⏳ Standby')
 
 
