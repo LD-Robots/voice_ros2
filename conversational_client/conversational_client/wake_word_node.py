@@ -75,12 +75,18 @@ class WakeWordNode(Node):
         # Format: "path1:kind1,path2:kind2" (e.g., "/path/hello.onnx:wake,/path/goodbye.onnx:stop")
         self.declare_parameter('custom_models', '')
         
+        self.declare_parameter('quiet_threshold_offset', -0.15)
+        self.declare_parameter('noisy_threshold_offset', 0.15)
+        
         # Per-model thresholds (JSON-like format)
         # Format: "label1:threshold1,label2:threshold2"
         self.declare_parameter('model_thresholds', '')
         
         self.threshold = self.get_parameter('threshold').value
         self.base_global_threshold = self.threshold
+        self.quiet_offset = self.get_parameter('quiet_threshold_offset').value
+        self.noisy_offset = self.get_parameter('noisy_threshold_offset').value
+        
         self.sample_rate = self.get_parameter('sample_rate').value
         self.cooldown_ms = self.get_parameter('cooldown_ms').value
         custom_models_str = self.get_parameter('custom_models').value
@@ -467,9 +473,9 @@ class WakeWordNode(Node):
             state = data.get('state', 'moderate')
             
             if state == 'quiet':
-                offset = -0.15
+                offset = self.quiet_offset
             elif state == 'noisy':
-                offset = 0.15
+                offset = self.noisy_offset
             else:
                 offset = 0.0
                 
