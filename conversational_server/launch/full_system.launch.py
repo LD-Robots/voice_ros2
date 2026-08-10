@@ -122,10 +122,10 @@ def generate_launch_description():
         DeclareLaunchArgument('realtime_continued_turn_response_delay_ms', default_value='450', description='Delay before answering after the user resumes speaking'),
         DeclareLaunchArgument('realtime_local_fillers', default_value='false', description='Play locally cached filler audio to mask response latency'),
 
-        # Every node runs under `namespace` (default /voice). Node topic names are
-        # relative, so they resolve under this namespace too (e.g. /voice/transcription).
-        # The motion-team interfaces (/humanoid_command, /humanoid_motion, /cmd_vel and
-        # the behaviour services) stay absolute and are deliberately NOT namespaced.
+        # Every node runs under `namespace` (default /voice). ALL topic, action and
+        # service names are relative, so everything resolves under this namespace —
+        # including the motion-team interfaces (/voice/humanoid_command,
+        # /voice/humanoid_motion, /voice/cmd_vel and the behaviour services).
         GroupAction([
             PushRosNamespace(LaunchConfiguration('namespace')),
 

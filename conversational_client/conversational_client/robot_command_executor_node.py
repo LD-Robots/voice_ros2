@@ -40,11 +40,11 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('max_pending_commands', 20)
         self.declare_parameter('command_topic_enabled', True)
         self.declare_parameter('command_topic_only', False)
-        self.declare_parameter('approved_command_topic', '/humanoid_command')
+        self.declare_parameter('approved_command_topic', 'humanoid_command')
 
         self.declare_parameter('move_mode', 'twist')  # twist | topic
-        self.declare_parameter('cmd_vel_topic', '/cmd_vel')
-        self.declare_parameter('move_topic', '/robot_move_command')
+        self.declare_parameter('cmd_vel_topic', 'cmd_vel')
+        self.declare_parameter('move_topic', 'robot_move_command')
         self.declare_parameter('step_length_m', 0.25)
         self.declare_parameter('linear_speed_mps', 0.15)
         self.declare_parameter('angular_speed_rps', 0.80)
@@ -53,15 +53,15 @@ class RobotCommandExecutorNode(Node):
         self.declare_parameter('max_turn_duration_s', 12.0)
 
         self.declare_parameter('behavior_mode', 'topic')  # topic | service | action | both | all
-        self.declare_parameter('behavior_topic', '/robot_behavior_command')
-        self.declare_parameter('behavior_action_name', '/humanoid_motion')
+        self.declare_parameter('behavior_topic', 'robot_behavior_command')
+        self.declare_parameter('behavior_action_name', 'humanoid_motion')
         self.declare_parameter('behavior_action_timeout_s', 30.0)
-        self.declare_parameter('raise_hands_service', '/raise_hands')
-        self.declare_parameter('lower_hands_service', '/lower_hands')
-        self.declare_parameter('wave_service', '/wave')
-        self.declare_parameter('dance_service', '/dance')
-        self.declare_parameter('sit_service', '/sit')
-        self.declare_parameter('stand_service', '/stand')
+        self.declare_parameter('raise_hands_service', 'raise_hands')
+        self.declare_parameter('lower_hands_service', 'lower_hands')
+        self.declare_parameter('wave_service', 'wave')
+        self.declare_parameter('dance_service', 'dance')
+        self.declare_parameter('sit_service', 'sit')
+        self.declare_parameter('stand_service', 'stand')
         self.declare_parameter('service_timeout_s', 3.0)
 
         # Command-state handling

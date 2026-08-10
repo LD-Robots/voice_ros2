@@ -266,21 +266,22 @@
     # Everything below (move_mode/cmd_vel_topic/behavior_*/the six services) is
     # INERT while this is true — kept so direct driving can be re-enabled.
     command_topic_only: true
-    # Motion-team interfaces are ABSOLUTE on purpose: they live outside the
-    # /voice namespace so the motion stack sees them unprefixed.
-    approved_command_topic: "/humanoid_command"
+    # Motion-team interfaces are RELATIVE, so they resolve under the /voice
+    # namespace too (e.g. /voice/humanoid_command). The motion stack must
+    # subscribe with the prefix.
+    approved_command_topic: "humanoid_command"
     move_mode: "twist"
-    cmd_vel_topic: "/cmd_vel"
+    cmd_vel_topic: "cmd_vel"
     behavior_mode: "topic"
-    behavior_topic: "/robot_behavior_command"
-    behavior_action_name: "/humanoid_motion"
+    behavior_topic: "robot_behavior_command"
+    behavior_action_name: "humanoid_motion"
     behavior_action_timeout_s: 30.0
-    raise_hands_service: "/raise_hands"
-    lower_hands_service: "/lower_hands"
-    wave_service: "/wave"
-    dance_service: "/dance"
-    sit_service: "/sit"
-    stand_service: "/stand"
+    raise_hands_service: "raise_hands"
+    lower_hands_service: "lower_hands"
+    wave_service: "wave"
+    dance_service: "dance"
+    sit_service: "sit"
+    stand_service: "stand"
     preempt_on_new_command: true
     enable_voice_cancel: true
     # Risky-command confirmation is OFF: the spoken yes/no could not be received
