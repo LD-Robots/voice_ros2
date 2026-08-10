@@ -173,6 +173,8 @@
 /**/wake_word_node:
   ros__parameters:
     threshold: 0.5
+    quiet_threshold_offset: -0.15
+    noisy_threshold_offset: 0.15
     cooldown_ms: 1500
     # custom_models is injected by the launch file (package share models directory)
     model_thresholds: "hello_robot:0.30,goodbye_robot:0.40"
