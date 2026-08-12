@@ -93,6 +93,8 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('aggressiveness', 2)  # 0-3, 3 = more aggressive
+        self.declare_parameter('quiet_vad_aggressiveness', 1)   # More permissive in silence — catches whispers
+        self.declare_parameter('noisy_vad_aggressiveness', 3)   # More strict in noise — rejects non-speech
         self.declare_parameter('energy_threshold', 500)  # RMS energy threshold
         self.declare_parameter('wake_word_enabled', True)
         self.declare_parameter('session_timeout', 8.0)
@@ -104,6 +106,9 @@ class VADNode(Node):
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.aggressiveness = self.get_parameter('aggressiveness').value
+        self.base_aggressiveness = self.aggressiveness  # Preserved as the neutral/moderate baseline
+        self.quiet_vad_aggressiveness = max(0, min(3, int(self.get_parameter('quiet_vad_aggressiveness').value)))
+        self.noisy_vad_aggressiveness = max(0, min(3, int(self.get_parameter('noisy_vad_aggressiveness').value)))
         self.energy_threshold = self.get_parameter('energy_threshold').value
         self.base_energy_threshold = self.energy_threshold
         self.wake_word_enabled = self.get_parameter('wake_word_enabled').value
@@ -433,13 +438,35 @@ class VADNode(Node):
         try:
             data = json.loads(msg.data)
             state = data.get('state', 'moderate')
+
+            # ── Energy threshold adjustment (existing logic, unchanged) ──
             if state == 'quiet':
                 self.energy_threshold = self.base_energy_threshold * 0.5
             elif state == 'noisy':
                 self.energy_threshold = self.base_energy_threshold * 1.9
             else:
                 self.energy_threshold = self.base_energy_threshold
-            self.get_logger().debug(f'Adjusted VAD energy threshold to {self.energy_threshold:.1f} due to acoustic state: {state}')
+
+            # ── WebRTC VAD aggressiveness adjustment (new) ──
+            # Only applies when WebRTC VAD is active (not hardware VAD, not energy-only fallback)
+            if self.vad is not None:
+                if state == 'quiet':
+                    new_aggressiveness = self.quiet_vad_aggressiveness
+                elif state == 'noisy':
+                    new_aggressiveness = self.noisy_vad_aggressiveness
+                else:
+                    new_aggressiveness = self.base_aggressiveness
+
+                if new_aggressiveness != self.aggressiveness:
+                    self.vad.set_mode(new_aggressiveness)
+                    self.aggressiveness = new_aggressiveness
+                    self.get_logger().info(
+                        f'🎚️ [VAD] Aggressiveness adjusted for {state.upper()} environment: {new_aggressiveness}'
+                    )
+
+            self.get_logger().debug(
+                f'VAD env update: state={state}, energy_threshold={self.energy_threshold:.1f}, aggressiveness={self.aggressiveness}'
+            )
         except Exception as e:
             self.get_logger().error(f'Error parsing acoustic environment in VAD: {e}')
 
