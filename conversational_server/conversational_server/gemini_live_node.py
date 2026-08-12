@@ -159,6 +159,7 @@ class GeminiLiveNode(Node):
         self.declare_parameter("enable_local_fillers", False)
         self.declare_parameter("filler_chance", 0.70)
         self.declare_parameter("filler_volume", 0.80)
+        self.declare_parameter("filler_delay_ms", 400)
         # Empty means "resolve from the workspace" below; never point at a
         # developer's home directory.
         self.declare_parameter("fillers_dir", "")
@@ -223,6 +224,7 @@ class GeminiLiveNode(Node):
         self.enable_local_fillers = bool(self.get_parameter("enable_local_fillers").value)
         self.filler_chance = float(self.get_parameter("filler_chance").value)
         self.filler_volume = float(self.get_parameter("filler_volume").value)
+        self.filler_delay_ms = max(0, int(self.get_parameter("filler_delay_ms").value))
         self.fillers_dir = str(self.get_parameter("fillers_dir").value)
         # Unset, relative, or stale paths resolve against this workspace so the
         # feature works wherever the repo is checked out.
@@ -317,9 +319,11 @@ class GeminiLiveNode(Node):
         self._response_active = False
         self._response_create_pending = False
         self._user_speaking = False
+        self._user_just_finished_speaking = False
         self._ignore_model_response = False
         self._audio_chunks_sent = 0
         self._current_turn_audio_started = False
+        self._filler_timer = None
 
         # Audio
         self._last_playback_progress = {"stream_id": "", "item_id": "", "played_ms": 0, "stopped": False}
@@ -1039,6 +1043,7 @@ class GeminiLiveNode(Node):
 
         if not self._current_turn_audio_started:
             self._current_turn_audio_started = True
+            self._cancel_filler_timer()
             self._mark_response_active(self._active_turn_id)
             self.get_logger().debug("Gemini Live started audio output")
             # Audio a sosit — anulam timer-ul silent_turn daca era pornit
@@ -1078,6 +1083,10 @@ class GeminiLiveNode(Node):
 
         self._mark_response_inactive(turn_id)
         self._current_turn_audio_started = False
+        self._user_speaking = False
+        self._user_just_finished_speaking = False
+        self._user_audio_frames_sent = 0
+        self._cancel_filler_timer()
         self._last_response_request_item_id = ""
         self._assistant_name_question_active = False
         self._last_accepted_user_transcript_norm = ""
@@ -2012,47 +2021,78 @@ class GeminiLiveNode(Node):
                 except Exception as e:
                     self.get_logger().error(f"Error loading filler {fname}: {e}")
 
+    def _cancel_filler_timer(self):
+        if self._filler_timer is not None:
+            try:
+                self._filler_timer.cancel()
+                self.destroy_timer(self._filler_timer)
+            except Exception:
+                pass
+            self._filler_timer = None
+
+    def _execute_delayed_filler(self):
+        timer_had_finished_speaking = self._user_just_finished_speaking
+        self._cancel_filler_timer()
+        if not self.session_active or self.current_backend != "gemini_live":
+            return
+        if not self.enable_local_fillers:
+            return
+
+        if (not self.robot_speaking and 
+                not self._current_turn_audio_started and 
+                timer_had_finished_speaking):
+            
+            self._user_audio_frames_sent = 0
+            
+            import random
+            lang = self.language_tracker.current_language or 'ro'
+            if lang not in self.fillers_cache or not self.fillers_cache[lang]:
+                lang = 'ro'
+                
+            cache_list = self.fillers_cache.get(lang, [])
+            if cache_list:
+                if random.random() < self.filler_chance:
+                    filler = random.choice(cache_list)
+                    try:
+                        pcm = (filler['pcm'].astype(np.float32) * self.filler_volume).astype(np.int16)
+                        
+                        out = Audio()
+                        out.sample_rate = filler['rate']
+                        out.channels = filler['channels']
+                        out.data = pcm.tolist()
+                        out.stream_id = self._active_turn_id + "_filler"
+                        out.item_id = "local_filler"
+                        self.audio_pub.publish(out)
+                        self.get_logger().info(f"🎙️ Playing local filler: {filler['name']} ({lang.upper()}) [delayed {self.filler_delay_ms}ms]")
+                    except Exception as e:
+                        self.get_logger().error(f"Error playing local filler: {e}")
+
     def vad_callback(self, msg: Bool):
         if not self.session_active or self.current_backend != "gemini_live":
             return
         if not self.enable_local_fillers:
             return
 
-        # Trigger on VAD transition to False (user stopped speaking)
+        if msg.data:
+            if self._user_audio_frames_sent >= 3:
+                self._user_speaking = True
+                self._user_just_finished_speaking = False
+                self._cancel_filler_timer()
+            return
+
+        # Trigger ONLY on VAD transition to False after user has finished speaking an actual question
         if not msg.data:
-            # Check conditions for playing filler:
-            # 1. Robot is not currently speaking or about to speak
-            # 2. We haven't started playing the response yet
-            # 3. User actually spoke (to filter out noise spikes, we require at least 15 frames)
-            if (not self.robot_speaking and 
-                    not self._current_turn_audio_started and 
-                    self._user_audio_frames_sent >= 15):
-                
-                import random
-                lang = self.language_tracker.current_language or 'ro'
-                if lang not in self.fillers_cache or not self.fillers_cache[lang]:
-                    lang = 'ro'
-                    
-                cache_list = self.fillers_cache.get(lang, [])
-                if cache_list:
-                    if random.random() < self.filler_chance:
-                        filler = random.choice(cache_list)
-                        try:
-                            # Scale volume
-                            pcm = (filler['pcm'].astype(np.float32) * self.filler_volume).astype(np.int16)
-                            
-                            out = Audio()
-                            out.sample_rate = filler['rate']
-                            out.channels = filler['channels']
-                            out.data = pcm.tolist()
-                            # Use turn_id + "_filler" to force audio_playback_node to interrupt it
-                            # if the real response arrives immediately.
-                            out.stream_id = self._active_turn_id + "_filler"
-                            out.item_id = "local_filler"
-                            self.audio_pub.publish(out)
-                            self.get_logger().info(f"🎙️ Playing local filler: {filler['name']} ({lang.upper()})")
-                        except Exception as e:
-                            self.get_logger().error(f"Error playing local filler: {e}")
+            if self._user_speaking:
+                self._user_speaking = False
+                self._user_just_finished_speaking = True
+                if (not self.robot_speaking and 
+                        not self._current_turn_audio_started and 
+                        self._filler_timer is None):
+                    delay_sec = self.filler_delay_ms / 1000.0
+                    if delay_sec <= 0:
+                        self._execute_delayed_filler()
+                    else:
+                        self._filler_timer = self.create_timer(delay_sec, self._execute_delayed_filler)
 
 
 def main(args=None):
