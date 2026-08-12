@@ -163,6 +163,7 @@ class GeminiLiveNode(Node):
         # Empty means "resolve from the workspace" below; never point at a
         # developer's home directory.
         self.declare_parameter("fillers_dir", "")
+        self.declare_parameter("greeting_repeat_window_s", 600.0)
         self.declare_parameter(
             "instructions",
             str(load_prompt_defaults().get("realtime_instructions", "")),
@@ -225,6 +226,7 @@ class GeminiLiveNode(Node):
         self.filler_chance = float(self.get_parameter("filler_chance").value)
         self.filler_volume = float(self.get_parameter("filler_volume").value)
         self.filler_delay_ms = max(0, int(self.get_parameter("filler_delay_ms").value))
+        self.greeting_repeat_window_s = float(self.get_parameter("greeting_repeat_window_s").value)
         self.fillers_dir = str(self.get_parameter("fillers_dir").value)
         # Unset, relative, or stale paths resolve against this workspace so the
         # feature works wherever the repo is checked out.
@@ -324,6 +326,7 @@ class GeminiLiveNode(Node):
         self._audio_chunks_sent = 0
         self._current_turn_audio_started = False
         self._filler_timer = None
+        self._last_greeting_at = 0.0
 
         # Audio
         self._last_playback_progress = {"stream_id": "", "item_id": "", "played_ms": 0, "stopped": False}
@@ -448,32 +451,49 @@ class GeminiLiveNode(Node):
         # Only act on the hello wake word, not barge-in or stop models
         if "hello" not in word and "wake" not in word:
             return
-        self.get_logger().info(f"Gemini: wake word '{word}' detected — injecting greeting")
-        # Lock DOA direction to the wake word source
-        if self.doa_enabled and self.latest_doa_angle != -1:
-            self.focused_doa_angle = self.latest_doa_angle
-            self.doa_history = [self.focused_doa_angle]
-            self.get_logger().info(
-                f'Locking focused DOA angle to wake word direction: '
-                f'{self.focused_doa_angle}°'
-            )
-        # Inject a user turn to trigger a greeting. Use a concise prompt that
-        # prevents Gemini from opening with a repetitive "Hello! Hello there!" —
-        # the phrase "in exactly one sentence" and "do not repeat the greeting
-        # word" keeps the response brief and non-redundant.
+        now_time = time.monotonic()
+        reengaged = (self._last_greeting_at > 0.0 and 
+                     (now_time - self._last_greeting_at) < self.greeting_repeat_window_s)
         pref_name = self._voice_correlated_preferred_name()
-        if pref_name:
-            greeting_text = (
-                f"[System: The user '{pref_name}' just activated the wake word. "
-                f"Greet them by name in exactly one short sentence. "
-                f"Do not repeat the greeting word. Then wait for their request.]"
+
+        if reengaged:
+            self.get_logger().info(
+                f"Gemini: wake word '{word}' re-engaged within {self.greeting_repeat_window_s:.0f}s — suppressing repetitive greeting"
             )
+            if pref_name:
+                greeting_text = (
+                    f"[System: The user '{pref_name}' re-engaged. "
+                    f"Skip the formal greeting — they were just here. Continue naturally in one short phrase (e.g. 'Yes, {pref_name}?' or 'I'm listening') and wait for their request.]"
+                )
+            else:
+                greeting_text = (
+                    "[System: The user re-engaged. "
+                    "Skip the formal greeting — they were just here. Continue naturally in one short phrase (e.g. 'Yes?' or 'I'm listening') and wait for their request.]"
+                )
         else:
-            greeting_text = (
-                "[System: The user just activated the wake word. "
-                "Greet them in exactly one short sentence. "
-                "Do not repeat the greeting word. Then wait for their request.]"
-            )
+            self._last_greeting_at = now_time
+            import datetime
+            now_hour = datetime.datetime.now().hour
+            if 5 <= now_hour < 12:
+                time_of_day = "morning"
+            elif 12 <= now_hour < 18:
+                time_of_day = "afternoon"
+            else:
+                time_of_day = "evening"
+
+            self.get_logger().info(f"Gemini: wake word '{word}' detected — injecting {time_of_day} greeting")
+            if pref_name:
+                greeting_text = (
+                    f"[System: The user '{pref_name}' just activated the wake word. "
+                    f"It is currently {time_of_day}. Greet them by name appropriately in exactly one short sentence. "
+                    f"Do not repeat the greeting word. Then wait for their request.]"
+                )
+            else:
+                greeting_text = (
+                    f"[System: The user just activated the wake word. "
+                    f"It is currently {time_of_day}. Greet them appropriately in exactly one short sentence. "
+                    f"Do not repeat the greeting word. Then wait for their request.]"
+                )
         self._send_raw({
             "clientContent": {
                 "turns": [{"role": "user", "parts": [{"text": greeting_text}]}],

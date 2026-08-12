@@ -47,6 +47,7 @@
     filler_volume: 0.80
     filler_delay_ms: 400
     fillers_dir: "voices/fillers"
+    greeting_repeat_window_s: 600
     vad_prefix_padding_ms: 300
     vad_silence_duration_ms: 700
     response_create_delay_ms: 100
