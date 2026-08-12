@@ -96,7 +96,9 @@
     min_silence_frames: 14
     use_hardware_vad: false
     energy_threshold: 150
-    aggressiveness: 3
+    aggressiveness: 3           # Baseline (moderate env)
+    quiet_vad_aggressiveness: 1 # Permissive: catches whispers in silence
+    noisy_vad_aggressiveness: 3 # Strict: filters noise spikes in noisy env
 
 /**/audio_segment_node:
   ros__parameters:
