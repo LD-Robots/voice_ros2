@@ -37,7 +37,6 @@ setup(
             'wake_word_node = conversational_client.wake_word_node:main',
             'vad_node = conversational_client.vad_node:main',
             'barge_in_node = conversational_client.barge_in_node:main',
-            'stop_keyword_node = conversational_client.stop_keyword_node:main',
             'speaker_id_node = conversational_client.speaker_id_node:main',
             'session_manager_node = conversational_client.session_manager_node:main',
             'voice_command_node = conversational_client.voice_command_node:main',

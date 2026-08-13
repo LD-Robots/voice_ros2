@@ -49,9 +49,7 @@ def generate_launch_description():
     custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
     
     model_thresholds = "hello_robot:0.10,stop_robot:0.70,goodbye_robot:0.50"
-    stop_keyword_path = os.path.join(voices_dir, 'stop_keyword.onnx')
-    if not os.path.exists(stop_keyword_path):
-        stop_keyword_path = os.path.join(models_dir, 'stop_keyword.onnx')
+
     enrollment_dir = os.path.join(voices_dir, 'enrollment')
 
     return LaunchDescription([
@@ -110,34 +108,9 @@ def generate_launch_description():
             description='Consecutive non-speech audio frames required before local VAD ends the user turn'
         ),
         DeclareLaunchArgument(
-            'stop_keyword_prob_threshold',
-            default_value='0.80',
-            description='Minimum stop-keyword probability required to interrupt TTS'
-        ),
-        DeclareLaunchArgument(
-            'stop_keyword_logit_margin',
-            default_value='0.5',
-            description='Minimum stop-vs-other logit margin required to interrupt TTS'
-        ),
-        DeclareLaunchArgument(
-            'stop_keyword_hits_required',
-            default_value='1',
-            description='Consecutive stop-keyword detections required before interrupting TTS'
-        ),
-        DeclareLaunchArgument(
-            'stop_keyword_requires_voice_signature',
-            default_value='false',
-            description='Require the microphone audio to look like real human speech before accepting a stop-keyword hit'
-        ),
-        DeclareLaunchArgument(
             'barge_in_voice_enabled',
             default_value='true',
             description='Enable voice-based barge-in'
-        ),
-        DeclareLaunchArgument(
-            'barge_in_stop_enabled',
-            default_value='true',
-            description='Enable stop-keyword based barge-in'
         ),
         DeclareLaunchArgument('namespace', default_value='voice', description='ROS namespace for all nodes (default voice)'),
 
@@ -203,7 +176,7 @@ def generate_launch_description():
             }]
         ),
         
-        # Barge-in (voice detection + PyTorch stop keyword)
+        # Barge-in (voice detection)
         Node(
             package='conversational_client',
             executable='barge_in_node',
@@ -211,21 +184,9 @@ def generate_launch_description():
             output='screen',
             arguments=['--ros-args', '--log-level', 'barge_in_node:=DEBUG'],
             parameters=[{
-                # Voice barge-in DISABLED – Gemini Live has its own server-side VAD
-                # that handles interruptions natively (sends "interrupted" event).
-                # barge_in_node stays active only for the PyTorch stop-keyword detector.
-                'voice_enabled': False,
+                'voice_enabled': LaunchConfiguration('barge_in_voice_enabled'),
                 'min_voice_ms': 400,
                 'leak_margin_db': 12.0,
-                # PyTorch stop keyword detector
-                'stop_enabled': LaunchConfiguration('barge_in_stop_enabled'),
-                'stop_model_path': stop_keyword_path,
-                'stop_prob_threshold': LaunchConfiguration('stop_keyword_prob_threshold'),
-                'stop_logit_margin': LaunchConfiguration('stop_keyword_logit_margin'),
-                'stop_hits_required': LaunchConfiguration('stop_keyword_hits_required'),
-                'stop_frame_samples': 16000,  # Frame = 1s (imposed by model!)
-                'stop_hop_samples': 4000,     # Hop = 0.25s = check every 250ms
-                'stop_requires_voice_signature': LaunchConfiguration('stop_keyword_requires_voice_signature'),
             }]
         ),
         

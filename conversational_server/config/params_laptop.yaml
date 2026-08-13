@@ -123,10 +123,6 @@
     min_state_dwell_s: 10.0     # Minimum seconds to stay in a state before allowing a transition
 /**/barge_in_node:
   ros__parameters:
-    stop_enabled: false
-    stop_prob_threshold: 0.80
-    stop_logit_margin: 0.5
-    stop_hits_required: 2
     voice_enabled: true
     min_voice_ms: 300          # Reduced from 600ms: faster barge-in trigger (300ms = 15 frames)
     min_rms_dbfs: -28.0        # Synchronized with gemini_live_node (-28.0 dBFS) for uniform barge-in sensitivity

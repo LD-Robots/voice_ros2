@@ -27,13 +27,7 @@ import numpy as np
 import time
 import os
 
-# PyTorch-based stop keyword detector
-try:
-    from .stop_keyword_detector import StopKeywordDetector
-    STOP_DETECTOR_AVAILABLE = True
-except ImportError as e:
-    STOP_DETECTOR_AVAILABLE = False
-    _STOP_DETECTOR_ERROR = str(e)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # HELPER FUNCTIONS
@@ -123,15 +117,7 @@ class BargeInNode(Node):
         self.declare_parameter('leak_margin_db', 3.0)    # Margin above echo
         self.declare_parameter('leak_decay_ms', 1200)    # How long until baseline expires
         
-        # Stop keyword detector (PyTorch)
-        self.declare_parameter('stop_model_path', '')
-        self.declare_parameter('stop_enabled', True)
-        self.declare_parameter('stop_prob_threshold', 0.8)
-        self.declare_parameter('stop_logit_margin', 0.5)
-        self.declare_parameter('stop_hits_required', 2)
-        self.declare_parameter('stop_frame_samples', 16000)  # Frame size in samples
-        self.declare_parameter('stop_hop_samples', 8000)     # Hop size in samples
-        self.declare_parameter('stop_requires_voice_signature', True)
+
         
         self.declare_parameter('voice_enabled', True)
         self.sr = self.get_parameter('sample_rate').value
@@ -165,34 +151,7 @@ class BargeInNode(Node):
         self.leak_baseline_dbfs = None
         self.last_leak_update_ms = 0
         
-        # Initialize PyTorch stop keyword detector
-        self.stop_detector = None
-        stop_model_path = self.get_parameter('stop_model_path').value
-        stop_enabled = self.get_parameter('stop_enabled').value
-        self.stop_requires_voice_signature = bool(
-            self.get_parameter('stop_requires_voice_signature').value
-        )
-        
-        if stop_enabled and STOP_DETECTOR_AVAILABLE and stop_model_path and os.path.exists(stop_model_path):
-            try:
-                stop_cfg = {
-                    'model_path': stop_model_path,
-                    'prob_threshold': self.get_parameter('stop_prob_threshold').value,
-                    'logit_margin': self.get_parameter('stop_logit_margin').value,
-                    'hits_required': self.get_parameter('stop_hits_required').value,
-                    'frame_samples': self.get_parameter('stop_frame_samples').value,
-                    'hop_samples': self.get_parameter('stop_hop_samples').value,
-                    'debug': True,  # Always show scores for debugging
-                }
-                self.stop_detector = StopKeywordDetector(stop_cfg, self.sr, self.get_logger())
-                self.get_logger().info(f'🛑 PyTorch Stop Detector ENABLED: {os.path.basename(stop_model_path)}')
-            except Exception as e:
-                self.get_logger().warning(f'⚠️ Stop detector init failed: {e}')
-                self.stop_detector = None
-        elif stop_enabled and not STOP_DETECTOR_AVAILABLE:
-            self.get_logger().warning(f'⚠️ Stop detector unavailable: {_STOP_DETECTOR_ERROR}')
-        elif stop_enabled and stop_model_path and not os.path.exists(stop_model_path):
-            self.get_logger().warning(f'⚠️ Stop model not found: {stop_model_path}')
+
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBERS
@@ -244,12 +203,8 @@ class BargeInNode(Node):
             self.tts_started_ms = int(time.time() * 1000)
             self.leak_baseline_dbfs = None
             self.last_voice_ms = 0
-            if self.stop_detector:
-                self.stop_detector.reset()
         elif not msg.data and was_speaking:
             self.last_voice_ms = 0
-            if self.stop_detector:
-                self.stop_detector.reset()
     
     def audio_callback(self, msg: Audio):
         """Process audio for stop keyword detection."""
@@ -271,24 +226,7 @@ class BargeInNode(Node):
         pcm = np.array(msg.data, dtype=np.int16)
         has_voice_signature = self._is_human_voice(pcm, now_ms)
         
-        # ══════════════════════════════════════════════════════════
-        # STOP KEYWORD DETECTOR (only when TTS is speaking)
-        # ══════════════════════════════════════════════════════════
-        if self.stop_detector:
-            try:
-                stop_result = self.stop_detector.process_block(pcm)
-                if stop_result:
-                    if self.stop_requires_voice_signature and not has_voice_signature:
-                        self.get_logger().debug(
-                            'Ignoring stop keyword hit without strong human-voice signature'
-                        )
-                        return
-                    self.get_logger().info(
-                        f'🛑 STOP KEYWORD detected (p={stop_result.probability:.2f}) - Barge-in!'
-                    )
-                    self._trigger_barge_in()
-            except Exception as e:
-                self.get_logger().warning(f'Stop detector error: {e}')
+
         
         # ══════════════════════════════════════════════════════════
         # HUMAN VOICE (standard barge-in)
@@ -379,8 +317,7 @@ class BargeInNode(Node):
         self.last_trigger_ms = now_ms
         self.voiced_ms = 0
         self.last_voice_ms = 0
-        if self.stop_detector:
-            self.stop_detector.reset()
+
         
         self.get_logger().debug('_trigger_barge_in called')
         

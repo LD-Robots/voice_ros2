@@ -48,9 +48,7 @@ def generate_launch_description():
     aec_ref_wav     = os.path.join(ws_root_str, 'gemini_aec_reference.wav')
     aec_clean_wav   = os.path.join(ws_root_str, 'gemini_aec_cleaned.wav')
     
-    stop_model_path = os.path.join(voices_dir, 'stop_keyword.onnx')
-    if not os.path.exists(stop_model_path):
-        stop_model_path = os.path.join(models_dir, 'stop_keyword.onnx')
+
     
     enrollment_dir = os.path.join(voices_dir, 'enrollment')
     hello_model_path = os.path.join(models_dir, 'hello_robot.onnx')
@@ -76,7 +74,6 @@ def generate_launch_description():
         DeclareLaunchArgument('conversation_backend', default_value='gemini_live', description='Backend (legacy/gemini_live)'),
         DeclareLaunchArgument('asr_model_size', default_value='medium', description='ASR model size override'),
         DeclareLaunchArgument('audio_device_index', default_value='-1', description='Audio capture device index (-1 = OS default via Pipewire/Pulse)'),
-        DeclareLaunchArgument('stop_enabled', default_value='false', description='PyTorch stop override'),
         DeclareLaunchArgument('namespace', default_value='voice', description='ROS namespace for all nodes (default voice)'),
 
         # Every node runs under `namespace` (default /voice). Node topic names are
@@ -167,10 +164,7 @@ def generate_launch_description():
             executable='barge_in_node',
             name='barge_in_node',
             condition=IfCondition(non_gemini_backend),
-            parameters=[config_file_path, {
-                'stop_model_path': stop_model_path,
-                'stop_enabled': LaunchConfiguration('stop_enabled')
-            }]
+            parameters=[config_file_path]
         ),
 
         Node(
