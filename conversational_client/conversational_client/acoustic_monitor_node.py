@@ -21,11 +21,15 @@ class AcousticMonitorNode(Node):
         self.declare_parameter('quiet_noise_threshold_dbfs', -48.0)
         self.declare_parameter('noisy_noise_threshold_dbfs', -35.0)
         self.declare_parameter('enable_respeaker_tuning', True)
+        self.declare_parameter('state_hysteresis_db', 2.0)
+        self.declare_parameter('min_state_dwell_s', 10.0)
 
         self.interval = self.get_parameter('monitoring_interval_s').value
         self.quiet_thresh = self.get_parameter('quiet_noise_threshold_dbfs').value
         self.noisy_thresh = self.get_parameter('noisy_noise_threshold_dbfs').value
         self.enable_hw_tuning = self.get_parameter('enable_respeaker_tuning').value
+        self.state_hysteresis_db = float(self.get_parameter('state_hysteresis_db').value)
+        self.min_state_dwell_s = float(self.get_parameter('min_state_dwell_s').value)
 
         # State tracking
         self.voice_active = False
@@ -34,6 +38,7 @@ class AcousticMonitorNode(Node):
         self.lock = threading.Lock()
         self.current_state = 'moderate'
         self.latest_rt60 = 0.0
+        self._last_state_change_time = 0.0  # timestamp of last state transition
 
         # Publishers / Subscribers
         self.env_pub = self.create_publisher(String, 'acoustic_environment', 10)
@@ -110,15 +115,55 @@ class AcousticMonitorNode(Node):
         if avg_noise is None:
             return
 
-        # Determine Environment state
+        # Determine raw candidate state from noise floor
         if avg_noise <= self.quiet_thresh:
-            state = 'quiet'
+            candidate = 'quiet'
         elif avg_noise >= self.noisy_thresh:
-            state = 'noisy'
+            candidate = 'noisy'
         else:
-            state = 'moderate'
+            candidate = 'moderate'
 
         rt60 = self.latest_rt60
+        now = time.monotonic()
+
+        # ── Hysteresis guard ────────────────────────────────────────────────────
+        # Only allow a state transition if:
+        #   1. The candidate differs from the current state
+        #   2. The noise measurement is far enough past the threshold (hysteresis)
+        #   3. Enough dwell time has elapsed since the last transition
+        state = self.current_state  # default: stay in current state
+        if candidate != self.current_state:
+            dwell_ok = (now - self._last_state_change_time) >= self.min_state_dwell_s
+            if dwell_ok:
+                # Check hysteresis: noise must exceed the boundary by at least state_hysteresis_db
+                if candidate == 'quiet':
+                    # Requires noise to be at least hysteresis_db below the quiet threshold
+                    hysteresis_ok = avg_noise <= (self.quiet_thresh - self.state_hysteresis_db)
+                elif candidate == 'noisy':
+                    # Requires noise to be at least hysteresis_db above the noisy threshold
+                    hysteresis_ok = avg_noise >= (self.noisy_thresh + self.state_hysteresis_db)
+                else:  # candidate == 'moderate'
+                    # Coming from quiet: must be above quiet_thresh + hysteresis
+                    # Coming from noisy: must be below noisy_thresh - hysteresis
+                    if self.current_state == 'quiet':
+                        hysteresis_ok = avg_noise > (self.quiet_thresh + self.state_hysteresis_db)
+                    else:
+                        hysteresis_ok = avg_noise < (self.noisy_thresh - self.state_hysteresis_db)
+
+                if hysteresis_ok:
+                    state = candidate
+                else:
+                    self.get_logger().debug(
+                        f'🛡️ Hysteresis blocked transition {self.current_state}→{candidate} '
+                        f'(noise={avg_noise:.1f} dBFS, margin={self.state_hysteresis_db:.1f} dB)'
+                    )
+            else:
+                remaining = self.min_state_dwell_s - (now - self._last_state_change_time)
+                self.get_logger().debug(
+                    f'⏳ Dwell guard blocked transition {self.current_state}→{candidate} '
+                    f'({remaining:.1f}s remaining)'
+                )
+        # ────────────────────────────────────────────────────────────────────────
 
         # Apply dynamic hardware noise suppression tuning via service
         if self.enable_hw_tuning and state != self.current_state:
@@ -141,8 +186,12 @@ class AcousticMonitorNode(Node):
 
         # Log state transitions
         if state != self.current_state:
-            self.get_logger().info(f'🔊 Acoustic state changed: {self.current_state} ➡️ {state} (Noise: {avg_noise:.1f} dBFS, RT60: {rt60:.2f}s)')
+            self.get_logger().info(
+                f'🔊 Acoustic state changed: {self.current_state} ➡️ {state} '
+                f'(Noise: {avg_noise:.1f} dBFS, RT60: {rt60:.2f}s)'
+            )
             self.current_state = state
+            self._last_state_change_time = now
 
         # Publish environment info
         env_msg = String()

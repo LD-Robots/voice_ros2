@@ -156,10 +156,10 @@ class GeminiLiveNode(Node):
         # Let Gemini decide (via function-calling) when the current speaker
         # introduces their own name, instead of relying on static regex phrases.
         self.declare_parameter("name_capture_tool_enabled", True)
-        self.declare_parameter("enable_local_fillers", False)
-        self.declare_parameter("filler_chance", 0.70)
+        # Gemini-controlled fillers: Gemini decides via play_thinking_sound tool call.
+        # filler_volume and fillers_dir are still used to load the audio clips.
+        self.declare_parameter("gemini_fillers_enabled", True)
         self.declare_parameter("filler_volume", 0.80)
-        self.declare_parameter("filler_delay_ms", 400)
         # Empty means "resolve from the workspace" below; never point at a
         # developer's home directory.
         self.declare_parameter("fillers_dir", "")
@@ -222,10 +222,8 @@ class GeminiLiveNode(Node):
             self.get_parameter('doa_focus_margin').value
         )
         self.name_capture_tool_enabled = bool(self.get_parameter("name_capture_tool_enabled").value)
-        self.enable_local_fillers = bool(self.get_parameter("enable_local_fillers").value)
-        self.filler_chance = float(self.get_parameter("filler_chance").value)
+        self.gemini_fillers_enabled = bool(self.get_parameter("gemini_fillers_enabled").value)
         self.filler_volume = float(self.get_parameter("filler_volume").value)
-        self.filler_delay_ms = max(0, int(self.get_parameter("filler_delay_ms").value))
         self.greeting_repeat_window_s = float(self.get_parameter("greeting_repeat_window_s").value)
         self.fillers_dir = str(self.get_parameter("fillers_dir").value)
         # Unset, relative, or stale paths resolve against this workspace so the
@@ -236,7 +234,7 @@ class GeminiLiveNode(Node):
                 self.fillers_dir = str(_fillers)
         self.fillers_cache = {'ro': [], 'en': []}
         self._user_audio_frames_sent = 0
-        if self.enable_local_fillers:
+        if self.gemini_fillers_enabled:
             self._precache_fillers()
 
         self.base_instructions = str(self.get_parameter("instructions").value)
@@ -321,11 +319,9 @@ class GeminiLiveNode(Node):
         self._response_active = False
         self._response_create_pending = False
         self._user_speaking = False
-        self._user_just_finished_speaking = False
         self._ignore_model_response = False
         self._audio_chunks_sent = 0
         self._current_turn_audio_started = False
-        self._filler_timer = None
         self._last_greeting_at = 0.0
 
         # Audio
@@ -915,6 +911,17 @@ class GeminiLiveNode(Node):
                         'name': name,
                         'response': {'status': 'ok', 'emotion_recorded': emotion_res}
                     })
+                elif name == 'play_thinking_sound':
+                    # Gemini decided it needs thinking time — play a local filler clip
+                    lang = str(args.get('language', 'ro')).lower()
+                    if lang not in ('ro', 'en'):
+                        lang = 'ro'
+                    self._play_gemini_filler(lang)
+                    responses.append({
+                        'id': call_id,
+                        'name': name,
+                        'response': {'status': 'ok'}
+                    })
                 else:
                     responses.append({
                         'id': call_id,
@@ -1063,10 +1070,9 @@ class GeminiLiveNode(Node):
 
         if not self._current_turn_audio_started:
             self._current_turn_audio_started = True
-            self._cancel_filler_timer()
             self._mark_response_active(self._active_turn_id)
             self.get_logger().debug("Gemini Live started audio output")
-            # Audio a sosit — anulam timer-ul silent_turn daca era pornit
+            # Audio arrived — cancel silent_turn timer if it was running
             if self._silent_turn_timer is not None:
                 self._silent_turn_timer.cancel()
                 self._silent_turn_timer = None
@@ -1104,9 +1110,7 @@ class GeminiLiveNode(Node):
         self._mark_response_inactive(turn_id)
         self._current_turn_audio_started = False
         self._user_speaking = False
-        self._user_just_finished_speaking = False
         self._user_audio_frames_sent = 0
-        self._cancel_filler_timer()
         self._last_response_request_item_id = ""
         self._assistant_name_question_active = False
         self._last_accepted_user_transcript_norm = ""
@@ -1464,6 +1468,35 @@ class GeminiLiveNode(Node):
             ]
         })
 
+        # Register play_thinking_sound tool (Gemini-controlled fillers)
+        # Only registered when the feature is enabled so Gemini never sees
+        # the option if fillers are disabled via config.
+        if self.gemini_fillers_enabled:
+            tools.append({
+                'functionDeclarations': [
+                    {
+                        'name': 'play_thinking_sound',
+                        'description': (
+                            'Play a brief thinking/filler sound (e.g. "hmm", "let me see") '
+                            'while you formulate your response. Use ONLY for genuinely complex '
+                            'questions that require reflection. Do NOT use for greetings, '
+                            'session start, simple yes/no answers, or short conversational exchanges.'
+                        ),
+                        'parameters': {
+                            'type': 'OBJECT',
+                            'properties': {
+                                'language': {
+                                    'type': 'STRING',
+                                    'description': 'Language of the filler sound: "ro" for Romanian, "en" for English',
+                                    'enum': ['ro', 'en']
+                                }
+                            },
+                            'required': ['language']
+                        }
+                    }
+                ]
+            })
+
         setup_payload: dict = {
             "model": f"models/{self.model}",
             "generationConfig": {
@@ -1584,6 +1617,16 @@ class GeminiLiveNode(Node):
                 extras.append(f'Approximate remaining part of the interrupted reply: "{self._pending_resume_remaining}"')
             else:
                 extras.append(f'Interrupted reply to continue: "{self._pending_resume_text}"')
+        # Filler tool instructions: only injected when the feature is enabled
+        if self.gemini_fillers_enabled:
+            extras.append(
+                'You have a play_thinking_sound tool. Call it with the correct language '
+                '("ro" for Romanian, "en" for English) ONLY when you genuinely need a moment '
+                'to think before answering a complex or reflective question. '
+                'Do NOT call it for greetings, session start, simple factual answers, '
+                'confirmations, or short exchanges. Use it sparingly — it should feel '
+                'natural and rare, not automatic.'
+            )
         return " ".join([self.base_instructions, *extras]).strip()
 
     # ─── Response scheduling ──────────────────────────────────────────────────
@@ -2030,7 +2073,6 @@ class GeminiLiveNode(Node):
                         n_frames = w.getnframes()
                         data = w.readframes(n_frames)
                         pcm = np.frombuffer(data, dtype=np.int16)
-
                         self.fillers_cache[lang].append({
                             'name': fname,
                             'pcm': pcm,
@@ -2041,78 +2083,39 @@ class GeminiLiveNode(Node):
                 except Exception as e:
                     self.get_logger().error(f"Error loading filler {fname}: {e}")
 
-    def _cancel_filler_timer(self):
-        if self._filler_timer is not None:
-            try:
-                self._filler_timer.cancel()
-                self.destroy_timer(self._filler_timer)
-            except Exception:
-                pass
-            self._filler_timer = None
-
-    def _execute_delayed_filler(self):
-        timer_had_finished_speaking = self._user_just_finished_speaking
-        self._cancel_filler_timer()
-        if not self.session_active or self.current_backend != "gemini_live":
+    def _play_gemini_filler(self, lang: str):
+        """Play a random filler audio clip requested by Gemini via tool call."""
+        import random
+        cache_list = self.fillers_cache.get(lang) or self.fillers_cache.get('ro', [])
+        if not cache_list:
+            self.get_logger().warn(f'No filler audio cached for language: {lang}')
             return
-        if not self.enable_local_fillers:
-            return
-
-        if (not self.robot_speaking and 
-                not self._current_turn_audio_started and 
-                timer_had_finished_speaking):
-            
-            self._user_audio_frames_sent = 0
-            
-            import random
-            lang = self.language_tracker.current_language or 'ro'
-            if lang not in self.fillers_cache or not self.fillers_cache[lang]:
-                lang = 'ro'
-                
-            cache_list = self.fillers_cache.get(lang, [])
-            if cache_list:
-                if random.random() < self.filler_chance:
-                    filler = random.choice(cache_list)
-                    try:
-                        pcm = (filler['pcm'].astype(np.float32) * self.filler_volume).astype(np.int16)
-                        
-                        out = Audio()
-                        out.sample_rate = filler['rate']
-                        out.channels = filler['channels']
-                        out.data = pcm.tolist()
-                        out.stream_id = self._active_turn_id + "_filler"
-                        out.item_id = "local_filler"
-                        self.audio_pub.publish(out)
-                        self.get_logger().info(f"🎙️ Playing local filler: {filler['name']} ({lang.upper()}) [delayed {self.filler_delay_ms}ms]")
-                    except Exception as e:
-                        self.get_logger().error(f"Error playing local filler: {e}")
+        filler = random.choice(cache_list)
+        try:
+            pcm = (filler['pcm'].astype(np.float32) * self.filler_volume).astype(np.int16)
+            out = Audio()
+            out.sample_rate = filler['rate']
+            out.channels = filler['channels']
+            out.data = pcm.tolist()
+            out.stream_id = self._active_turn_id + '_filler'
+            out.item_id = 'local_filler'
+            self.audio_pub.publish(out)
+            self.get_logger().info(
+                f'🎙️ Playing Gemini-requested filler: {filler["name"]} ({lang.upper()})'
+            )
+        except Exception as e:
+            self.get_logger().error(f'Error playing Gemini filler: {e}')
 
     def vad_callback(self, msg: Bool):
-        if not self.session_active or self.current_backend != "gemini_live":
+        """Track user speaking state for internal gating logic."""
+        if not self.session_active or self.current_backend != 'gemini_live':
             return
-        if not self.enable_local_fillers:
-            return
-
         if msg.data:
             if self._user_audio_frames_sent >= 3:
                 self._user_speaking = True
-                self._user_just_finished_speaking = False
-                self._cancel_filler_timer()
-            return
-
-        # Trigger ONLY on VAD transition to False after user has finished speaking an actual question
-        if not msg.data:
+        else:
             if self._user_speaking:
                 self._user_speaking = False
-                self._user_just_finished_speaking = True
-                if (not self.robot_speaking and 
-                        not self._current_turn_audio_started and 
-                        self._filler_timer is None):
-                    delay_sec = self.filler_delay_ms / 1000.0
-                    if delay_sec <= 0:
-                        self._execute_delayed_filler()
-                    else:
-                        self._filler_timer = self.create_timer(delay_sec, self._execute_delayed_filler)
 
 
 def main(args=None):

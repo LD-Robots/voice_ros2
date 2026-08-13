@@ -42,12 +42,10 @@
     voice: "Charon" #"Charon" - masculine voice (calm, mature), "Puck" - masculine voice (friendly, energetic), "Aoede" - feminine voice (dynamic, vibrant)
     input_sample_rate: 16000
     api_sample_rate: 24000
-    enable_local_fillers: false
-    filler_chance: 0.75
+    gemini_fillers_enabled: true   # Gemini calls play_thinking_sound() when it needs time to think
     filler_volume: 0.80
-    filler_delay_ms: 400
     fillers_dir: "voices/fillers"
-    greeting_repeat_window_s: 600
+    greeting_repeat_window_s: 600.0
     vad_prefix_padding_ms: 300
     vad_silence_duration_ms: 700
     response_create_delay_ms: 100
@@ -119,6 +117,9 @@
     quiet_noise_threshold_dbfs: -48.0
     noisy_noise_threshold_dbfs: -35.0
     enable_respeaker_tuning: true
+    state_hysteresis_db: 2.0    # Noise must exceed threshold by this many dB before a state change is allowed
+    min_state_dwell_s: 10.0     # Minimum seconds to stay in a state before allowing a transition
+
 
 /**/xmos_hardware_node:
   ros__parameters:
