@@ -119,7 +119,7 @@
     respeaker_pid: 24    # 0x0018
     quiet_noise_threshold_dbfs: -48.0
     noisy_noise_threshold_dbfs: -35.0
-    enable_respeaker_tuning: true
+    enable_respeaker_tuning: false
 /**/barge_in_node:
   ros__parameters:
     stop_enabled: false
