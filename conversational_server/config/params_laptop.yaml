@@ -74,6 +74,8 @@
     language_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
     sticky_speaker_timeout_s: 180.0
+    force_response_on_silent_turn: true
+    silent_turn_delay_s: 7.0
 
 # ========== CLIENT NODES ==========
 
