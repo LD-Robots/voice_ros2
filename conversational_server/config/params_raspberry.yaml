@@ -79,6 +79,20 @@
     web_search_enabled: true
     web_search_model: "gpt-4.1"
     web_search_context_size: "medium"
+    # Escalation tier. The realtime model above stays on as the voice and hands
+    # only genuinely hard questions to this stronger text model, which is far
+    # cheaper than paying realtime audio rates for reasoning. The realtime model
+    # is fixed for the life of the connection (it is bound to the socket URL),
+    # so this is a second tier, not a model swap.
+    # deep_reason_effort applies only to reasoning-tier models; leave it empty
+    # for non-reasoning models such as gpt-4.1, which reject the field.
+    # max_output_tokens must also cover hidden reasoning tokens; it is a
+    # ceiling, not a spend, so unused headroom costs nothing.
+    deep_reason_enabled: true
+    deep_reason_model: "gpt-5.4-mini"
+    deep_reason_effort: "medium"
+    deep_reason_timeout_s: 25.0
+    deep_reason_max_output_tokens: 2000
     # Tools: emotion reporting, speaker lookup, name capture, pause/resume by intent
     emotion_tool_enabled: true
     speaker_info_tool_enabled: true

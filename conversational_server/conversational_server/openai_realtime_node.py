@@ -31,6 +31,15 @@ from conversational_client.conversation_utils import (
 )
 from std_msgs.msg import Bool, Int32, String
 from .language_utils import ConversationLanguageTracker
+from .openai_deep_reason import (
+    DEEP_REASON_FUNCTION_NAME,
+    DEFAULT_DEEP_REASON_MAX_OUTPUT_TOKENS,
+    DEFAULT_DEEP_REASON_MODEL,
+    DEFAULT_DEEP_REASON_TIMEOUT_S,
+    build_deep_reason_tool,
+    build_deep_reason_tool_output,
+    call_openai_deep_reason,
+)
 from .openai_web_search import (
     DEFAULT_WEB_SEARCH_CONTEXT_SIZE,
     DEFAULT_WEB_SEARCH_MAX_OUTPUT_TOKENS,
@@ -230,6 +239,18 @@ class OpenAIRealtimeNode(Node):
             'web_search_sources_limit',
             DEFAULT_WEB_SEARCH_SOURCES_LIMIT,
         )
+        # Escalation tier: the realtime model stays on as the voice and hands
+        # genuinely hard questions to a stronger text model. See
+        # openai_deep_reason for why this is not a model swap.
+        self.declare_parameter('deep_reason_enabled', True)
+        self.declare_parameter('deep_reason_model', DEFAULT_DEEP_REASON_MODEL)
+        self.declare_parameter('deep_reason_timeout_s', DEFAULT_DEEP_REASON_TIMEOUT_S)
+        self.declare_parameter(
+            'deep_reason_max_output_tokens',
+            DEFAULT_DEEP_REASON_MAX_OUTPUT_TOKENS,
+        )
+        # Only sent when non-empty: non-reasoning models reject the field.
+        self.declare_parameter('deep_reason_effort', '')
         self.declare_parameter(
             'instructions',
             str(load_prompt_defaults().get('realtime_instructions', '')),
@@ -383,6 +404,14 @@ class OpenAIRealtimeNode(Node):
             1,
             int(self.get_parameter('web_search_sources_limit').value),
         )
+        self.deep_reason_enabled = bool(self.get_parameter('deep_reason_enabled').value)
+        self.deep_reason_model = str(self.get_parameter('deep_reason_model').value)
+        self.deep_reason_timeout_s = float(self.get_parameter('deep_reason_timeout_s').value)
+        self.deep_reason_max_output_tokens = max(
+            32,
+            int(self.get_parameter('deep_reason_max_output_tokens').value),
+        )
+        self.deep_reason_effort = str(self.get_parameter('deep_reason_effort').value).strip()
         self.base_instructions = str(self.get_parameter('instructions').value)
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter('sticky_speaker_timeout_s').value),
@@ -1340,6 +1369,8 @@ class OpenAIRealtimeNode(Node):
             tools.append(build_realtime_wait_for_user_tool())
         if self.web_search_enabled:
             tools.append(build_realtime_web_search_tool())
+        if self.deep_reason_enabled:
+            tools.append(build_deep_reason_tool())
         if self.emotion_tool_enabled:
             tools.append(build_report_emotion_tool())
         if self.speaker_info_tool_enabled:
@@ -1537,10 +1568,21 @@ class OpenAIRealtimeNode(Node):
                 'The user told you to wait because they are talking with someone else. '
                 'Stay silent until the local controller resumes the conversation.'
             )
-        if self.wait_for_user_tool_enabled or self.web_search_enabled:
+        if self.deep_reason_enabled:
+            extras.append(
+                'You have a deep_reason tool that escalates a hard question to a stronger '
+                'reasoning model. Use it only when a fast answer would likely be wrong: '
+                'multi-step logic or maths, careful analysis, planning, debugging, or '
+                'weighing options against several criteria. Answer ordinary conversation, '
+                'opinions and robot commands yourself, and use web_search rather than '
+                'deep_reason for current events and live facts. It takes a few seconds, so '
+                'say a short natural filler before calling it, and speak its answer in your '
+                'own voice and style rather than reading it out verbatim.'
+            )
+        if self.wait_for_user_tool_enabled or self.web_search_enabled or self.deep_reason_enabled:
             extras.append(
                 'Turn policy: before each response, silently classify the latest user audio as one of: '
-                'no_response, direct_answer, needs_search, or clarification_needed. '
+                'no_response, direct_answer, needs_search, needs_reasoning, or clarification_needed. '
                 'Do not reveal this classification or your private reasoning.'
             )
         if self.wait_for_user_tool_enabled:
@@ -2349,6 +2391,7 @@ class OpenAIRealtimeNode(Node):
 
         known_tools = (
             WEB_SEARCH_FUNCTION_NAME,
+            DEEP_REASON_FUNCTION_NAME,
             WAIT_FOR_USER_FUNCTION_NAME,
             REPORT_EMOTION_FUNCTION_NAME,
             GET_SPEAKER_INFO_FUNCTION_NAME,
@@ -2385,6 +2428,20 @@ class OpenAIRealtimeNode(Node):
             return
         if name == SET_PAUSE_FUNCTION_NAME:
             self._execute_set_pause_tool_call(call_id, arguments)
+            return
+
+        # Both remaining tools make a blocking HTTPS call, so they go to a
+        # worker thread to keep the audio stream flowing.
+        if name == DEEP_REASON_FUNCTION_NAME:
+            self.get_logger().info(
+                f'OpenAI Realtime escalated to deep reasoning via tool call {call_id}'
+            )
+            threading.Thread(
+                target=self._execute_deep_reason_tool_call,
+                args=(call_id, arguments),
+                daemon=True,
+                name=f'deep-reason-{call_id[:8]}',
+            ).start()
             return
 
         self.get_logger().info(f'OpenAI Realtime requested web search via tool call {call_id}')
@@ -2558,6 +2615,60 @@ class OpenAIRealtimeNode(Node):
 
         if self._request_response_create('', reason='tool_output_ready'):
             self.get_logger().debug(f'Requested follow-up realtime response after tool call {call_id}')
+
+    def _execute_deep_reason_tool_call(self, call_id: str, arguments: str):
+        question = ''
+        output = ''
+
+        try:
+            parsed_arguments = json.loads(arguments) if arguments else {}
+            if not isinstance(parsed_arguments, dict):
+                raise ValueError('Tool arguments must be a JSON object.')
+            question = str(parsed_arguments.get('question', '') or '').strip()
+            if not question:
+                raise ValueError('Missing required "question" argument.')
+            context = str(parsed_arguments.get('context', '') or '').strip()
+
+            payload = call_openai_deep_reason(
+                self.api_key,
+                question,
+                context=context,
+                model=self.deep_reason_model,
+                timeout_s=self.deep_reason_timeout_s,
+                max_output_tokens=self.deep_reason_max_output_tokens,
+                effort=self.deep_reason_effort,
+            )
+            output = build_deep_reason_tool_output(question, payload=payload)
+            self.get_logger().info(
+                f'Deep reasoning ({self.deep_reason_model}) completed for: {question}'
+            )
+        except Exception as exc:
+            message = str(exc).strip() or 'Unknown deep reasoning failure.'
+            self.get_logger().error(f'Deep reasoning tool failed: {message}')
+            output = build_deep_reason_tool_output(question, error=message)
+
+        if not self._send_event({
+            'type': 'conversation.item.create',
+            'item': {
+                'type': 'function_call_output',
+                'call_id': call_id,
+                'output': output,
+            },
+        }):
+            return
+
+        if self.current_backend != 'openai_realtime':
+            return
+        if self.conversation_paused or self.waiting_for_robot_confirmation:
+            return
+        if self._user_speaking:
+            self._remember_deferred_response('', 'tool_output_ready')
+            return
+
+        if self._request_response_create('', reason='tool_output_ready'):
+            self.get_logger().debug(
+                f'Requested follow-up realtime response after deep reasoning call {call_id}'
+            )
 
 
 def main(args=None):
