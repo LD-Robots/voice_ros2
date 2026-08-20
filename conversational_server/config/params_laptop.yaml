@@ -73,6 +73,8 @@
     language_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
     sticky_speaker_timeout_s: 180.0
+    force_response_on_silent_turn: true
+    silent_turn_delay_s: 7.0
 
 # ========== CLIENT NODES ==========
 
@@ -118,7 +120,7 @@
     respeaker_pid: 24    # 0x0018
     quiet_noise_threshold_dbfs: -48.0
     noisy_noise_threshold_dbfs: -35.0
-    enable_respeaker_tuning: true
+    enable_respeaker_tuning: false
     state_hysteresis_db: 2.0    # Noise must exceed threshold by this many dB before a state change is allowed
     min_state_dwell_s: 10.0     # Minimum seconds to stay in a state before allowing a transition
 /**/barge_in_node:

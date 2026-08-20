@@ -110,6 +110,7 @@ class GeminiLiveNode(Node):
         # When native-audio auto-VAD transcribes a user turn but emits no spoken reply,
         # re-send the transcript as a client turn to force generation. Set false to disable.
         self.declare_parameter("force_response_on_silent_turn", True)
+        self.declare_parameter("silent_turn_delay_s", 7.0)
         self.declare_parameter("local_response_gating", False)
         self.declare_parameter("short_transcript_dedupe_window_s", 4.0)
         self.declare_parameter("playback_input_filter_enabled", True)
@@ -180,6 +181,7 @@ class GeminiLiveNode(Node):
         self.response_create_delay_ms = max(0, int(self.get_parameter("response_create_delay_ms").value))
         self.continued_turn_response_delay_ms = max(0, int(self.get_parameter("continued_turn_response_delay_ms").value))
         self.force_response_on_silent_turn = bool(self.get_parameter("force_response_on_silent_turn").value)
+        self.silent_turn_delay_s = float(self.get_parameter("silent_turn_delay_s").value)
         self.local_response_gating = bool(self.get_parameter("local_response_gating").value)
         self.short_transcript_dedupe_window_s = float(self.get_parameter("short_transcript_dedupe_window_s").value)
         self.playback_input_filter_enabled = bool(self.get_parameter("playback_input_filter_enabled").value)
@@ -296,6 +298,7 @@ class GeminiLiveNode(Node):
         self._connected = threading.Event()
         self._send_lock = threading.Lock()
         self._setup_sent = False
+        self.session_epoch = 0
         self._last_reconnect_time = 0.0
         self._reconnect_cooldown_s = 3.0
         self._pending_reconnect_reason = ""
@@ -323,6 +326,7 @@ class GeminiLiveNode(Node):
         self._audio_chunks_sent = 0
         self._current_turn_audio_started = False
         self._last_greeting_at = 0.0
+        self._model_thinking = False
 
         # Audio
         self._last_playback_progress = {"stream_id": "", "item_id": "", "played_ms": 0, "stopped": False}
@@ -401,6 +405,7 @@ class GeminiLiveNode(Node):
     def destroy_node(self):
         self._running = False
         self._connected.clear()
+        self._cancel_silent_turn_timer()
         self._cancel_pending_response_create()
         try:
             if self._ws_app is not None:
@@ -730,6 +735,10 @@ class GeminiLiveNode(Node):
                             f'focus={self.focused_doa_angle}°, diff={dist:.1f}°)'
                         )
 
+        # Gating while model is thinking/searching to prevent search collisions
+        if self._model_thinking:
+            pcm = np.zeros_like(pcm)
+
         # Resample to API rate (Gemini expects 16kHz)
         pcm_api = self._resample_pcm16(pcm, input_sample_rate, self.api_sample_rate)
         encoded = base64.b64encode(pcm_api.tobytes()).decode("ascii")
@@ -784,11 +793,14 @@ class GeminiLiveNode(Node):
         self._connected.set()
         self._publish_status("online")
         self._is_new_user_turn = True
+        self.session_epoch += 1
         self._send_setup()
 
     def _on_close(self, ws, status_code, msg):
         self._connected.clear()
         self._setup_sent = False
+        self._cancel_silent_turn_timer()
+        self._model_thinking = False
         # Publish 'reconnecting' for intentional closes (context/speaker updates)
         # so backend_manager does NOT fall back to legacy during the brief gap.
         if self._intentional_reconnect:
@@ -1000,6 +1012,7 @@ class GeminiLiveNode(Node):
         # Turn complete
         if server_content.get("turnComplete"):
             self.get_logger().debug("Gemini Live: turn complete")
+            self._model_thinking = True
             self._user_speaking = False
             self._publish_captured_user_audio_segment()
             self._start_user_audio_capture()
@@ -1070,6 +1083,7 @@ class GeminiLiveNode(Node):
 
         if not self._current_turn_audio_started:
             self._current_turn_audio_started = True
+            self._model_thinking = False
             self._mark_response_active(self._active_turn_id)
             self.get_logger().debug("Gemini Live started audio output")
             # Audio arrived — cancel silent_turn timer if it was running
@@ -1111,6 +1125,7 @@ class GeminiLiveNode(Node):
         self._current_turn_audio_started = False
         self._user_speaking = False
         self._user_audio_frames_sent = 0
+        self._model_thinking = False
         self._last_response_request_item_id = ""
         self._assistant_name_question_active = False
         self._last_accepted_user_transcript_norm = ""
@@ -1260,9 +1275,17 @@ class GeminiLiveNode(Node):
                 self._silent_turn_timer = None
 
             saved_transcript = transcript
+            timer_epoch = self.session_epoch
 
             def _deferred_silent_turn_check():
                 self._silent_turn_timer = None
+                # Safety guards:
+                if timer_epoch != self.session_epoch:
+                    return
+                if not self.session_active or self._goodbye_pending:
+                    return
+                if not self._connected.is_set() or not self._setup_sent:
+                    return
                 # Double-check: if audio has arrived in the meantime, do nothing
                 if self._current_turn_audio_started:
                     return
@@ -1275,12 +1298,13 @@ class GeminiLiveNode(Node):
                         "turnComplete": True,
                     }
                 }):
+                    self._model_thinking = True
                     self.get_logger().info(
-                        "Gemini produced no audio after 3.5s — re-sent transcript "
+                        f"Gemini produced no audio after {self.silent_turn_delay_s}s — re-sent transcript "
                         "as client turn to trigger a response"
                     )
 
-            self._silent_turn_timer = threading.Timer(3.5, _deferred_silent_turn_check)
+            self._silent_turn_timer = threading.Timer(self.silent_turn_delay_s, _deferred_silent_turn_check)
             self._silent_turn_timer.daemon = True
             self._silent_turn_timer.start()
 
@@ -1877,6 +1901,7 @@ class GeminiLiveNode(Node):
         text = self._assistant_text.get(item_id, "").strip()
         if not text:
             return
+        self.get_logger().info(f"🤖 Gemini response: {text}")
         out = Transcription()
         out.text = text
         out.language = ""
@@ -1921,8 +1946,15 @@ class GeminiLiveNode(Node):
                 return True
         return False
 
+    def _cancel_silent_turn_timer(self):
+        if self._silent_turn_timer is not None:
+            self._silent_turn_timer.cancel()
+            self._silent_turn_timer = None
+
     def _cancel_and_clear(self):
+        self._cancel_silent_turn_timer()
         self._cancel_pending_response_create()
+        self._model_thinking = False
         self._assistant_text.clear()
         self._published_final_items.clear()
         self._clear_playback_progress()
