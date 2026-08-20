@@ -52,7 +52,6 @@ def generate_launch_description():
     
     enrollment_dir = os.path.join(voices_dir, 'enrollment')
     hello_model_path = os.path.join(models_dir, 'hello_robot.onnx')
-    goodbye_model_path = os.path.join(models_dir, 'goodbye_robot.onnx')
 
     # ========== CONFIGURATION SELECTION ==========
     config_name = LaunchConfiguration('config')
@@ -225,7 +224,7 @@ def generate_launch_description():
             executable='wake_word_node',
             name='wake_word_node',
             parameters=[config_file_path, {
-                'custom_models': ','.join([f'{hello_model_path}:wake', f'{goodbye_model_path}:stop']),
+                'custom_models': f'{hello_model_path}:wake',
             }]
         ),
 

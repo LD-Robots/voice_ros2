@@ -43,12 +43,11 @@ def generate_launch_description():
     # Format: path:kind
     hello_path = os.path.join(models_dir, 'hello_robot.onnx')
     stop_path = os.path.join(models_dir, 'stop_robot.onnx')  # test the original model
-    goodbye_path = os.path.join(models_dir, 'goodbye_robot.onnx')
     
-    # Define models: hello=wake, stop_robot_oww=barge_in (stop TTS only), goodbye=stop (bye bye)
-    custom_models = f"{hello_path}:wake,{stop_path}:barge_in,{goodbye_path}:stop"
+    # Define models: hello=wake, stop_robot_oww=barge_in (stop TTS only)
+    custom_models = f"{hello_path}:wake,{stop_path}:barge_in"
     
-    model_thresholds = "hello_robot:0.10,stop_robot:0.70,goodbye_robot:0.50"
+    model_thresholds = "hello_robot:0.10,stop_robot:0.70"
 
     enrollment_dir = os.path.join(voices_dir, 'enrollment')
 
