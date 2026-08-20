@@ -21,6 +21,9 @@ from std_msgs.msg import String
 from .conversation_utils import normalize_text
 from .conversation_utils import StickySpeakerTracker
 from .person_profile_utils import (
+    INTRO_COPULA,
+    INTRO_EXPLICIT,
+    classify_name_introduction,
     default_preferred_name_for_voice_label,
     extract_auto_enrollment_name,
     extract_fact,
@@ -51,6 +54,12 @@ class PersonMemoryStoreNode(Node):
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
         self.declare_parameter('auto_enroll_unknown_speakers', True)
+        # When true, only an unambiguous naming frame ("my name is X",
+        # "ma numesc X") may enrol. A bare copula ("sunt X") is refused because
+        # "sunt Vasile" and "sunt doctor" are structurally identical and only
+        # meaning tells them apart. Costs recall, so it is off by default;
+        # the locative guard already blocks the "sunt din Romania" class.
+        self.declare_parameter('enrollment_requires_explicit_intro', False)
         # Gemini Live transcripts lag the audio by several seconds, so the
         # window that decides whether recent audio is "fresh enough" to enroll
         # must comfortably exceed that latency (was 8.0 -> missed real intros).
@@ -64,6 +73,9 @@ class PersonMemoryStoreNode(Node):
         self.speaker_tracker = StickySpeakerTracker(
             float(self.get_parameter('sticky_speaker_timeout_s').value),
             int(self.get_parameter('speaker_switch_hits_required').value),
+        )
+        self.enrollment_requires_explicit_intro = bool(
+            self.get_parameter('enrollment_requires_explicit_intro').value
         )
         self.auto_enroll_unknown_speakers = bool(
             self.get_parameter('auto_enroll_unknown_speakers').value
@@ -90,6 +102,8 @@ class PersonMemoryStoreNode(Node):
 
         self.current_speaker = 'Unknown'
         self.last_raw_speaker = 'Unknown'
+        # Fallback evidence for enrolment when the model quotes no utterance.
+        self.last_user_text = ''
         self.memory = self._load_memory()
         # Rolling buffer of recent user segments so enrollment can assemble a
         # clip from the audio just before the (laggy) intro transcript arrives.
@@ -158,6 +172,8 @@ class PersonMemoryStoreNode(Node):
 
     def _transcription_callback(self, msg: Transcription):
         normalized = normalize_text(msg.text)
+        if normalized:
+            self.last_user_text = normalized
         if not normalized:
             return
 
@@ -170,7 +186,12 @@ class PersonMemoryStoreNode(Node):
 
         if should_attempt_enrollment:
             if auto_enrollment_name and self.auto_enroll_unknown_speakers:
-                self._request_speaker_enrollment(auto_enrollment_name, preferred_language, fact)
+                self._request_speaker_enrollment(
+                    auto_enrollment_name,
+                    preferred_language,
+                    fact,
+                    evidence=normalized,
+                )
             return
 
         if self.current_speaker == 'Unknown':
@@ -237,7 +258,13 @@ class PersonMemoryStoreNode(Node):
         # Same gate as the regex path: only auto-enroll a not-yet-known speaker.
         if not self.auto_enroll_unknown_speakers or self.last_raw_speaker != 'Unknown':
             return
-        self._request_speaker_enrollment(name, language, '')
+        # The model must quote what the speaker actually said. Without that
+        # there is nothing to audit, and an unaudited claim is how a speaker
+        # who said "I'm from Romania" ended up enrolled as Romania.
+        evidence = str(payload.get('utterance', '') or '')
+        if not evidence:
+            evidence = self.last_user_text
+        self._request_speaker_enrollment(name, language, '', evidence=evidence)
 
     def _collect_enrollment_audio(self):
         """Assemble an enrollment clip from the freshest recent user segments.
@@ -279,7 +306,50 @@ class PersonMemoryStoreNode(Node):
             return None, f'recent audio is too short ({duration_s:.2f}s)'
         return (audio, sample_rate), ''
 
-    def _request_speaker_enrollment(self, preferred_name: str, preferred_language: str, fact: str):
+    def _enrollment_evidence_is_sound(self, preferred_name: str, evidence: str) -> bool:
+        """Audit the utterance that is supposed to justify enrolling this name.
+
+        Both enrolment paths funnel through here, so one guard covers the
+        pattern matcher and the model's remember_person tool alike. Enrolment
+        writes a voiceprint and a profile to disk, so a wrong name is durable
+        and worth refusing over.
+        """
+        outcome, reason = classify_name_introduction(preferred_name, evidence)
+
+        if outcome == INTRO_EXPLICIT:
+            return True
+
+        if outcome == INTRO_COPULA:
+            if self.enrollment_requires_explicit_intro:
+                self.get_logger().info(
+                    f'Refusing to enrol "{preferred_name}": {reason}, and '
+                    'enrollment_requires_explicit_intro is set'
+                )
+                return False
+            # "sunt X" really is how people introduce themselves, so this is
+            # allowed; it is also how they state a profession, which is the
+            # case only meaning can settle.
+            self.get_logger().info(
+                f'Enrolling "{preferred_name}" on {reason} - not fully certain '
+                'this is a name'
+            )
+            return True
+
+        self.get_logger().warning(
+            f'Refusing to enrol "{preferred_name}": {reason}. '
+            f'Utterance: "{evidence}"'
+        )
+        return False
+
+    def _request_speaker_enrollment(
+        self,
+        preferred_name: str,
+        preferred_language: str,
+        fact: str,
+        evidence: str = '',
+    ):
+        if not self._enrollment_evidence_is_sound(preferred_name, evidence):
+            return
         result, reason = self._collect_enrollment_audio()
         if result is None:
             self.get_logger().warning(

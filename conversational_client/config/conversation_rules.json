@@ -291,9 +291,7 @@
     "\\bi go by ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
     "\\bma numesc ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
     "\\bma cheama ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
-    "\\bnumele meu este ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
-    "\\bspune mi ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
-    "\\bzi mi ([a-z]{2,20}(?: [a-z]{2,20})?)\\b"
+    "\\bnumele meu este ([a-z]{2,20}(?: [a-z]{2,20})?)\\b"
   ],
   "name_correction_patterns": [
     "\\bno(?:,)? (?:it s|it is) ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
@@ -310,8 +308,6 @@
     "\\bma numesc ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
     "\\bma cheama ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
     "\\bnumele meu este ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
-    "\\bspune mi ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
-    "\\bzi mi ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
     "\\bno(?:,)? (?:it s|it is) ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
     "\\bactually(?:,)? (?:it s|it is) ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
     "\\bnu(?:,)? (?:e|este) ([a-z]{2,20}(?: [a-z]{2,20})?)\\b",
@@ -386,5 +382,58 @@
       "acum",
       "bine"
     ]
-  }
+  },
+  "non_naming_governors": [
+    "from",
+    "in",
+    "at",
+    "near",
+    "to",
+    "of",
+    "about",
+    "for",
+    "with",
+    "by",
+    "din",
+    "in",
+    "la",
+    "langa",
+    "spre",
+    "pe",
+    "catre",
+    "despre",
+    "cu",
+    "pentru",
+    "lucrez",
+    "locuiesc",
+    "vin",
+    "sunt din",
+    "live",
+    "work",
+    "born"
+  ],
+  "explicit_intro_frames": [
+    "my name is",
+    "my name s",
+    "name is",
+    "call me",
+    "i am called",
+    "i m called",
+    "i go by",
+    "known as",
+    "ma numesc",
+    "ma cheama",
+    "numele meu este",
+    "numele meu e",
+    "ma prezint"
+  ],
+  "copula_intro_frames": [
+    "i am",
+    "i m",
+    "this is",
+    "sunt",
+    "eu sunt",
+    "aici e",
+    "aici este"
+  ]
 }

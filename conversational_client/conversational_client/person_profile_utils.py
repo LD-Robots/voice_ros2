@@ -15,10 +15,18 @@ SELF_INTRO_NAME_PATTERNS = tuple(_RULES.get('self_intro_name_patterns') or _RULE
 NAME_CORRECTION_PATTERNS = tuple(_RULES.get('name_correction_patterns') or ())
 EXPLICIT_NAME_PATTERNS = SELF_INTRO_NAME_PATTERNS + NAME_CORRECTION_PATTERNS
 PROFILE_SIDECAR_SUFFIX = '.profile.json'
+NON_NAMING_GOVERNORS = tuple(_RULES.get('non_naming_governors') or ())
+EXPLICIT_INTRO_FRAMES = tuple(_RULES.get('explicit_intro_frames') or ())
+COPULA_INTRO_FRAMES = tuple(_RULES.get('copula_intro_frames') or ())
 LANGUAGE_PREFERENCES = {
     str(language): tuple(phrases)
     for language, phrases in (_RULES.get('language_preferences') or {}).items()
 }
+
+# Outcomes of classify_name_introduction.
+INTRO_EXPLICIT = 'explicit'   # unambiguous naming frame -> safe to enrol
+INTRO_COPULA = 'copula'       # "sunt X" -> could be a name, could be a job
+INTRO_NONE = 'none'           # not an introduction at all -> never enrol
 
 def normalize_person_name(raw_name: str) -> str:
     normalized = unicodedata.normalize('NFKD', raw_name or '')
@@ -94,6 +102,66 @@ def _extract_spelled_name(normalized: str, *, allow_correction_cues: bool) -> st
         if candidate:
             return candidate
     return ''
+
+
+def normalize_utterance(raw: str) -> str:
+    """Fold an utterance to the same shape the name patterns are written in."""
+    text = unicodedata.normalize('NFKD', raw or '')
+    text = ''.join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r'[^a-z0-9\s]', ' ', text.lower())
+    return ' '.join(text.split())
+
+
+def classify_name_introduction(name: str, utterance: str) -> tuple[str, str]:
+    """Decide whether ``utterance`` really introduces ``name`` as a person's name.
+
+    This audits the *grammatical role* of the name rather than checking it
+    against a list of forbidden words. A blacklist cannot work here: person
+    names and place names are both open sets and they overlap (Paris, Milan,
+    Brooklyn are all both). But "I'm from Romania" and "my name is Vasile"
+    differ structurally, and that difference generalises to every place,
+    employer and topic without naming any of them.
+
+    Returns ``(outcome, reason)`` where outcome is INTRO_EXPLICIT,
+    INTRO_COPULA or INTRO_NONE.
+    """
+    candidate = normalize_utterance(name)
+    text = normalize_utterance(utterance)
+    if not candidate:
+        return INTRO_NONE, 'empty name'
+    if not text:
+        # No evidence to audit. Callers that have no utterance to offer should
+        # not get a free pass, since that is exactly the unchecked path that
+        # let "Romania" through.
+        return INTRO_NONE, 'no utterance to verify the name against'
+
+    match = re.search(rf'\b{re.escape(candidate)}\b', text)
+    if not match:
+        return INTRO_NONE, f'name "{candidate}" does not appear in the utterance'
+
+    before = text[:match.start()].split()
+    tail = ' '.join(before)
+
+    # Checked first, and allowed to win over the governor rule below: some
+    # naming frames legitimately end in a preposition ("I go by Ana"), and an
+    # explicit frame is unambiguous evidence in a way a bare preposition is not.
+    # The frame must sit immediately before the name, so that
+    # "my name is Vasile, I'm from Romania" validates Vasile and not Romania.
+    for frame in EXPLICIT_INTRO_FRAMES:
+        if tail.endswith(frame):
+            return INTRO_EXPLICIT, f'explicit naming frame "{frame}"'
+
+    # Otherwise the token immediately before the name decides its role.
+    # "from Romania", "din Cluj", "at Google", "about Romania" are origins,
+    # affiliations and topics -- never the speaker's name.
+    if before and before[-1] in NON_NAMING_GOVERNORS:
+        return INTRO_NONE, f'"{before[-1]} {candidate}" is a place/topic, not a name'
+
+    for frame in COPULA_INTRO_FRAMES:
+        if tail.endswith(frame):
+            return INTRO_COPULA, f'ambiguous copula frame "{frame}"'
+
+    return INTRO_NONE, 'no introduction frame precedes the name'
 
 
 def resolve_preferred_name_update(

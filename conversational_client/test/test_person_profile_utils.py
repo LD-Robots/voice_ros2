@@ -131,3 +131,89 @@ def test_profile_sidecar_restores_missing_speaker_memory(tmp_path):
     assert migrated['people']['speaker_001']['preferred_language'] == 'ro'
     assert migrated['people']['speaker_001']['facts'] == ['likes robotics']
     assert load_speaker_profile_sidecars(str(enrollment_dir))['speaker_001']['preferred_name'] == 'Vasile'
+
+
+# ── Enrollment evidence auditing ──────────────────────────────────────────────
+# Regression cover for speakers being enrolled under place names: saying
+# "I'm from Romania" created a profile called Romania. A stopword blacklist
+# cannot fix this, because person names and place names are both open sets and
+# they overlap. These pin the structural check that replaced it.
+
+from conversational_client.person_profile_utils import (  # noqa: E402
+    INTRO_COPULA,
+    INTRO_EXPLICIT,
+    INTRO_NONE,
+    classify_name_introduction,
+)
+
+
+def test_origin_statements_never_yield_a_name():
+    """The reported bug, plus the rest of its class."""
+    for name, utterance in (
+        ('Romania', "I'm from Romania"),
+        ('Romania', 'Sunt din Romania'),
+        ('Romania', 'Eu sunt din Romania'),
+        ('Cluj', 'I live in Cluj'),
+        ('Bucuresti', 'Sunt langa Bucuresti'),
+        ('Google', 'I work at Google'),
+        ('Romania', 'Spune-mi despre Romania'),
+        ('Romania', 'Tell me about Romania'),
+    ):
+        outcome, _ = classify_name_introduction(name, utterance)
+        assert outcome == INTRO_NONE, f'{name!r} from {utterance!r}'
+
+
+def test_no_place_list_is_involved():
+    """The guard must generalise to places it has never heard of."""
+    for place in ('Vaslui', 'Timisoara', 'Ulaanbaatar', 'Zzyzx'):
+        outcome, _ = classify_name_introduction(place, f'I am from {place}')
+        assert outcome == INTRO_NONE, place
+
+
+def test_explicit_introductions_still_enrol():
+    for name, utterance in (
+        ('Vasile', 'My name is Vasile'),
+        ('Vasile', 'Ma numesc Vasile'),
+        ('Vasile', 'Numele meu este Vasile'),
+        ('Mario', 'Call me Mario'),
+        ('Ana', 'I go by Ana'),
+    ):
+        outcome, _ = classify_name_introduction(name, utterance)
+        assert outcome == INTRO_EXPLICIT, f'{name!r} from {utterance!r}'
+
+
+def test_the_name_is_picked_out_of_a_mixed_sentence():
+    """One sentence carrying both an origin and a name must resolve correctly."""
+    utterance = "I'm from Romania, my name is Vasile"
+    assert classify_name_introduction('Vasile', utterance)[0] == INTRO_EXPLICIT
+    # ...and the model claiming the country from those same words is refused.
+    assert classify_name_introduction('Romania', utterance)[0] == INTRO_NONE
+
+
+def test_bare_copula_is_flagged_as_uncertain_not_accepted_outright():
+    """"sunt Vasile" and "sunt doctor" are structurally identical."""
+    for name, utterance in (('Vasile', 'Sunt Vasile'), ('Doctor', 'Sunt doctor')):
+        outcome, _ = classify_name_introduction(name, utterance)
+        assert outcome == INTRO_COPULA, f'{name!r} from {utterance!r}'
+
+
+def test_a_name_absent_from_the_utterance_is_refused():
+    """Guards against the model inventing a name it never heard."""
+    outcome, _ = classify_name_introduction('Vasile', 'the weather is nice today')
+    assert outcome == INTRO_NONE
+
+
+def test_missing_evidence_is_refused_rather_than_waved_through():
+    """No utterance means nothing to audit, which is how the bug got in."""
+    assert classify_name_introduction('Romania', '')[0] == INTRO_NONE
+
+
+def test_tell_me_requests_no_longer_enrol_their_topic():
+    """spune-mi/zi-mi mean both "call me" and "tell me"."""
+    for text in (
+        'spune mi vremea',
+        'spune mi despre romania',
+        'zi mi ceva interesant',
+        'spune mi cat e ceasul',
+    ):
+        assert extract_auto_enrollment_name(text) == '', text

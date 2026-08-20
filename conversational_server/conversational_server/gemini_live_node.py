@@ -1292,9 +1292,18 @@ class GeminiLiveNode(Node):
         """
         name = str((args or {}).get("name", "") or "").strip()
         language = str((args or {}).get("language", "") or "").strip()
+        utterance = str((args or {}).get("utterance", "") or "").strip()
         if not name:
             return "no name provided"
-        payload = {"preferred_name": name, "preferred_language": language}
+        payload = {
+            "preferred_name": name,
+            "preferred_language": language,
+            # Forwarded so person_memory_store_node can check that the quoted
+            # words really introduce this name. The model is asked to judge, but
+            # its judgement is audited rather than trusted: an unaudited call is
+            # how "I'm from Romania" enrolled a speaker named Romania.
+            "utterance": utterance,
+        }
         msg = String()
         msg.data = json.dumps(payload, separators=(",", ":"))
         self.introduced_name_pub.publish(msg)
@@ -1336,25 +1345,50 @@ class GeminiLiveNode(Node):
                 "functionDeclarations": [{
                     "name": "remember_person",
                     "description": (
-                        "Call this when the CURRENT speaker states, spells, or "
-                        "asks to be called by their OWN name, in any language or "
-                        "phrasing (e.g. 'my name is Mario', 'call me Mario', "
-                        "'sunt Mario', 'eu sunt Mario'). Do NOT call it for other "
-                        "people's names or when merely mentioning a name."
+                        "Call this ONLY when the CURRENT speaker gives their OWN "
+                        "personal name, in any language or phrasing (e.g. 'my name "
+                        "is Mario', 'call me Mario', 'ma numesc Mario', 'sunt "
+                        "Mario'). "
+                        "Do NOT call it for another person's name, or for a name "
+                        "merely mentioned in passing. "
+                        "Above all, do NOT call it for anything that is not a "
+                        "personal name: where someone is from, lives, was born, "
+                        "works or studies; a country, city, region or address; a "
+                        "nationality; a company, product, brand or team; a job or "
+                        "profession; or the topic they are asking about. "
+                        "'I'm from Romania', 'sunt din Romania', 'I live in Cluj', "
+                        "'I work at Google' and 'sunt doctor' give you NO name - "
+                        "do not call this tool for any of them. "
+                        "When in doubt, do not call it: a wrong name is stored "
+                        "permanently, while a missed one costs nothing because the "
+                        "person can simply say their name again."
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "name": {
                                 "type": "string",
-                                "description": "the speaker's own name",
+                                "description": (
+                                    "the speaker's own personal name, and nothing "
+                                    "else - no place, nationality, job or title"
+                                ),
+                            },
+                            "utterance": {
+                                "type": "string",
+                                "description": (
+                                    "the speaker's exact words that gave the name, "
+                                    "quoted verbatim and not paraphrased. The name "
+                                    "must appear in these words. This is checked, "
+                                    "and the enrollment is refused if it does not "
+                                    "hold up."
+                                ),
                             },
                             "language": {
                                 "type": "string",
                                 "description": "language code if evident, e.g. en or ro",
                             },
                         },
-                        "required": ["name"],
+                        "required": ["name", "utterance"],
                     },
                 }]
             })
