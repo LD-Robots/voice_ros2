@@ -1397,7 +1397,9 @@ class GeminiLiveNode(Node):
                         "asks to be called by their OWN name, in any language or "
                         "phrasing (e.g. 'my name is Mario', 'call me Mario', "
                         "'sunt Mario', 'eu sunt Mario'). Do NOT call it for other "
-                        "people's names or when merely mentioning a name."
+                        "people's names or when merely mentioning a name. "
+                        "CRITICAL: Do NOT confuse locations, nationalities, or professions "
+                        "with names. If the user says 'I am from Romania', their name is NOT Romania."
                     ),
                     "parameters": {
                         "type": "object",

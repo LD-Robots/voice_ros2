@@ -41,7 +41,5 @@ log/
 # Voice enrollment & memory runtime data
 voices/**/*.wav
 voices/*.wav
-voices/**/*.json
-voices/*.json
 voices/quarantine/
 voices/pending_enrollment/
