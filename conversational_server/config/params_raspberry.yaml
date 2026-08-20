@@ -41,7 +41,7 @@
     model: "gemini-2.5-flash-native-audio-latest"
     voice: "Charon" #"Charon" - masculine voice (calm, mature), "Puck" - masculine voice (friendly, energetic), "Aoede" - feminine voice (dynamic, vibrant)
     input_sample_rate: 16000
-    api_sample_rate: 24000
+    api_sample_rate: 16000
     gemini_fillers_enabled: true   # Gemini calls play_thinking_sound() when it needs time to think
     filler_volume: 0.80
     fillers_dir: "voices/fillers"

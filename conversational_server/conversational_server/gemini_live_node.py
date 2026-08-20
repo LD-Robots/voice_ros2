@@ -100,7 +100,7 @@ class GeminiLiveNode(Node):
         self.declare_parameter("model", "gemini-2.5-flash-native-audio-latest")
         self.declare_parameter("voice", "Kore")
         self.declare_parameter("input_sample_rate", 16000)
-        self.declare_parameter("api_sample_rate", 24000)
+        self.declare_parameter("api_sample_rate", 16000)
         self.declare_parameter("capture_during_playback", True)
         self.declare_parameter("vad_threshold", 0.80)
         self.declare_parameter("vad_prefix_padding_ms", 400)
