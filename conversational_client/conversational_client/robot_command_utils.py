@@ -109,6 +109,10 @@ FORWARD_PATTERNS = ('forward', 'ahead', 'inainte', 'in fata')
 BACKWARD_PATTERNS = ('backward', 'backwards', 'back', 'inapoi', 'spate')
 LEFT_PATTERNS = ('left', 'stanga')
 RIGHT_PATTERNS = ('right', 'dreapta')
+# "turn around" was a first-class command on the Gemini pipeline (a 180 spin).
+# It carries no left/right, so without this it matched nothing at all.
+# 'arround' is the historical misspelling used by the motion contract.
+AROUND_PATTERNS = ('around', 'arround', 'inapoi', 'imprejur', 'impreju')
 
 
 def normalize_command_text(text: str) -> str:
@@ -222,10 +226,17 @@ def _extract_turn_direction(text: str):
         return 'left'
     if has_right and not has_left:
         return 'right'
+    # A 180 has no meaningful side; report a valid direction and let the
+    # angle_deg=180 in parameters_json carry the actual meaning.
+    if _contains_phrase(text, AROUND_PATTERNS):
+        return 'left'
     return None
 
 
 def _extract_turn_angle(text: str) -> int:
+    if _contains_phrase(text, AROUND_PATTERNS):
+        return 180
+
     match = re.search(r'\b(\d+)\s*(degrees?|deg|grade)\b', text)
     if match:
         try:

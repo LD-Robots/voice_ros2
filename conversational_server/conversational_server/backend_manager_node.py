@@ -3,13 +3,17 @@
 Backend Manager Node.
 
 Publishes the active conversation backend and automatically falls back to the
-legacy text pipeline when OpenAI Realtime becomes unavailable.
+legacy text pipeline when the realtime speech-to-speech backend becomes
+unavailable.
 """
 import time
 
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+
+# Name of the speech-to-speech backend this stack drives (OpenAI Realtime).
+REALTIME_BACKEND = 'openai_realtime'
 
 
 class BackendManagerNode(Node):
@@ -30,16 +34,18 @@ class BackendManagerNode(Node):
 
         self.active_backend = self.preferred_backend
         self.realtime_status = 'unknown'
-        self.last_realtime_status_time = time.monotonic() if self.preferred_backend == 'openai_realtime' else 0.0
+        self.last_realtime_status_time = (
+            time.monotonic() if self.preferred_backend == REALTIME_BACKEND else 0.0
+        )
 
         self.realtime_status_sub = self.create_subscription(
             String,
-            '/openai_realtime_status',
+            'openai_realtime_status',
             self._realtime_status_callback,
             10,
         )
-        self.backend_pub = self.create_publisher(String, '/conversation_backend', 10)
-        self.status_pub = self.create_publisher(String, '/conversation_backend_status', 10)
+        self.backend_pub = self.create_publisher(String, 'conversation_backend', 10)
+        self.status_pub = self.create_publisher(String, 'conversation_backend_status', 10)
         self.timer = self.create_timer(1.0, self._timer_callback)
 
         self._publish_backend(self.active_backend, 'startup')
@@ -48,25 +54,31 @@ class BackendManagerNode(Node):
         )
 
     def _realtime_status_callback(self, msg: String):
-        self.realtime_status = msg.data.strip() or 'unknown'
+        if self.preferred_backend != REALTIME_BACKEND:
+            return
+        self._handle_realtime_status(msg.data.strip() or 'unknown', REALTIME_BACKEND)
+
+    def _handle_realtime_status(self, status: str, backend_name: str):
+        self.realtime_status = status
         self.last_realtime_status_time = time.monotonic()
 
-        if self.preferred_backend != 'openai_realtime':
+        if status == 'online':
+            if self.auto_return_to_preferred and self.active_backend != backend_name:
+                self._publish_backend(backend_name, 'realtime_recovered')
             return
 
-        if self.realtime_status == 'online':
-            if self.auto_return_to_preferred and self.active_backend != 'openai_realtime':
-                self._publish_backend('openai_realtime', 'realtime_recovered')
+        # 'reconnecting' = intentional context refresh by the node itself; stay on preferred backend.
+        if status == 'reconnecting':
             return
 
-        if self.realtime_status in ('offline', 'error', 'auth_error'):
+        if status in ('offline', 'error', 'auth_error'):
             if self.active_backend != self.fallback_backend:
-                self._publish_backend(self.fallback_backend, f'realtime_{self.realtime_status}')
+                self._publish_backend(self.fallback_backend, f'realtime_{status}')
 
     def _timer_callback(self):
         self._publish_backend_topic()
 
-        if self.preferred_backend != 'openai_realtime':
+        if self.preferred_backend != REALTIME_BACKEND:
             if self.active_backend != self.preferred_backend:
                 self._publish_backend(self.preferred_backend, 'preferred_backend')
             else:
@@ -74,7 +86,7 @@ class BackendManagerNode(Node):
             return
 
         now = time.monotonic()
-        if self.active_backend == 'openai_realtime':
+        if self.active_backend == REALTIME_BACKEND:
             stale = (
                 self.last_realtime_status_time > 0.0
                 and (now - self.last_realtime_status_time) > self.offline_timeout_s

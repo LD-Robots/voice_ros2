@@ -228,21 +228,21 @@ class PipecatAudioNode(Node):
         _configure_pipecat_logging(self.pipecat_log_level)
 
         # ROS2 Setup
-        self.audio_sub = self.create_subscription(Audio, '/audio_clean', self.audio_callback, 10)
-        self.audio_pub = self.create_publisher(Audio, '/audio_out', 10)
+        self.audio_sub = self.create_subscription(Audio, 'audio_clean', self.audio_callback, 10)
+        self.audio_pub = self.create_publisher(Audio, 'audio_out', 10)
         
-        self.session_sub = self.create_subscription(Bool, '/session_active', self.session_callback, 10)
-        self.tts_stop_pub = self.create_publisher(Bool, '/stop_playback', 10)
-        self.is_speaking_pub = self.create_publisher(Bool, '/is_speaking', 10)
-        self.barge_in_sub = self.create_subscription(Bool, '/barge_in', self.barge_in_callback, 10)
-        self.tts_stop_sub = self.create_subscription(Bool, '/tts_stop', self.barge_in_callback, 10)
+        self.session_sub = self.create_subscription(Bool, 'session_active', self.session_callback, 10)
+        self.tts_stop_pub = self.create_publisher(Bool, 'stop_playback', 10)
+        self.is_speaking_pub = self.create_publisher(Bool, 'is_speaking', 10)
+        self.barge_in_sub = self.create_subscription(Bool, 'barge_in', self.barge_in_callback, 10)
+        self.tts_stop_sub = self.create_subscription(Bool, 'tts_stop', self.barge_in_callback, 10)
         
-        self.transcription_pub = self.create_publisher(Transcription, '/transcription', 10)
+        self.transcription_pub = self.create_publisher(Transcription, 'transcription', 10)
 
         # Pipecat Setup
         self.transport = ROSPipecatTransport(self)
         
-        self.doa_sub = self.create_subscription(Int32, '/doa_angle', self.doa_callback, 10)
+        self.doa_sub = self.create_subscription(Int32, 'doa_angle', self.doa_callback, 10)
         
         # LLM service will be created per-session
         
@@ -254,7 +254,7 @@ class PipecatAudioNode(Node):
         self.conversation_paused = False
         self.session_active = False
 
-        self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self.pause_callback, 10)
+        self.pause_sub = self.create_subscription(Bool, 'conversation_pause', self.pause_callback, 10)
 
     def doa_callback(self, msg: Int32):
         # Only update if the session is active

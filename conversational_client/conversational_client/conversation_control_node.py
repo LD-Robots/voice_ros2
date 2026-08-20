@@ -30,7 +30,7 @@ class ConversationControlNode(Node):
 
         self.declare_parameter('sticky_speaker_timeout_s', 60.0)
         self.declare_parameter('speaker_switch_hits_required', 2)
-        self.declare_parameter('transcription_topic', '/transcription')
+        self.declare_parameter('transcription_topic', 'transcription')
 
         self.current_speaker = 'Unknown'
         self.focused_speaker = 'Unknown'
@@ -48,19 +48,19 @@ class ConversationControlNode(Node):
             self._transcription_callback,
             10,
         )
-        self.speaker_sub = self.create_subscription(String, '/speaker_id', self._speaker_callback, 10)
-        self.pause_sub = self.create_subscription(Bool, '/conversation_pause', self._pause_callback, 10)
-        self.session_sub = self.create_subscription(Bool, '/session_active', self._session_callback, 10)
+        self.speaker_sub = self.create_subscription(String, 'speaker_id', self._speaker_callback, 10)
+        self.pause_sub = self.create_subscription(Bool, 'conversation_pause', self._pause_callback, 10)
+        self.session_sub = self.create_subscription(Bool, 'session_active', self._session_callback, 10)
         self.attention_status_sub = self.create_subscription(
             String,
-            '/attention_status',
+            'attention_status',
             self._attention_status_callback,
             10,
         )
 
-        self.stop_pub = self.create_publisher(Bool, '/tts_stop', 10)
-        self.control_pub = self.create_publisher(String, '/conversation_control', 10)
-        self.pause_pub = self.create_publisher(Bool, '/conversation_pause', 10)
+        self.stop_pub = self.create_publisher(Bool, 'tts_stop', 10)
+        self.control_pub = self.create_publisher(String, 'conversation_control', 10)
+        self.pause_pub = self.create_publisher(Bool, 'conversation_pause', 10)
 
         self.get_logger().info('Conversation Control Node started')
 
@@ -76,6 +76,10 @@ class ConversationControlNode(Node):
             self.speaker_tracker.reset()
             self.current_speaker = 'Unknown'
             self.focused_speaker = 'Unknown'
+            self.conversation_paused = False
+            pause_msg = Bool()
+            pause_msg.data = False
+            self.pause_pub.publish(pause_msg)
 
     def _attention_status_callback(self, msg: String):
         try:

@@ -46,6 +46,7 @@ setup(
             'person_memory_store_node = conversational_client.person_memory_store_node:main',
             'conversation_control_node = conversational_client.conversation_control_node:main',
             'echo_canceller_node = conversational_client.echo_canceller_node:main',
+            'acoustic_monitor_node = conversational_client.acoustic_monitor_node:main',
             'respeaker_doa_node = conversational_client.respeaker_doa_node:main',
         ],
     },

@@ -95,12 +95,46 @@ class StickySpeakerTracker:
         self.pending_hits = 0
 
 
+def _build_robot_desplit_rules():
+    """De-split rules for the configured robot address terms.
+
+    STT sometimes inserts a stray space inside the robot's name ("robot" ->
+    "ro bot"), which breaks address/command detection. For every single-word
+    address term in the config we accept a single spurious space at any
+    interior position and collapse it back. Nothing is hardcoded here — the
+    names come from ``direct_robot_prefixes``.
+    """
+    names = sorted(
+        {p for p in DIRECT_ROBOT_PREFIXES if ' ' not in p and len(p) >= 4},
+        key=len,
+        reverse=True,
+    )
+    rules = []
+    for name in names:
+        variants = [
+            re.escape(name[:i]) + r'\s+' + re.escape(name[i:])
+            for i in range(1, len(name))
+        ]
+        rules.append((re.compile(r'\b(?:' + '|'.join(variants) + r')\b'), name))
+    return tuple(rules)
+
+
+_ROBOT_DESPLIT_RULES = _build_robot_desplit_rules()
+
+
+def _normalize_robot_address_variants(normalized_text: str) -> str:
+    for pattern, name in _ROBOT_DESPLIT_RULES:
+        normalized_text = pattern.sub(name, normalized_text)
+    return normalized_text
+
+
 def normalize_text(text: str) -> str:
     text = (text or '').lower().strip()
     text = unicodedata.normalize('NFD', text)
     text = ''.join(ch for ch in text if unicodedata.category(ch) != 'Mn')
     text = text.replace('-', ' ')
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    text = _normalize_robot_address_variants(text)
     return ' '.join(text.split())
 
 

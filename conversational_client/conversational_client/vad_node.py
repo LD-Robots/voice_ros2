@@ -19,8 +19,9 @@ EXPLANATION:
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio, WakeWord
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 import numpy as np
+import json
 import struct
 import usb.core
 import usb.util
@@ -104,6 +105,7 @@ class VADNode(Node):
         self.sample_rate = self.get_parameter('sample_rate').value
         self.aggressiveness = self.get_parameter('aggressiveness').value
         self.energy_threshold = self.get_parameter('energy_threshold').value
+        self.base_energy_threshold = self.energy_threshold
         self.wake_word_enabled = self.get_parameter('wake_word_enabled').value
         self.session_timeout = self.get_parameter('session_timeout').value
         self.min_speech_frames = max(1, int(self.get_parameter('min_speech_frames').value))
@@ -120,6 +122,7 @@ class VADNode(Node):
         self.is_robot_speaking = False    # True when the robot is speaking (TTS playback)
         self.is_gate_open = not self.wake_word_enabled
         self.session_timer = None
+        self.conversation_paused = False
         
         # ─────────────────────────────────────────────────────────
         # HARDWARE VAD INITIALIZATION
@@ -138,7 +141,7 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         self.audio_sub = self.create_subscription(
             Audio,
-            '/audio_raw',
+            'audio_raw',
             self.audio_callback,
             10
         )
@@ -146,14 +149,14 @@ class VADNode(Node):
         # TTS state - when the robot is speaking, ignore VAD
         self.robot_speaking_sub = self.create_subscription(
             Bool,
-            '/is_speaking',
+            'is_speaking',
             self.robot_speaking_callback,
             10
         )
 
         self.wake_word_sub = self.create_subscription(
             WakeWord,
-            '/wake_word',
+            'wake_word',
             self.wake_word_callback,
             10
         )
@@ -161,16 +164,28 @@ class VADNode(Node):
         # Subscriber for session state (from wake_word_node)
         self.session_sub = self.create_subscription(
             Bool,
-            '/session_active',
+            'session_active',
             self.session_callback,
+            10
+        )
+        self.pause_sub = self.create_subscription(
+            Bool,
+            'conversation_pause',
+            self.pause_callback,
+            10
+        )
+        self.env_sub = self.create_subscription(
+            String,
+            'acoustic_environment',
+            self.env_callback,
             10
         )
         
         # ─────────────────────────────────────────────────────────
         # PUBLISHER
         # ─────────────────────────────────────────────────────────
-        self.vad_pub = self.create_publisher(Bool, '/voice_activity', 10)
-        self.end_session_pub = self.create_publisher(Bool, '/end_session_external', 10)
+        self.vad_pub = self.create_publisher(Bool, 'voice_activity', 10)
+        self.end_session_pub = self.create_publisher(Bool, 'end_session_external', 10)
         
         # ─────────────────────────────────────────────────────────
         # WEBRTC VAD INITIALIZATION
@@ -282,7 +297,14 @@ class VADNode(Node):
             self.session_timer.cancel()
         self.session_timer = self.create_timer(self.session_timeout, self._on_session_timeout)
 
+    def pause_callback(self, msg: Bool):
+        self.conversation_paused = bool(msg.data)
+
     def _on_session_timeout(self):
+        if self.conversation_paused:
+            self.get_logger().debug('⏳ Session timeout skipped (conversation is paused)')
+            return
+            
         # Do not close the gate if the robot is speaking
         if self.is_robot_speaking:
             self.get_logger().debug('⏳ Session timeout skipped (robot still speaking)')
@@ -376,14 +398,20 @@ class VADNode(Node):
             # METHOD 1: WebRTC VAD (more accurate)
             # ─────────────────────────────────────────────────────
             try:
-                # WebRTC VAD requires exactly 10, 20, or 30ms of audio
-                # At 16kHz: 160, 320, or 480 samples
-                audio_bytes = audio.tobytes()
+                # WebRTC VAD requires exactly 10, 20, or 30ms of audio (160, 320, or 480 samples at 16kHz)
+                # Split the input frame into 20ms (320 samples) sub-frames to handle arbitrary chunk sizes.
+                sub_frame_len = 320
+                if len(audio) % sub_frame_len == 0 and len(audio) > 0:
+                    for i in range(0, len(audio), sub_frame_len):
+                        sub_frame = audio[i:i+sub_frame_len]
+                        if self.vad.is_speech(sub_frame.tobytes(), self.sample_rate):
+                            return True
+                    return False
                 
-                # Adjust length if needed
+                # If we cannot split evenly into 20ms frames, check if single frame matches standard sizes
                 frame_len = len(audio)
-                if frame_len == 320:  # 20ms la 16kHz
-                    return self.vad.is_speech(audio_bytes, self.sample_rate)
+                if frame_len == 320:  # 20ms at 16kHz
+                    return self.vad.is_speech(audio.tobytes(), self.sample_rate)
                 else:
                     # Energy fallback for non-standard lengths
                     return self._energy_based_detection(audio)
@@ -400,6 +428,20 @@ class VADNode(Node):
         # Compute RMS (Root Mean Square) = average energy
         rms = np.sqrt(np.mean(audio.astype(np.float32) ** 2))
         return rms > self.energy_threshold
+
+    def env_callback(self, msg: String):
+        try:
+            data = json.loads(msg.data)
+            state = data.get('state', 'moderate')
+            if state == 'quiet':
+                self.energy_threshold = self.base_energy_threshold * 0.5
+            elif state == 'noisy':
+                self.energy_threshold = self.base_energy_threshold * 1.9
+            else:
+                self.energy_threshold = self.base_energy_threshold
+            self.get_logger().debug(f'Adjusted VAD energy threshold to {self.energy_threshold:.1f} due to acoustic state: {state}')
+        except Exception as e:
+            self.get_logger().error(f'Error parsing acoustic environment in VAD: {e}')
 
 
 # ═══════════════════════════════════════════════════════════════════

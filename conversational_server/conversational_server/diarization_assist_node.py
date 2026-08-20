@@ -243,16 +243,16 @@ class DiarizationAssistNode(Node):
         self._busy_lock = threading.Lock()
         self._busy = False
 
-        self.candidate_pub = self.create_publisher(String, '/speaker_id_candidate', 10)
+        self.candidate_pub = self.create_publisher(String, 'speaker_id_candidate', 10)
         self.speaker_sub = self.create_subscription(
             String,
-            '/speaker_id',
+            'speaker_id',
             self._speaker_callback,
             10,
         )
         self.audio_sub = self.create_subscription(
             Audio,
-            '/realtime_user_audio_segment',
+            'realtime_user_audio_segment',
             self._audio_segment_callback,
             10,
         )

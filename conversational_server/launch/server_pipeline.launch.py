@@ -4,12 +4,35 @@ Starts ASR, LLM, and TTS nodes.
 """
 import os
 from launch import LaunchDescription
-from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch_ros.actions import Node, PushRosNamespace
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    OpaqueFunction,
+    SetEnvironmentVariable,
+)
 from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import EnvironmentVariable, LaunchConfiguration
 from launch.substitutions import PythonExpression
 from ament_index_python.packages import get_package_share_directory
+
+
+# See full_system.launch.py: an unknown backend name silently starts nothing
+# that can speak, so reject it up front rather than booting a mute system.
+VALID_BACKENDS = ('openai_realtime', 'legacy')
+
+
+def validate_conversation_backend(context, *args, **kwargs):
+    """Fail fast on an unknown conversation_backend instead of booting mute."""
+    value = LaunchConfiguration('conversation_backend').perform(context)
+    if value not in VALID_BACKENDS:
+        raise RuntimeError(
+            f"Unknown conversation_backend '{value}'. "
+            f"Valid values: {', '.join(VALID_BACKENDS)}. "
+            "(The OpenAI speech-to-speech backend is called 'openai_realtime', "
+            "not 'openai_live'.)"
+        )
+    return []
 
 
 def generate_launch_description():
@@ -17,11 +40,21 @@ def generate_launch_description():
 
     return LaunchDescription([
         # Declare arguments
+        # ROS_DOMAIN_ID isolates this system on the DDS network. Defaults to 11,
+        # respects an already-exported ROS_DOMAIN_ID, overridable with ros_domain_id:=<N>.
+        DeclareLaunchArgument(
+            'ros_domain_id',
+            default_value=EnvironmentVariable('ROS_DOMAIN_ID', default_value='11'),
+            description='DDS domain id shared by all nodes (default 11)'
+        ),
+        SetEnvironmentVariable('ROS_DOMAIN_ID', LaunchConfiguration('ros_domain_id')),
+
         DeclareLaunchArgument(
             'conversation_backend',
             default_value='legacy',
             description='Conversation backend (legacy/openai_realtime)'
         ),
+        OpaqueFunction(function=validate_conversation_backend),
         DeclareLaunchArgument(
             'asr_model_size',
             default_value='small',
@@ -39,8 +72,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_model',
-            default_value='gpt-realtime-2',
-            description='OpenAI Realtime model name'
+            default_value='gpt-realtime-2.1',
+            description='OpenAI Realtime model (gpt-realtime-2.1 / gpt-realtime-2.1-mini)'
         ),
         DeclareLaunchArgument(
             'realtime_reasoning_effort',
@@ -79,7 +112,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'realtime_vad_silence_duration_ms',
-            default_value='550',
+            default_value='700',
             description='Silence duration before OpenAI Realtime finalizes a user turn'
         ),
         DeclareLaunchArgument(
@@ -92,7 +125,12 @@ def generate_launch_description():
             default_value='450',
             description='Delay before answering a transcript that arrived after the user resumed speaking'
         ),
-        
+        DeclareLaunchArgument('namespace', default_value='voice', description='ROS namespace for all nodes (default voice)'),
+
+        # Every node runs under `namespace` (default /voice); node topic names are relative.
+        GroupAction([
+            PushRosNamespace(LaunchConfiguration('namespace')),
+
         # ASR Node
         Node(
             package='conversational_server',
@@ -172,6 +210,8 @@ def generate_launch_description():
                     'realtime_continued_turn_response_delay_ms'
                 ),
                 'short_transcript_dedupe_window_s': 4.0,
-            }]
+            }],
+            remappings=[('audio_raw', 'audio_clean')]
         ),
+        ]),  # end GroupAction(namespace)
     ])
