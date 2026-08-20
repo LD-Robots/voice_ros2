@@ -217,3 +217,39 @@ def test_tell_me_requests_no_longer_enrol_their_topic():
         'spune mi cat e ceasul',
     ):
         assert extract_auto_enrollment_name(text) == '', text
+
+
+# ── Confirmation replies ──────────────────────────────────────────────────────
+# Fallback for when the model answers the robot's name question without
+# reporting it through confirm_person_name.
+
+from conversational_client.person_profile_utils import (  # noqa: E402
+    interpret_confirmation_reply,
+)
+
+
+def test_agreement_is_recognised_in_both_languages():
+    for reply in ('yes', 'yeah', 'correct', 'exactly', 'da', 'exact', 'asa e', 'corect'):
+        assert interpret_confirmation_reply(reply) == 'yes', reply
+
+
+def test_refusal_is_recognised_in_both_languages():
+    for reply in ('no', 'nope', 'wrong', 'nu', 'gresit', 'incorect'):
+        assert interpret_confirmation_reply(reply) == 'no', reply
+
+
+def test_refusal_wins_over_an_incidental_agreement_word():
+    """"no, that's not right" must not read as yes because it contains "right"."""
+    assert interpret_confirmation_reply('no that is not right') == 'no'
+    assert interpret_confirmation_reply('nu, nu e corect') == 'no'
+
+
+def test_a_refusal_carrying_the_real_name_still_reads_as_refusal():
+    assert interpret_confirmation_reply('no it is Vasile') == 'no'
+    assert interpret_confirmation_reply('nu, ma numesc Vasile') == 'no'
+
+
+def test_an_unrelated_reply_settles_nothing():
+    """Anything ambiguous must leave the name staged rather than guess."""
+    for reply in ('maybe', 'I like pizza', 'what time is it', ''):
+        assert interpret_confirmation_reply(reply) == '', reply

@@ -29,6 +29,7 @@ from .person_profile_utils import (
     extract_fact,
     extract_language_preference,
     extract_preferred_name,
+    interpret_confirmation_reply,
     migrate_legacy_auto_voice_labels,
     normalize_person_name,
     normalize_person_record,
@@ -60,6 +61,13 @@ class PersonMemoryStoreNode(Node):
         # meaning tells them apart. Costs recall, so it is off by default;
         # the locative guard already blocks the "sunt din Romania" class.
         self.declare_parameter('enrollment_requires_explicit_intro', False)
+        # Ask the speaker before storing a name. This is the only check that
+        # catches a well-formed sentence carrying the wrong word -- "I'm called
+        # doctor" is grammatically a perfect introduction, so no pattern can
+        # reject it, but the speaker can.
+        self.declare_parameter('require_enrollment_confirmation', True)
+        self.declare_parameter('enrollment_confirmation_timeout_s', 25.0)
+        self.declare_parameter('max_confirmation_attempts', 2)
         # Gemini Live transcripts lag the audio by several seconds, so the
         # window that decides whether recent audio is "fresh enough" to enroll
         # must comfortably exceed that latency (was 8.0 -> missed real intros).
@@ -77,6 +85,19 @@ class PersonMemoryStoreNode(Node):
         self.enrollment_requires_explicit_intro = bool(
             self.get_parameter('enrollment_requires_explicit_intro').value
         )
+        self.require_enrollment_confirmation = bool(
+            self.get_parameter('require_enrollment_confirmation').value
+        )
+        self.enrollment_confirmation_timeout_s = float(
+            self.get_parameter('enrollment_confirmation_timeout_s').value
+        )
+        self.max_confirmation_attempts = max(
+            1, int(self.get_parameter('max_confirmation_attempts').value)
+        )
+        # Staged name awaiting the speaker's agreement. Nothing is on disk
+        # while this is set.
+        self.pending_enrollment = None
+        self.confirmation_timer = None
         self.auto_enroll_unknown_speakers = bool(
             self.get_parameter('auto_enroll_unknown_speakers').value
         )
@@ -145,8 +166,17 @@ class PersonMemoryStoreNode(Node):
             self._enrollment_status_callback,
             10,
         )
+        self.confirmation_response_sub = self.create_subscription(
+            String,
+            'enrollment_confirmation_response',
+            self._confirmation_response_callback,
+            10,
+        )
         self.context_pub = self.create_publisher(String, 'person_context', 10)
         self.enrollment_request_pub = self.create_publisher(String, 'speaker_enrollment_request', 10)
+        self.confirmation_request_pub = self.create_publisher(
+            String, 'enrollment_confirmation_request', 10
+        )
 
         self.get_logger().info(f'Person Memory Store started: {self.memory_file}')
 
@@ -177,6 +207,13 @@ class PersonMemoryStoreNode(Node):
         if not normalized:
             return
 
+        # While a name is staged, this turn is the answer to the robot's
+        # question. It must not be run through name extraction as well, or
+        # "no, it's Vasile" would start a second, competing claim.
+        if self.pending_enrollment is not None:
+            if self._interpret_pending_confirmation(normalized):
+                return
+
         preferred_name = self._extract_preferred_name(normalized)
         auto_enrollment_name = self._extract_auto_enrollment_name(normalized)
         preferred_language = self._extract_language_preference(normalized)
@@ -206,18 +243,33 @@ class PersonMemoryStoreNode(Node):
                 preferred_name,
             )
             if action == 'set':
-                record['preferred_name'] = introduced_name
-                updated = True
+                # Naming a speaker who has none yet is just as durable as
+                # renaming one, so it is confirmed the same way.
+                self._request_speaker_enrollment(
+                    introduced_name,
+                    preferred_language,
+                    '',
+                    evidence=normalized,
+                    profile_only=True,
+                )
             elif action == 'conflict':
                 if (
                     self._looks_like_name_correction(normalized)
                     or self._looks_like_explicit_self_introduction(normalized)
                 ):
-                    record['preferred_name'] = introduced_name
-                    updated = True
-                    self.get_logger().info(
-                        f'Corrected preferred name for speaker={self.current_speaker}: '
-                        f'"{existing_name}" -> "{introduced_name}"'
+                    # Renaming an already-known speaker used to apply straight
+                    # away with no check at all, which is how "But I'm called
+                    # doctor" renamed a real person to Doctor. It now goes
+                    # through the same audit and confirmation as a first-time
+                    # enrollment: the frame being valid says nothing about
+                    # whether the word in it is a name.
+                    self._request_speaker_enrollment(
+                        introduced_name,
+                        preferred_language,
+                        '',
+                        evidence=normalized,
+                        rename_of=existing_name,
+                        profile_only=True,
                     )
                 else:
                     self.get_logger().warning(
@@ -347,16 +399,215 @@ class PersonMemoryStoreNode(Node):
         preferred_language: str,
         fact: str,
         evidence: str = '',
+        rename_of: str = '',
+        profile_only: bool = False,
     ):
+        """Stage a name for confirmation, or commit it when confirmation is off.
+
+        Nothing reaches disk from here. A name only becomes a voiceprint and a
+        profile once the speaker has agreed to it, because no amount of pattern
+        matching can tell "I'm called Vasile" from "I'm called doctor" -- both
+        are correct sentences, and only the speaker knows which one named them.
+
+        ``profile_only`` is for a speaker who is already enrolled: their voice
+        is known and its embedding stays as it is, so only the stored name
+        changes.
+        """
         if not self._enrollment_evidence_is_sound(preferred_name, evidence):
             return
-        result, reason = self._collect_enrollment_audio()
-        if result is None:
-            self.get_logger().warning(
-                f'Cannot enroll "{preferred_name}" yet: {reason}'
+
+        # One utterance reaches this node twice: once via the model's
+        # remember_person tool and once via the pattern matcher. Whichever
+        # arrives first wins, which also stops "my name is Vasile by the way"
+        # producing both "Vasile" and "Vasile By".
+        if self.pending_enrollment is not None:
+            self.get_logger().debug(
+                f'Ignoring "{preferred_name}": already awaiting confirmation for '
+                f'"{self.pending_enrollment["preferred_name"]}"'
             )
             return
-        audio, sample_rate = result
+
+        audio = None
+        sample_rate = 0
+        if not profile_only:
+            # Captured now rather than after the exchange: the clip is assembled
+            # from recent segments, which age out while we wait for an answer.
+            result, reason = self._collect_enrollment_audio()
+            if result is None:
+                self.get_logger().warning(
+                    f'Cannot enroll "{preferred_name}" yet: {reason}'
+                )
+                return
+            audio, sample_rate = result
+
+        candidate = {
+            'preferred_name': preferred_name,
+            'preferred_language': preferred_language,
+            'fact': fact,
+            'audio': audio,
+            'sample_rate': sample_rate,
+            'rename_of': rename_of,
+            'profile_only': profile_only,
+            'speaker': self.current_speaker,
+            'attempts': 0,
+        }
+
+        if not self.require_enrollment_confirmation:
+            self._commit_enrollment(candidate)
+            return
+
+        self.pending_enrollment = candidate
+        self._ask_for_enrollment_confirmation()
+
+    def _ask_for_enrollment_confirmation(self):
+        """Ask the speaker whether the staged name is really theirs."""
+        candidate = self.pending_enrollment
+        if candidate is None:
+            return
+        candidate['attempts'] += 1
+
+        payload = {
+            'preferred_name': candidate['preferred_name'],
+            'preferred_language': candidate['preferred_language'],
+            'attempt': candidate['attempts'],
+            'is_rename': bool(candidate['rename_of']),
+            'previous_name': candidate['rename_of'],
+        }
+        msg = String()
+        msg.data = json.dumps(payload, separators=(',', ':'))
+        self.confirmation_request_pub.publish(msg)
+
+        self._restart_confirmation_timer()
+        self.get_logger().info(
+            f'Asking the speaker to confirm the name "{candidate["preferred_name"]}" '
+            f'(attempt {candidate["attempts"]})'
+        )
+
+    def _restart_confirmation_timer(self):
+        if self.confirmation_timer is not None:
+            self.confirmation_timer.cancel()
+        self.confirmation_timer = self.create_timer(
+            self.enrollment_confirmation_timeout_s,
+            self._on_confirmation_timeout,
+        )
+
+    def _clear_pending_enrollment(self):
+        self.pending_enrollment = None
+        if self.confirmation_timer is not None:
+            self.confirmation_timer.cancel()
+            self.confirmation_timer = None
+
+    def _on_confirmation_timeout(self):
+        """No answer means no enrollment. Silence must not create a profile."""
+        candidate = self.pending_enrollment
+        if candidate is None:
+            self._clear_pending_enrollment()
+            return
+        name = candidate['preferred_name']
+        self._clear_pending_enrollment()
+        self.get_logger().info(
+            f'No confirmation for "{name}" within '
+            f'{self.enrollment_confirmation_timeout_s:.0f}s - discarded, nothing stored'
+        )
+
+    def _handle_confirmation_outcome(self, confirmed: bool, corrected_name: str):
+        """Apply the speaker's answer to the staged name."""
+        candidate = self.pending_enrollment
+        if candidate is None:
+            return
+
+        corrected = normalize_person_name(corrected_name)
+
+        if confirmed and not corrected:
+            self._clear_pending_enrollment()
+            self.get_logger().info(
+                f'Speaker confirmed the name "{candidate["preferred_name"]}"'
+            )
+            self._commit_enrollment(candidate)
+            return
+
+        if corrected:
+            # A correction is itself a claim about a name, so it is confirmed in
+            # turn rather than trusted -- otherwise "no, call me doctor" simply
+            # moves the original problem one step along.
+            if candidate['attempts'] >= self.max_confirmation_attempts:
+                self._clear_pending_enrollment()
+                self.get_logger().info(
+                    f'Giving up after {self.max_confirmation_attempts} attempts; '
+                    f'"{corrected}" not stored'
+                )
+                return
+            self.get_logger().info(
+                f'Speaker corrected "{candidate["preferred_name"]}" to "{corrected}"'
+            )
+            candidate['preferred_name'] = corrected
+            self._ask_for_enrollment_confirmation()
+            return
+
+        name = candidate['preferred_name']
+        self._clear_pending_enrollment()
+        self.get_logger().info(f'Speaker rejected the name "{name}" - nothing stored')
+
+    def _interpret_pending_confirmation(self, normalized: str) -> bool:
+        """Read the answer straight from the transcript.
+
+        The model reporting via confirm_person_name is the primary path; this
+        covers the turn where it answers but does not call the tool. Returns
+        True when the reply was an answer and has been acted on.
+        """
+        verdict = interpret_confirmation_reply(normalized)
+        if not verdict:
+            return False
+
+        corrected = ''
+        if verdict == 'no':
+            # "no, it's Vasile" carries the replacement with the refusal.
+            corrected = self._extract_preferred_name(normalized)
+
+        self.get_logger().info(
+            f'Read "{verdict}" from the transcript as the answer about the name'
+        )
+        self._handle_confirmation_outcome(verdict == 'yes', corrected)
+        return True
+
+    def _confirmation_response_callback(self, msg: String):
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            self.get_logger().warning('Invalid enrollment confirmation payload')
+            return
+        if self.pending_enrollment is None:
+            return
+        self._handle_confirmation_outcome(
+            bool(payload.get('confirmed', False)),
+            str(payload.get('corrected_name', '') or ''),
+        )
+
+    def _commit_enrollment(self, candidate: dict):
+        """Write the agreed name to disk as a voiceprint and a profile."""
+        preferred_name = candidate['preferred_name']
+        preferred_language = candidate['preferred_language']
+        fact = candidate['fact']
+        audio = candidate['audio']
+        sample_rate = candidate['sample_rate']
+
+        if candidate['profile_only']:
+            # The voice is already enrolled and its embedding is still valid,
+            # so only the stored name changes.
+            speaker = candidate['speaker'] or self.current_speaker
+            record = self._touch_person(speaker)
+            record['preferred_name'] = preferred_name
+            if preferred_language:
+                record['preferred_language'] = preferred_language
+            self._save_memory()
+            previous = candidate['rename_of']
+            self.get_logger().info(
+                f'Renamed speaker={speaker}: "{previous}" -> "{preferred_name}"'
+                if previous
+                else f'Set name for speaker={speaker}: "{preferred_name}"'
+            )
+            self._publish_context()
+            return
 
         os.makedirs(self.pending_enrollment_dir, exist_ok=True)
         request_id = str(uuid.uuid4())

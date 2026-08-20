@@ -166,6 +166,16 @@
     max_enrollment_clip_seconds: 12.0
     speaker_switch_hits_required: 2
     sticky_speaker_timeout_s: 180.0
+    # A name is staged and spoken back before anything is written. This is the
+    # only check that catches a well-formed sentence carrying the wrong word:
+    # "I'm called doctor" is a grammatically perfect introduction, so no
+    # pattern can reject it, but the speaker can. No answer = nothing stored.
+    require_enrollment_confirmation: true
+    enrollment_confirmation_timeout_s: 25.0
+    max_confirmation_attempts: 2
+    # Refuse a bare copula ("sunt X") and require an explicit naming frame.
+    # Costs recall; confirmation already covers this case, so it stays off.
+    enrollment_requires_explicit_intro: false
 
 /**/conversation_control_node:
   ros__parameters:

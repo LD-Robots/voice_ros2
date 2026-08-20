@@ -16,6 +16,8 @@ NAME_CORRECTION_PATTERNS = tuple(_RULES.get('name_correction_patterns') or ())
 EXPLICIT_NAME_PATTERNS = SELF_INTRO_NAME_PATTERNS + NAME_CORRECTION_PATTERNS
 PROFILE_SIDECAR_SUFFIX = '.profile.json'
 NON_NAMING_GOVERNORS = tuple(_RULES.get('non_naming_governors') or ())
+AFFIRMATION_WORDS = frozenset(_RULES.get('affirmation_words') or ())
+NEGATION_WORDS = frozenset(_RULES.get('negation_words') or ())
 EXPLICIT_INTRO_FRAMES = tuple(_RULES.get('explicit_intro_frames') or ())
 COPULA_INTRO_FRAMES = tuple(_RULES.get('copula_intro_frames') or ())
 LANGUAGE_PREFERENCES = {
@@ -162,6 +164,24 @@ def classify_name_introduction(name: str, utterance: str) -> tuple[str, str]:
             return INTRO_COPULA, f'ambiguous copula frame "{frame}"'
 
     return INTRO_NONE, 'no introduction frame precedes the name'
+
+
+def interpret_confirmation_reply(normalized: str) -> str:
+    """Read a yes/no answer to "is this your name?".
+
+    A fallback for when the model does not report the answer itself. Returns
+    'yes', 'no' or '' when the reply settles nothing. Negation is checked first
+    so that "no, that's not right" is not read as agreement because of "right".
+    """
+    text = normalize_utterance(normalized)
+    if not text:
+        return ''
+    words = set(text.split())
+    if words & NEGATION_WORDS or any(p in text for p in NEGATION_WORDS if ' ' in p):
+        return 'no'
+    if words & AFFIRMATION_WORDS or any(p in text for p in AFFIRMATION_WORDS if ' ' in p):
+        return 'yes'
+    return ''
 
 
 def resolve_preferred_name_update(

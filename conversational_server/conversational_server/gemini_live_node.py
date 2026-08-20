@@ -371,6 +371,9 @@ class GeminiLiveNode(Node):
         self.session_pub = self.create_publisher(Bool, "session_active", 10)
         self.end_session_pub = self.create_publisher(Bool, "end_session_external", 10)
         self.introduced_name_pub = self.create_publisher(String, "introduced_name", 10)
+        self.confirmation_response_pub = self.create_publisher(
+            String, "enrollment_confirmation_response", 10
+        )
         self.user_emotion_pub = self.create_publisher(String, "user_emotion", 10)
 
         # Subscriptions
@@ -387,6 +390,12 @@ class GeminiLiveNode(Node):
         self.pause_sub = self.create_subscription(Bool, "conversation_pause", self.pause_callback, 10)
         self.vad_sub = self.create_subscription(Bool, "voice_activity", self.vad_callback, 10)
         self.wake_word_sub = self.create_subscription(WakeWord, "wake_word", self.wake_word_callback, 10)
+        self.enrollment_confirmation_sub = self.create_subscription(
+            String,
+            "enrollment_confirmation_request",
+            self.enrollment_confirmation_callback,
+            10,
+        )
         self.doa_sub = self.create_subscription(
             Int32, 'doa_angle', self.doa_callback, 10
         )
@@ -476,6 +485,74 @@ class GeminiLiveNode(Node):
                 "turnComplete": True,
             }
         })
+
+    def enrollment_confirmation_callback(self, msg: String):
+        """Ask the speaker to confirm a name before it is stored.
+
+        person_memory_store_node has staged a name but written nothing. It
+        cannot tell "I'm called Vasile" from "I'm called doctor" -- both are
+        well-formed introductions -- so the speaker settles it.
+        """
+        if not self._connected.is_set() or self.current_backend != "gemini_live":
+            return
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            self.get_logger().warning("Invalid enrollment confirmation request")
+            return
+
+        name = str(payload.get("preferred_name", "") or "").strip()
+        if not name:
+            return
+        previous = str(payload.get("previous_name", "") or "").strip()
+        attempt = int(payload.get("attempt", 1) or 1)
+
+        if attempt > 1:
+            question = (
+                f"[System: You misheard the name and the speaker corrected it to "
+                f"'{name}'. Confirm it back in exactly one short question, in the "
+                f"language they are speaking. Then call confirm_person_name with "
+                f"their answer.]"
+            )
+        elif previous:
+            question = (
+                f"[System: The speaker seems to want to be called '{name}' from now "
+                f"on instead of '{previous}'. Ask them in exactly one short question "
+                f"whether that is really what you should call them, in the language "
+                f"they are speaking. If '{name}' looks like a job, a place or an "
+                f"ordinary word rather than a name, say so briefly in the same "
+                f"question. Then call confirm_person_name with their answer.]"
+            )
+        else:
+            question = (
+                f"[System: You think the speaker just said their name is '{name}', "
+                f"but nothing has been saved yet. Ask them in exactly one short "
+                f"question to confirm you got it right, in the language they are "
+                f"speaking. If '{name}' looks like a job, a place or an ordinary "
+                f"word rather than a name, say so briefly in the same question. "
+                f"Then call confirm_person_name with their answer.]"
+            )
+
+        self._send_raw({
+            "clientContent": {
+                "turns": [{"role": "user", "parts": [{"text": question}]}],
+                "turnComplete": True,
+            }
+        })
+        self.get_logger().info(f"Asking the speaker to confirm the name '{name}'")
+
+    def _handle_confirm_person_name(self, args: dict) -> str:
+        """Report the speaker's answer to the name question."""
+        confirmed = bool((args or {}).get("confirmed", False))
+        corrected = str((args or {}).get("corrected_name", "") or "").strip()
+        payload = {"confirmed": confirmed, "corrected_name": corrected}
+        msg = String()
+        msg.data = json.dumps(payload, separators=(",", ":"))
+        self.confirmation_response_pub.publish(msg)
+        self.get_logger().info(
+            f"confirm_person_name -> confirmed={confirmed}, corrected='{corrected}'"
+        )
+        return "acknowledged"
 
     def speaking_callback(self, msg: Bool):
         was_speaking = self.robot_speaking
@@ -890,6 +967,13 @@ class GeminiLiveNode(Node):
                         'id': call_id,
                         'name': name,
                         'response': {'status': 'ok', 'emotion_recorded': emotion_res}
+                    })
+                elif name == 'confirm_person_name':
+                    confirm_res = self._handle_confirm_person_name(args)
+                    responses.append({
+                        'id': call_id,
+                        'name': name,
+                        'response': {'status': confirm_res}
                     })
                 else:
                     responses.append({
@@ -1389,6 +1473,40 @@ class GeminiLiveNode(Node):
                             },
                         },
                         "required": ["name", "utterance"],
+                    },
+                }]
+            })
+            # Reports the answer to the name question the robot was told to ask.
+            # Without it the staged name expires unconfirmed and is discarded,
+            # so this is what lets a correct name actually get stored.
+            tools.append({
+                "functionDeclarations": [{
+                    "name": "confirm_person_name",
+                    "description": (
+                        "Call this immediately after the speaker answers your "
+                        "question about what to call them. Set confirmed=true if "
+                        "they agreed the name is right. Set confirmed=false if "
+                        "they said no, denied it, or said it is not their name. "
+                        "If they gave a different name instead, put it in "
+                        "corrected_name. Call this exactly once per answer, and "
+                        "only when you actually asked about a name."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "confirmed": {
+                                "type": "boolean",
+                                "description": "true if the speaker agreed the name is correct",
+                            },
+                            "corrected_name": {
+                                "type": "string",
+                                "description": (
+                                    "the name they gave instead, if they corrected "
+                                    "you; empty otherwise"
+                                ),
+                            },
+                        },
+                        "required": ["confirmed"],
                     },
                 }]
             })
