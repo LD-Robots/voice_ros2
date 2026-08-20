@@ -139,17 +139,54 @@ def parse_robot_command(
     if require_direct_robot_address and not direct_address:
         return None
 
-    body = _strip_prefixes(normalized)
+    parsed = _parse_command_body(
+        _strip_prefixes(normalized),
+        default_steps=default_steps,
+        max_steps=max_steps,
+        direct_address=direct_address,
+    )
+    if parsed is not None:
+        return parsed
+
+    # The command patterns are anchored, so they only fire when the command sits
+    # at the very start of the remaining text. That made the address work only for
+    # a fixed prefix list: "please robot wave" parsed, but "now robot move forward"
+    # and "let's see robot turn around" did not. Retry from just after the robot
+    # mention, so any lead-in works as long as the sentence names the robot.
+    tail = _body_after_robot_address(normalized)
+    if tail:
+        return _parse_command_body(
+            _strip_prefixes(tail),
+            default_steps=default_steps,
+            max_steps=max_steps,
+            direct_address=direct_address,
+        )
+    return None
+
+
+def _parse_command_body(body: str, *, default_steps: int, max_steps: int, direct_address: bool):
     if not body:
         return None
-
-    parsed = (
+    return (
         _parse_stop(body, direct_address)
         or _parse_behavior(body)
         or _parse_turn(body, direct_address=direct_address)
         or _parse_move(body, default_steps=default_steps, max_steps=max_steps, direct_address=direct_address)
     )
-    return parsed
+
+
+def _body_after_robot_address(normalized: str) -> str:
+    """Return whatever follows the last standalone "robot" in the sentence.
+
+    The last mention is used so "robot, ask the robot to wave" still parses from
+    the final address rather than from an earlier, incidental one.
+    """
+    last_end = -1
+    for match in re.finditer(r'\brobot\b', normalized):
+        last_end = match.end()
+    if last_end < 0:
+        return ''
+    return normalized[last_end:].strip()
 
 
 def looks_like_robot_command(text: str, *, require_direct_robot_address: bool = False) -> bool:

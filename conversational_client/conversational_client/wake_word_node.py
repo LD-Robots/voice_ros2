@@ -26,6 +26,7 @@ from std_msgs.msg import Bool, String
 import numpy as np
 import time
 from pathlib import Path
+import json
 
 # Try to import OpenWakeWord
 try:
@@ -52,43 +53,50 @@ except ImportError:
 class WakeWordNode(Node):
     """
     ROS2 node that detects multiple wake/stop words.
-    
+
     Operation:
     1. Receives audio on /audio_raw (from audio_capture_node)
     2. Processes with OpenWakeWord (multiple ONNX models)
     3. When it detects a "wake" keyword, publishes True on /wake_detected
     4. When it detects a "stop" keyword, publishes True on /end_session
     """
-    
+
     def __init__(self):
         super().__init__('wake_word_node')
-        
+
         # ─────────────────────────────────────────────────────────
         # PARAMETERS
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('threshold', 0.5)     # Default detection threshold
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('cooldown_ms', 1500)  # Cooldown between detections
-        
+
         # Custom ONNX models - can be set from launch/YAML
         # Format: "path1:kind1,path2:kind2" (e.g., "/path/hello.onnx:wake,/path/goodbye.onnx:stop")
         self.declare_parameter('custom_models', '')
-        
+
+        self.declare_parameter('quiet_threshold_offset', -0.15)
+        self.declare_parameter('noisy_threshold_offset', 0.15)
+
         # Per-model thresholds (JSON-like format)
         # Format: "label1:threshold1,label2:threshold2"
         self.declare_parameter('model_thresholds', '')
-        
+
         self.threshold = self.get_parameter('threshold').value
+        self.base_global_threshold = self.threshold
+        self.quiet_offset = self.get_parameter('quiet_threshold_offset').value
+        self.noisy_offset = self.get_parameter('noisy_threshold_offset').value
+
         self.sample_rate = self.get_parameter('sample_rate').value
         self.cooldown_ms = self.get_parameter('cooldown_ms').value
         custom_models_str = self.get_parameter('custom_models').value
         model_thresholds_str = self.get_parameter('model_thresholds').value
-        
+
         # ─────────────────────────────────────────────────────────
         # PARSE CUSTOM MODELS
         # ─────────────────────────────────────────────────────────
         self.keywords = {}  # label -> {path, kind, threshold, last_hit}
-        
+
         # Parse custom model paths
         if custom_models_str:
             self.get_logger().debug(f'📦 Parsing custom_models: {custom_models_str}')
@@ -106,12 +114,13 @@ class WakeWordNode(Node):
                             'path': str(path),
                             'kind': kind,
                             'threshold': self.threshold,
+                            'base_threshold': self.threshold,
                             'last_hit': 0.0
                         }
                         self.get_logger().debug(f'  ✓ Loaded model: {label} (kind={kind})')
                     else:
                         self.get_logger().warn(f'  ✗ Model not found: {path}')
-        
+
         # Parse individual thresholds
         if model_thresholds_str:
             for entry in model_thresholds_str.split(','):
@@ -123,16 +132,18 @@ class WakeWordNode(Node):
                         if label in self.keywords:
                             try:
                                 self.keywords[label]['threshold'] = float(thr)
+                                self.keywords[label]['base_threshold'] = float(thr)
                             except ValueError:
                                 pass
-        
+
         # ─────────────────────────────────────────────────────────
         # STATE
         # ─────────────────────────────────────────────────────────
         self.session_active = False  # True when the session is active
         self.audio_buffer = []       # Buffer for audio accumulation
         self.current_backend = 'legacy'  # Track active backend
-        
+        self._last_env_state = None      # Last acoustic state logged
+
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER - receive microphone audio
         # ─────────────────────────────────────────────────────────
@@ -142,7 +153,7 @@ class WakeWordNode(Node):
             self.audio_callback,
             10
         )
-        
+
         # ─────────────────────────────────────────────────────────
         # PUBLISHERS
         # ─────────────────────────────────────────────────────────
@@ -151,10 +162,10 @@ class WakeWordNode(Node):
         self.session_pub = self.create_publisher(Bool, 'session_active', 10)
         self.end_session_pub = self.create_publisher(Bool, 'end_session', 10)
         self.tts_stop_pub = self.create_publisher(Bool, 'tts_stop', 10)
-        
+
         # Publisher for TTS commands (cache playback)
         self.tts_cmd_pub = self.create_publisher(String, 'tts_command', 10)
-        
+
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER for external session end
         # ─────────────────────────────────────────────────────────
@@ -165,14 +176,21 @@ class WakeWordNode(Node):
             10
         )
 
-        # Track active backend to adjust behaviour
         self.backend_sub = self.create_subscription(
             String,
             'conversation_backend',
             self._backend_callback,
             10
         )
-        
+
+        # Subscriber for dynamic threshold adjustment based on acoustic environment
+        self.env_sub = self.create_subscription(
+            String,
+            'acoustic_environment',
+            self.env_callback,
+            10
+        )
+
         # ─────────────────────────────────────────────────────────
         # OPENWAKEWORD INITIALIZATION
         # ─────────────────────────────────────────────────────────
@@ -180,7 +198,7 @@ class WakeWordNode(Node):
         if OPENWAKEWORD_AVAILABLE:
             try:
                 model_paths = [kw['path'] for kw in self.keywords.values()] if self.keywords else None
-                
+
                 if model_paths:
                     # Load custom models
                     self.oww_model = OWWModel(wakeword_models=model_paths)
@@ -189,9 +207,9 @@ class WakeWordNode(Node):
                     # Use default built-in models
                     self.oww_model = OWWModel()
                     self.get_logger().debug('🔔 Wake Word Node started with default models')
-                
+
                 self.get_logger().debug(f'   threshold={self.threshold}, cooldown={self.cooldown_ms}ms')
-                
+
             except Exception as e:
                 self.get_logger().error(f'❌ Failed to load OpenWakeWord: {e}')
                 self.get_logger().warn('⚠️ Running in dummy mode (no wake word detection)')
@@ -199,16 +217,22 @@ class WakeWordNode(Node):
         else:
             self.get_logger().warn('⚠️ OpenWakeWord not available - using dummy mode')
             self.get_logger().info('🔔 Wake Word Node started (dummy mode)')
-    
+
     # ═══════════════════════════════════════════════════════════════════
     # AUDIO CALLBACK - process each audio chunk
     # ═══════════════════════════════════════════════════════════════════
     def audio_callback(self, msg: Audio):
         """Process audio for wake/stop word detection."""
-        
+
+        # [Phase 3 - Optimized]: Full bypass. Skip all array conversions to shed the last 2% of CPU cost.
+        if getattr(self, 'session_active', False):
+            if self.audio_buffer:
+                self.audio_buffer.clear()
+            return
+
         # Convert to numpy array
         audio = np.array(msg.data, dtype=np.int16)
-        
+
         # Add to buffer
         self.audio_buffer.extend(audio.tolist())
 
@@ -220,15 +244,15 @@ class WakeWordNode(Node):
         # Track chunk count for periodic logging
         if not hasattr(self, 'audio_debug_count'): self.audio_debug_count = 0
         self.audio_debug_count += 1
-        
+
         # OpenWakeWord typically expects chunks of 1280 samples (80ms at 16kHz)
         # for optimal performance (though it handles streaming internally).
         MIN_SAMPLES = 1280
-        
+
         while len(self.audio_buffer) >= MIN_SAMPLES:
             # Extract exactly MIN_SAMPLES
             audio_chunk = np.array(self.audio_buffer[:MIN_SAMPLES], dtype=np.int16)
-            
+
             # --- DEBUG: Save Audio to WAV for verification (DISABLED) ---
             # if not hasattr(self, 'debug_wav_buffer'):
             #     self.debug_wav_buffer = []
@@ -237,22 +261,22 @@ class WakeWordNode(Node):
             # if len(self.debug_wav_buffer) < 48000:
             #     self.debug_wav_buffer.extend(audio_chunk.tolist())
             #     # self.get_logger().info(f'🎤 Debug buffer filling: {len(self.debug_wav_buffer)}/48000')
-                
+
             #     if len(self.debug_wav_buffer) >= 48000:
             #         try:
             #             import soundfile as sf
             #             wav_path = os.path.expanduser('~/debug_wake_audio.wav')
-                        
+
             #             # Convert to numpy int16 array explicitly
             #             wav_data = np.array(self.debug_wav_buffer, dtype=np.int16)
-                        
+
             #             # Verify it's not silence
             #             rms_debug = np.sqrt(np.mean(wav_data.astype(np.float32)**2))
             #             self.get_logger().info(f'🎤 Debug WAV RMS: {rms_debug:.2f}')
-                        
+
             #             # Write with explicit subtype
             #             sf.write(wav_path, wav_data, 16000, subtype='PCM_16')
-                        
+
             #             self.get_logger().warn(f'💾 DEBUG WAV SAVED: {wav_path}')
             #             self.get_logger().warn('👉 Please play this file to verify audio quality!')
             #         except ImportError:
@@ -266,13 +290,13 @@ class WakeWordNode(Node):
             # The standard OWW `predict` method is stateful, so we just feed it sequential chunks.
             # We will consume the whole chunk to keep it real-time and simple.
             self.audio_buffer = self.audio_buffer[MIN_SAMPLES:]
-            
+
             if self.oww_model is not None:
                 try:
                     # ✅ OpenWakeWord expects int16 audio directly!
                     # Do NOT convert to float32 - that was causing near-zero scores
                     prediction = self.oww_model.predict(audio_chunk)
-                    
+
                     # Check scores for all models
                     self._check_predictions(prediction)
 
@@ -280,7 +304,7 @@ class WakeWordNode(Node):
                     if self.audio_debug_count % 25 == 0:
                         scores_str = " | ".join([f"{k}: {v:.3f}" for k, v in prediction.items()])
                         self.get_logger().info(f'👀 Scores: {scores_str}')
-                    
+
                 except Exception as e:
                     self.get_logger().error(f'OpenWakeWord prediction error: {e}')
             else:
@@ -288,17 +312,21 @@ class WakeWordNode(Node):
                 if not hasattr(self, 'model_none_warned'):
                     self.get_logger().error('❌ oww_model is NONE! Initialization failed?')
                     self.model_none_warned = True
-    
+
     def _check_predictions(self, prediction: dict):
         """Check predictions and trigger actions."""
         now_ms = time.time() * 1000
-        
+
+        best_model = None
+        best_score = 0.0
+        best_kind = 'wake'
+
         for model_name, scores in prediction.items():
             if isinstance(scores, dict):
                 score = max(scores.values()) if scores else 0.0
             else:
                 score = float(scores) if scores else 0.0
-            
+
             # Find configuration for this model (or use default)
             if model_name in self.keywords:
                 kw_cfg = self.keywords[model_name]
@@ -309,37 +337,44 @@ class WakeWordNode(Node):
                 threshold = self.threshold
                 kind = 'wake'
                 last_hit = 0.0
-            
+
             # Check threshold and cooldown
             cooldown_passed = (now_ms - last_hit) > self.cooldown_ms
-            
+
+            # Select the keyword with the HIGHEST score if multiple cross the threshold
             if score >= threshold and cooldown_passed:
-                # Update last_hit
-                if model_name in self.keywords:
-                    self.keywords[model_name]['last_hit'] = now_ms
-                
-                self.get_logger().debug(f'🔔 Detected "{model_name}" (kind={kind}, score={score:.2f})')
-                
-                if kind == 'stop':
-                    # STOP total + End Session (ex: "goodbye robot")
-                    self._end_session(model_name, score)
-                elif kind == 'barge_in':
-                    # STOP TTS only, session remains active (e.g., "stop robot")
-                    self._trigger_barge_in(model_name, score)
-                else:  # wake
-                    if not self.session_active:
-                        self._activate_session(model_name, score)
-                    else:
-                        # If already active, we can do an optional re-activate/ack
-                        self.get_logger().debug('ℹ️ Session already active (wake word ignored)')
-    
+                if score > best_score:
+                    best_score = score
+                    best_model = model_name
+                    best_kind = kind
+
+        if best_model is not None:
+            # Update last_hit
+            if best_model in self.keywords:
+                self.keywords[best_model]['last_hit'] = now_ms
+
+            self.get_logger().info(f'🔔 Detected "{best_model}" (kind={best_kind}, score={best_score:.2f})')
+
+            if best_kind == 'stop':
+                # STOP total + End Session (ex: "goodbye robot")
+                self._end_session(best_model, best_score)
+            elif best_kind == 'barge_in':
+                # STOP TTS only, session remains active (e.g., "stop robot")
+                self._trigger_barge_in(best_model, best_score)
+            else:  # wake
+                if not self.session_active:
+                    self._activate_session(best_model, best_score)
+                else:
+                    # If already active, we can do an optional re-activate/ack
+                    self.get_logger().debug('ℹ️ Session already active (wake word ignored)')
+
     # ═══════════════════════════════════════════════════════════════════
     # SESSION ACTIVATION (wake word)
     # ═══════════════════════════════════════════════════════════════════
     def _activate_session(self, model_name: str, score: float):
         """Activate the session when a wake word is detected."""
         self.session_active = True
-        
+
         self.get_logger().info(f'🟢 Session ACTIVE via "{model_name}" (score={score:.2f})')
 
         wake_event = WakeWord()
@@ -347,36 +382,36 @@ class WakeWordNode(Node):
         wake_event.word = model_name
         wake_event.score = score
         self.wake_word_pub.publish(wake_event)
-        
+
         # Publish to /wake_detected
         wake_msg = Bool()
         wake_msg.data = True
         self.wake_pub.publish(wake_msg)
-        
+
         # Publish session state
         session_msg = Bool()
         session_msg.data = True
         self.session_pub.publish(session_msg)
-        
+
         # Send acknowledgement to TTS only for legacy backend.
         # A speech-to-speech backend responds naturally to the injected greeting.
         if self.current_backend == 'legacy':
             tts_cmd = String()
             tts_cmd.data = 'ack_en'
             self.tts_cmd_pub.publish(tts_cmd)
-    
+
     # ═══════════════════════════════════════════════════════════════════
     # TTS STOP (BARGE-IN ONLY)
     # ═══════════════════════════════════════════════════════════════════
     def _trigger_barge_in(self, model_name: str, score: float):
         """Stop only TTS, keep the session active."""
         self.get_logger().debug(f'✋ BARGE-IN via "{model_name}" (score={score:.2f}) - Stopping TTS only')
-        
+
         # Stop TTS immediately
         stop_msg = Bool()
         stop_msg.data = True
         self.tts_stop_pub.publish(stop_msg)
-        
+
         # OPTIONAL: Reset VAD if we want to be safe
         # But VAD already listens while session_active=True
 
@@ -387,36 +422,43 @@ class WakeWordNode(Node):
     def _end_session(self, model_name: str, score: float):
         """End the session when a stop/goodbye word is detected."""
         self.get_logger().info(f'🔴 Session ENDED via "{model_name}" (score={score:.2f})')
-        
+
         # Stop TTS immediately
         stop_msg = Bool()
         stop_msg.data = True
         self.tts_stop_pub.publish(stop_msg)
-        
+
         # Publish to /end_session
         self.end_session_pub.publish(stop_msg)
-        
+
         if self.session_active:
             self.session_active = False
-            
+
+            if self.oww_model:
+                self.oww_model.reset()
+
             # Publish session state
             session_msg = Bool()
             session_msg.data = False
             self.session_pub.publish(session_msg)
-            
+
             # Send goodbye to TTS only for legacy backend.
             # A speech-to-speech backend says goodbye in its own response.
             if self.current_backend == 'legacy':
                 tts_cmd = String()
                 tts_cmd.data = 'goodbye_en'
                 self.tts_cmd_pub.publish(tts_cmd)
-    
+
     def external_end_session_callback(self, msg: Bool):
         """Callback for ending the session externally."""
         if msg.data and self.session_active:
             self.session_active = False
+
+            if self.oww_model:
+                self.oww_model.reset()
+
             self.get_logger().info('🔴 Session ENDED externally')
-            
+
             session_msg = Bool()
             session_msg.data = False
             self.session_pub.publish(session_msg)
@@ -424,10 +466,46 @@ class WakeWordNode(Node):
     def _backend_callback(self, msg: String):
         """Track the active conversation backend."""
         self.current_backend = (msg.data or '').strip() or 'legacy'
-    
+
+    def env_callback(self, msg: String):
+        """Dynamically adjust wake-word thresholds based on acoustic environment."""
+        try:
+            data = json.loads(msg.data)
+            state = data.get('state', 'moderate')
+
+            if state == 'quiet':
+                offset = self.quiet_offset
+            elif state == 'noisy':
+                offset = self.noisy_offset
+            else:
+                offset = 0.0
+
+            # Apply to global threshold
+            self.threshold = max(0.1, min(0.99, self.base_global_threshold + offset))
+
+            # Apply to each custom model threshold
+            for label, kw_cfg in self.keywords.items():
+                base = kw_cfg.get('base_threshold', self.base_global_threshold)
+                kw_cfg['threshold'] = max(0.1, min(0.99, base + offset))
+
+            # acoustic_environment republishes on a timer, not only on change,
+            # so log the adjustment only when the state actually moved —
+            # otherwise this line repeats every monitoring interval forever.
+            if state != self._last_env_state:
+                self._last_env_state = state
+                self.get_logger().info(
+                    f'🎚️ [WakeWord] Dynamic threshold adjusted for {state.upper()} '
+                    f'environment (offset: {offset:+.2f}). Global: {self.threshold:.2f}'
+                )
+
+        except Exception as e:
+            self.get_logger().error(f'Error parsing acoustic environment in WakeWord: {e}')
+
     def reset_session(self):
         """Reset the session to standby."""
         self.session_active = False
+        if self.oww_model:
+            self.oww_model.reset()
         self.get_logger().info('⏳ Standby')
 
 
@@ -438,7 +516,7 @@ class WakeWordNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = WakeWordNode()
-    
+
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

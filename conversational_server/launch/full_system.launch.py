@@ -321,10 +321,13 @@ def generate_launch_description():
             parameters=[config_file_path]
         ),
 
+        # Sole owner of the ReSpeaker USB device: publishes doa_angle,
+        # hardware_vad and hardware_rt60, and serves set_xmos_param.
+        # Replaces respeaker_doa_node, which claimed the same device.
         Node(
             package='conversational_client',
-            executable='respeaker_doa_node',
-            name='respeaker_doa_node',
+            executable='xmos_hardware_node',
+            name='xmos_hardware_node',
             parameters=[config_file_path]
         ),
         ]),  # end GroupAction(namespace)

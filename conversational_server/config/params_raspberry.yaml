@@ -146,6 +146,9 @@
     session_timeout: 30.0
     min_silence_frames: 14
     energy_threshold: 150
+    # Aggressiveness is retuned live from /voice/acoustic_environment.
+    quiet_vad_aggressiveness: 1 # Permissive: catches whispers in silence
+    noisy_vad_aggressiveness: 3 # Strict: filters noise spikes in noisy env
 
 /**/audio_segment_node:
   ros__parameters:
@@ -172,11 +175,18 @@
 /**/acoustic_monitor_node:
   ros__parameters:
     monitoring_interval_s: 5.0
-    respeaker_vid: 10374 # 0x2886
-    respeaker_pid: 24    # 0x0018
     quiet_noise_threshold_dbfs: -48.0
     noisy_noise_threshold_dbfs: -35.0
+    # Retunes the ReSpeaker's noise-suppression registers per environment via
+    # the set_xmos_param service. The VID/PID now live under xmos_hardware_node,
+    # which is the only node that touches USB.
     enable_respeaker_tuning: true
+
+/**/xmos_hardware_node:
+  ros__parameters:
+    respeaker_vid: 10374 # 0x2886
+    respeaker_pid: 24    # 0x0018
+    polling_rate_hz: 10.0
 
 /**/barge_in_node:
   ros__parameters:
@@ -234,6 +244,10 @@
     threshold: 0.5
     cooldown_ms: 1500
     model_thresholds: "hello_robot:0.30,goodbye_robot:0.40"
+    # Thresholds shift live with /voice/acoustic_environment: easier to trigger
+    # in a quiet room, harder in a noisy one.
+    quiet_threshold_offset: -0.15
+    noisy_threshold_offset: 0.15
 
 /**/voice_command_node:
   ros__parameters:

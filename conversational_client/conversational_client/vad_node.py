@@ -22,9 +22,7 @@ from conversational_interfaces.msg import Audio, WakeWord
 from std_msgs.msg import Bool, String
 import numpy as np
 import json
-import struct
-import usb.core
-import usb.util
+import time
 
 # Try to import WebRTC VAD (simple variant)
 try:
@@ -38,38 +36,6 @@ except ImportError:
 # ═══════════════════════════════════════════════════════════════════
 # RESPEAKER TUNING HELPER (Simplified)
 # ═══════════════════════════════════════════════════════════════════
-
-class ReSpeakerVAD:
-    """Helper to read VOICEACTIVITY from ReSpeaker hardware via USB."""
-    def __init__(self, vid=0x2886, pid=0x0018):
-        self.dev = usb.core.find(idVendor=vid, idProduct=pid)
-        self.TIMEOUT = 1000
-
-    def is_connected(self):
-        return self.dev is not None
-
-    def read_vad(self):
-        if not self.dev:
-            return False
-        try:
-            # VOICEACTIVITY register: id=19, offset=32, type=int
-            # Control transfer parameters for reading:
-            # request=0, request_type=IN|VENDOR|DEVICE, value=0x80|offset, index=id
-            cmd = 0x80 | 32 | 0x40 # 0x40 is for int type
-            response = self.dev.ctrl_transfer(
-                usb.util.CTRL_IN | usb.util.CTRL_TYPE_VENDOR | usb.util.CTRL_RECIPIENT_DEVICE,
-                0, cmd, 19, 8, self.TIMEOUT)
-            if response:
-                # Use tostring() for older pyusb or memoryview for newer
-                try:
-                    data = response.tobytes()
-                except AttributeError:
-                    data = response.tostring()
-                return struct.unpack(b'ii', data)[0] == 1
-        except Exception:
-            pass
-        return False
-
 
 # ═══════════════════════════════════════════════════════════════════
 # NODE CLASS
@@ -93,6 +59,8 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('sample_rate', 16000)
         self.declare_parameter('aggressiveness', 2)  # 0-3, 3 = more aggressive
+        self.declare_parameter('quiet_vad_aggressiveness', 1)   # More permissive in silence — catches whispers
+        self.declare_parameter('noisy_vad_aggressiveness', 3)   # More strict in noise — rejects non-speech
         self.declare_parameter('energy_threshold', 500)  # RMS energy threshold
         self.declare_parameter('wake_word_enabled', True)
         self.declare_parameter('session_timeout', 8.0)
@@ -100,10 +68,16 @@ class VADNode(Node):
         self.declare_parameter('min_silence_frames', 14)
         self.declare_parameter('capture_during_playback', False)
         self.declare_parameter('use_hardware_vad', False)
+        # How long a hardware VAD reading stays trustworthy. xmos_hardware_node
+        # polls at 10 Hz, so 1s is ~10 missed readings.
+        self.declare_parameter('hardware_vad_timeout_s', 1.0)
 
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.aggressiveness = self.get_parameter('aggressiveness').value
+        self.base_aggressiveness = self.aggressiveness  # Preserved as the neutral/moderate baseline
+        self.quiet_vad_aggressiveness = max(0, min(3, int(self.get_parameter('quiet_vad_aggressiveness').value)))
+        self.noisy_vad_aggressiveness = max(0, min(3, int(self.get_parameter('noisy_vad_aggressiveness').value)))
         self.energy_threshold = self.get_parameter('energy_threshold').value
         self.base_energy_threshold = self.energy_threshold
         self.wake_word_enabled = self.get_parameter('wake_word_enabled').value
@@ -112,6 +86,7 @@ class VADNode(Node):
         self.min_silence_frames = max(1, int(self.get_parameter('min_silence_frames').value))
         self.capture_during_playback = self.get_parameter('capture_during_playback').value
         self.use_hardware_vad = self.get_parameter('use_hardware_vad').value
+        self.hw_vad_timeout_s = float(self.get_parameter('hardware_vad_timeout_s').value)
         
         # ─────────────────────────────────────────────────────────
         # STATE
@@ -127,14 +102,23 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         # HARDWARE VAD INITIALIZATION
         # ─────────────────────────────────────────────────────────
-        self.hw_vad = None
+        # Hardware VAD arrives on a topic from xmos_hardware_node, which is the
+        # single owner of the ReSpeaker USB device. This node must NOT open the
+        # device itself: the XVF-3000 does not arbitrate concurrent control
+        # transfers, so two claimants make both sides' reads flaky.
+        self.hw_vad_state = False
+        self.hw_vad_last_rx = 0.0
+        self.hw_vad_sub = None
         if self.use_hardware_vad:
-            self.hw_vad = ReSpeakerVAD()
-            if self.hw_vad.is_connected():
-                self.get_logger().info('⚡ Hardware VAD: ReSpeaker detected and enabled!')
-            else:
-                self.get_logger().warn('⚠️ Hardware VAD: ReSpeaker NOT FOUND. Falling back to software.')
-                self.use_hardware_vad = False
+            self.hw_vad_sub = self.create_subscription(
+                Bool,
+                'hardware_vad',
+                self._hardware_vad_callback,
+                10
+            )
+            self.get_logger().info(
+                '⚡ Hardware VAD enabled: consuming /hardware_vad from xmos_hardware_node'
+            )
         
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER
@@ -190,21 +174,23 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         # WEBRTC VAD INITIALIZATION
         # ─────────────────────────────────────────────────────────
+        # WebRTC is initialised even when hardware VAD is on, so that a
+        # disconnected or silent ReSpeaker degrades to software detection
+        # instead of leaving the robot permanently deaf.
         self.vad = None
-        if not self.use_hardware_vad:
-            if WEBRTCVAD_AVAILABLE:
-                try:
-                    self.vad = webrtcvad.Vad(self.aggressiveness)
-                    self.get_logger().info(
-                        f'🎯 VAD Node started (WebRTC, aggressiveness={self.aggressiveness})'
-                    )
-                except Exception as e:
-                    self.get_logger().error(f'❌ Failed to init WebRTC VAD: {e}')
-            else:
-                self.get_logger().warn('⚠️ WebRTC VAD not available - using energy-based detection')
-                self.get_logger().info(f'🎯 VAD Node started (energy threshold={self.energy_threshold})')
+        if WEBRTCVAD_AVAILABLE:
+            try:
+                self.vad = webrtcvad.Vad(self.aggressiveness)
+                self.get_logger().info(
+                    f'🎯 VAD Node started (WebRTC, aggressiveness={self.aggressiveness})'
+                )
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to init WebRTC VAD: {e}')
         else:
-            self.get_logger().info('🎯 VAD Node started (using Hardware ReSpeaker VAD)')
+            self.get_logger().warn('⚠️ WebRTC VAD not available - using energy-based detection')
+            self.get_logger().info(f'🎯 VAD Node started (energy threshold={self.energy_threshold})')
+        if self.use_hardware_vad:
+            self.get_logger().info('🎯 Hardware ReSpeaker VAD preferred; WebRTC retained as fallback')
         
         self.frame_count = 0
         
@@ -378,6 +364,25 @@ class VADNode(Node):
         
         self.frame_count += 1
     
+    def _hardware_vad_callback(self, msg: Bool):
+        """Cache the latest hardware VAD state published by xmos_hardware_node."""
+        self.hw_vad_state = bool(msg.data)
+        self.hw_vad_last_rx = time.monotonic()
+
+    def _hardware_vad_is_fresh(self) -> bool:
+        """True while hardware VAD readings are recent enough to act on."""
+        if self.hw_vad_last_rx <= 0.0:
+            return False
+        stale = time.monotonic() - self.hw_vad_last_rx > self.hw_vad_timeout_s
+        if stale:
+            self.get_logger().warn(
+                '⚠️ Hardware VAD stale (no /hardware_vad for '
+                f'{self.hw_vad_timeout_s:.1f}s) - falling back to WebRTC',
+                throttle_duration_sec=10.0,
+            )
+            return False
+        return True
+
     # ═══════════════════════════════════════════════════════════════════
     # VOICE DETECTION
     # ═══════════════════════════════════════════════════════════════════
@@ -390,8 +395,12 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────
         # METHOD 0: Hardware VAD (most efficient)
         # ─────────────────────────────────────────────────────
-        if self.use_hardware_vad and self.hw_vad:
-            return self.hw_vad.read_vad()
+        # Only trusted while xmos_hardware_node is actually publishing. If the
+        # ReSpeaker is unplugged or that node dies, the last received value
+        # would otherwise stick forever — False means permanent deafness, True
+        # means a permanently open gate. Fall through to WebRTC instead.
+        if self.use_hardware_vad and self._hardware_vad_is_fresh():
+            return self.hw_vad_state
 
         if self.vad is not None:
             # ─────────────────────────────────────────────────────
@@ -433,13 +442,35 @@ class VADNode(Node):
         try:
             data = json.loads(msg.data)
             state = data.get('state', 'moderate')
+
+            # ── Energy threshold adjustment (existing logic, unchanged) ──
             if state == 'quiet':
                 self.energy_threshold = self.base_energy_threshold * 0.5
             elif state == 'noisy':
                 self.energy_threshold = self.base_energy_threshold * 1.9
             else:
                 self.energy_threshold = self.base_energy_threshold
-            self.get_logger().debug(f'Adjusted VAD energy threshold to {self.energy_threshold:.1f} due to acoustic state: {state}')
+
+            # ── WebRTC VAD aggressiveness adjustment (new) ──
+            # Only applies when WebRTC VAD is active (not hardware VAD, not energy-only fallback)
+            if self.vad is not None:
+                if state == 'quiet':
+                    new_aggressiveness = self.quiet_vad_aggressiveness
+                elif state == 'noisy':
+                    new_aggressiveness = self.noisy_vad_aggressiveness
+                else:
+                    new_aggressiveness = self.base_aggressiveness
+
+                if new_aggressiveness != self.aggressiveness:
+                    self.vad.set_mode(new_aggressiveness)
+                    self.aggressiveness = new_aggressiveness
+                    self.get_logger().info(
+                        f'🎚️ [VAD] Aggressiveness adjusted for {state.upper()} environment: {new_aggressiveness}'
+                    )
+
+            self.get_logger().debug(
+                f'VAD env update: state={state}, energy_threshold={self.energy_threshold:.1f}, aggressiveness={self.aggressiveness}'
+            )
         except Exception as e:
             self.get_logger().error(f'Error parsing acoustic environment in VAD: {e}')
 
