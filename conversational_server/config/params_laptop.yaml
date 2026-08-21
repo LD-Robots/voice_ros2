@@ -93,6 +93,13 @@
   ros__parameters:
     wake_word_enabled: true
     session_timeout: 30.0
+    # Engine selection: "silero" (deep learning, best), "webrtc" (legacy), "hardware", "energy"
+    vad_engine: "silero"
+    # Silero VAD parameters (only used when vad_engine=silero)
+    silero_activation_threshold: 0.5    # Speech confidence (0.0-1.0). Lower = more sensitive, higher = stricter
+    silero_min_speech_duration_ms: 50   # Ignore sounds shorter than this (filters coughs, clicks)
+    silero_min_silence_duration_ms: 550 # Hangover: wait this long after silence before declaring speech ended
+    # WebRTC VAD parameters (only used when vad_engine=webrtc, kept as fallback)
     min_silence_frames: 14
     use_hardware_vad: false
     energy_threshold: 150

@@ -10,6 +10,12 @@ EXPLANATION:
 - Used by other nodes to:
   - Know when to send audio to the server (only when speaking)
   - Barge-in (stop TTS when the user speaks)
+
+ENGINES (selectable via 'vad_engine' parameter):
+  - "silero"  : Deep Learning VAD (best accuracy, robust to noise)
+  - "webrtc"  : WebRTC VAD (legacy, frequency-based)
+  - "hardware": ReSpeaker on-board DSP VAD
+  - "energy"  : Simple RMS energy threshold (last resort)
 """
 
 # ═══════════════════════════════════════════════════════════════════
@@ -26,13 +32,104 @@ import struct
 import usb.core
 import usb.util
 
-# Try to import WebRTC VAD (simple variant)
+# Try to import WebRTC VAD (legacy fallback)
 try:
     import webrtcvad
     WEBRTCVAD_AVAILABLE = True
 except ImportError:
     WEBRTCVAD_AVAILABLE = False
-    print("⚠️ webrtcvad not installed. Run: pip install webrtcvad")
+
+# Try to import Silero VAD via torch.hub
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SILERO VAD WRAPPER
+# ═══════════════════════════════════════════════════════════════════
+
+class SileroVADEngine:
+    """Wraps the Silero VAD model for frame-by-frame inference."""
+
+    def __init__(self, threshold: float = 0.5,
+                 min_speech_duration_ms: int = 50,
+                 min_silence_duration_ms: int = 550,
+                 sample_rate: int = 16000,
+                 logger=None):
+        self.threshold = threshold
+        self.min_speech_duration_ms = min_speech_duration_ms
+        self.min_silence_duration_ms = min_silence_duration_ms
+        self.sample_rate = sample_rate
+        self.logger = logger
+
+        # Silero works on 512-sample windows at 16kHz (32ms)
+        self.window_size = 512 if sample_rate == 16000 else 256
+
+        # State machine
+        self._is_speech = False
+        self._speech_ms = 0
+        self._silence_ms = 0
+        self._frame_ms = (self.window_size / self.sample_rate) * 1000.0
+
+        # Load the model
+        self.model, _ = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            trust_repo=True
+        )
+        self.model.eval()
+        if logger:
+            logger.info('🧠 Silero VAD model loaded successfully')
+
+    def reset_states(self):
+        """Reset the model's internal RNN states."""
+        self.model.reset_states()
+        self._is_speech = False
+        self._speech_ms = 0
+        self._silence_ms = 0
+
+    def process_frame(self, audio: np.ndarray) -> bool:
+        """
+        Process an audio frame and return True if speech is active.
+        Applies min_speech_duration and min_silence_duration logic.
+        """
+        # Split into window_size chunks and process each
+        speech_detected_in_any = False
+
+        for i in range(0, len(audio), self.window_size):
+            chunk = audio[i:i + self.window_size]
+            if len(chunk) < self.window_size:
+                # Pad short final chunk with zeros
+                chunk = np.pad(chunk, (0, self.window_size - len(chunk)))
+
+            # Convert to float32 tensor normalised to [-1, 1]
+            tensor = torch.from_numpy(chunk.astype(np.float32) / 32768.0)
+
+            # Run inference
+            with torch.no_grad():
+                prob = self.model(tensor, self.sample_rate).item()
+
+            if prob >= self.threshold:
+                speech_detected_in_any = True
+
+        # State machine with hangover logic
+        if speech_detected_in_any:
+            self._speech_ms += self._frame_ms * max(1, len(audio) // self.window_size)
+            self._silence_ms = 0
+
+            if not self._is_speech and self._speech_ms >= self.min_speech_duration_ms:
+                self._is_speech = True
+        else:
+            self._silence_ms += self._frame_ms * max(1, len(audio) // self.window_size)
+            self._speech_ms = 0
+
+            if self._is_speech and self._silence_ms >= self.min_silence_duration_ms:
+                self._is_speech = False
+
+        return self._is_speech
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -92,9 +189,19 @@ class VADNode(Node):
         # PARAMETERS
         # ─────────────────────────────────────────────────────────
         self.declare_parameter('sample_rate', 16000)
+        self.declare_parameter('vad_engine', 'silero')  # "silero" | "webrtc" | "hardware" | "energy"
+
+        # Silero VAD parameters
+        self.declare_parameter('silero_activation_threshold', 0.5)
+        self.declare_parameter('silero_min_speech_duration_ms', 50)
+        self.declare_parameter('silero_min_silence_duration_ms', 550)
+
+        # WebRTC VAD parameters (legacy)
         self.declare_parameter('aggressiveness', 2)  # 0-3, 3 = more aggressive
         self.declare_parameter('quiet_vad_aggressiveness', 1)   # More permissive in silence — catches whispers
         self.declare_parameter('noisy_vad_aggressiveness', 3)   # More strict in noise — rejects non-speech
+
+        # General parameters
         self.declare_parameter('energy_threshold', 500)  # RMS energy threshold
         self.declare_parameter('wake_word_enabled', True)
         self.declare_parameter('session_timeout', 8.0)
@@ -105,6 +212,7 @@ class VADNode(Node):
 
         
         self.sample_rate = self.get_parameter('sample_rate').value
+        self.vad_engine = str(self.get_parameter('vad_engine').value).strip().lower()
         self.aggressiveness = self.get_parameter('aggressiveness').value
         self.base_aggressiveness = self.aggressiveness  # Preserved as the neutral/moderate baseline
         self.quiet_vad_aggressiveness = max(0, min(3, int(self.get_parameter('quiet_vad_aggressiveness').value)))
@@ -117,6 +225,10 @@ class VADNode(Node):
         self.min_silence_frames = max(1, int(self.get_parameter('min_silence_frames').value))
         self.capture_during_playback = self.get_parameter('capture_during_playback').value
         self.use_hardware_vad = self.get_parameter('use_hardware_vad').value
+
+        # Legacy override: use_hardware_vad=true forces hardware engine
+        if self.use_hardware_vad:
+            self.vad_engine = 'hardware'
         
         # ─────────────────────────────────────────────────────────
         # STATE
@@ -130,17 +242,61 @@ class VADNode(Node):
         self.conversation_paused = False
         
         # ─────────────────────────────────────────────────────────
-        # HARDWARE VAD INITIALIZATION
+        # ENGINE INITIALIZATION
         # ─────────────────────────────────────────────────────────
+        self.silero_engine = None
         self.hw_vad = None
-        if self.use_hardware_vad:
+        self.vad = None  # WebRTC VAD instance
+
+        if self.vad_engine == 'silero':
+            if TORCH_AVAILABLE:
+                try:
+                    self.silero_engine = SileroVADEngine(
+                        threshold=float(self.get_parameter('silero_activation_threshold').value),
+                        min_speech_duration_ms=int(self.get_parameter('silero_min_speech_duration_ms').value),
+                        min_silence_duration_ms=int(self.get_parameter('silero_min_silence_duration_ms').value),
+                        sample_rate=self.sample_rate,
+                        logger=self.get_logger(),
+                    )
+                    self.get_logger().info(
+                        f'🧠 VAD Node started (Silero Deep Learning, '
+                        f'threshold={self.silero_engine.threshold}, '
+                        f'min_speech={self.silero_engine.min_speech_duration_ms}ms, '
+                        f'min_silence={self.silero_engine.min_silence_duration_ms}ms)'
+                    )
+                except Exception as e:
+                    self.get_logger().error(f'❌ Failed to load Silero VAD: {e}')
+                    self.get_logger().warn('⚠️ Falling back to WebRTC VAD')
+                    self.vad_engine = 'webrtc'
+            else:
+                self.get_logger().warn('⚠️ PyTorch not installed — cannot use Silero VAD. Falling back to WebRTC.')
+                self.vad_engine = 'webrtc'
+
+        if self.vad_engine == 'hardware':
             self.hw_vad = ReSpeakerVAD()
             if self.hw_vad.is_connected():
                 self.get_logger().info('⚡ Hardware VAD: ReSpeaker detected and enabled!')
             else:
-                self.get_logger().warn('⚠️ Hardware VAD: ReSpeaker NOT FOUND. Falling back to software.')
-                self.use_hardware_vad = False
-        
+                self.get_logger().warn('⚠️ Hardware VAD: ReSpeaker NOT FOUND. Falling back to WebRTC.')
+                self.vad_engine = 'webrtc'
+
+        if self.vad_engine == 'webrtc':
+            if WEBRTCVAD_AVAILABLE:
+                try:
+                    self.vad = webrtcvad.Vad(self.aggressiveness)
+                    self.get_logger().info(
+                        f'🎯 VAD Node started (WebRTC, aggressiveness={self.aggressiveness})'
+                    )
+                except Exception as e:
+                    self.get_logger().error(f'❌ Failed to init WebRTC VAD: {e}')
+                    self.vad_engine = 'energy'
+            else:
+                self.get_logger().warn('⚠️ WebRTC VAD not available — falling back to energy-based detection')
+                self.vad_engine = 'energy'
+
+        if self.vad_engine == 'energy':
+            self.get_logger().info(f'🎯 VAD Node started (energy threshold={self.energy_threshold})')
+
         # ─────────────────────────────────────────────────────────
         # SUBSCRIBER
         # ─────────────────────────────────────────────────────────
@@ -192,25 +348,6 @@ class VADNode(Node):
         self.vad_pub = self.create_publisher(Bool, 'voice_activity', 10)
         self.end_session_pub = self.create_publisher(Bool, 'end_session_external', 10)
         
-        # ─────────────────────────────────────────────────────────
-        # WEBRTC VAD INITIALIZATION
-        # ─────────────────────────────────────────────────────────
-        self.vad = None
-        if not self.use_hardware_vad:
-            if WEBRTCVAD_AVAILABLE:
-                try:
-                    self.vad = webrtcvad.Vad(self.aggressiveness)
-                    self.get_logger().info(
-                        f'🎯 VAD Node started (WebRTC, aggressiveness={self.aggressiveness})'
-                    )
-                except Exception as e:
-                    self.get_logger().error(f'❌ Failed to init WebRTC VAD: {e}')
-            else:
-                self.get_logger().warn('⚠️ WebRTC VAD not available - using energy-based detection')
-                self.get_logger().info(f'🎯 VAD Node started (energy threshold={self.energy_threshold})')
-        else:
-            self.get_logger().info('🎯 VAD Node started (using Hardware ReSpeaker VAD)')
-        
         self.frame_count = 0
         
         # Timer for the "READY TO LISTEN" reminder
@@ -259,6 +396,10 @@ class VADNode(Node):
         
         # When the robot finishes speaking, restart the timer and reminder
         elif not self.is_robot_speaking and was_speaking:
+            # Reset Silero internal states after robot finishes speaking
+            # to avoid stale RNN state from echo residuals
+            if self.silero_engine is not None:
+                self.silero_engine.reset_states()
             if self.is_gate_open:
                 self._reset_session_timer()
                 self._start_reminder_timer()
@@ -271,6 +412,9 @@ class VADNode(Node):
                 self.get_logger().debug('🔓 Session started - Opening Gate!')
                 self.is_gate_open = True
                 self._reset_session_timer()
+                # Reset Silero states for a fresh session
+                if self.silero_engine is not None:
+                    self.silero_engine.reset_states()
         else:
             # Session ended - close gate
             if self.is_gate_open:
@@ -350,31 +494,44 @@ class VADNode(Node):
         # Detect voice
         has_voice = self._detect_voice(audio)
         
-        # Debounce logic (avoid flickering)
-        if has_voice:
-            self.speech_frames += 1
-            self.silence_frames = 0
+        # For Silero, the engine handles its own debounce internally,
+        # so we can use simplified state logic
+        if self.vad_engine == 'silero' and self.silero_engine is not None:
+            old_state = self.is_speaking
+            self.is_speaking = has_voice
 
-            # If speaking, reset the timer
-            if self.is_gate_open:
-                self._reset_session_timer()
+            if self.is_speaking and not old_state:
+                self._stop_reminder_timer()
+                self.get_logger().debug('🗣️ Voice DETECTED - user is speaking')
+                if self.is_gate_open:
+                    self._reset_session_timer()
+            elif not self.is_speaking and old_state:
+                self.get_logger().debug('🤫 Voice ENDED - silence detected')
+                if self.is_gate_open and not self.is_robot_speaking:
+                    self._start_reminder_timer()
+
         else:
-            self.silence_frames += 1
-            self.speech_frames = 0
-        
-        # Change state only after a few consecutive frames
-        old_state = self.is_speaking
-        
-        if not self.is_speaking and self.speech_frames >= self.min_speech_frames:
-            self.is_speaking = True
-            self._stop_reminder_timer()  # Stop reminder when the user speaks
-            self.get_logger().debug('🗣️ Voice DETECTED - user is speaking')
-        elif self.is_speaking and self.silence_frames >= self.min_silence_frames:
-            self.is_speaking = False
-            self.get_logger().debug('🤫 Voice ENDED - silence detected')
-            # Restart reminder if still in listening mode
-            if self.is_gate_open and not self.is_robot_speaking:
-                self._start_reminder_timer()
+            # Legacy debounce logic for WebRTC / energy / hardware
+            if has_voice:
+                self.speech_frames += 1
+                self.silence_frames = 0
+                if self.is_gate_open:
+                    self._reset_session_timer()
+            else:
+                self.silence_frames += 1
+                self.speech_frames = 0
+            
+            old_state = self.is_speaking
+            
+            if not self.is_speaking and self.speech_frames >= self.min_speech_frames:
+                self.is_speaking = True
+                self._stop_reminder_timer()
+                self.get_logger().debug('🗣️ Voice DETECTED - user is speaking')
+            elif self.is_speaking and self.silence_frames >= self.min_silence_frames:
+                self.is_speaking = False
+                self.get_logger().debug('🤫 Voice ENDED - silence detected')
+                if self.is_gate_open and not self.is_robot_speaking:
+                    self._start_reminder_timer()
         
         # Publish state
         msg_out = Bool()
@@ -389,19 +546,29 @@ class VADNode(Node):
     def _detect_voice(self, audio: np.ndarray) -> bool:
         """
         Detect whether audio contains voice.
-        Uses ReSpeaker Hardware, WebRTC VAD, or falls back to energy.
+        Dispatches to the configured engine.
         """
         
         # ─────────────────────────────────────────────────────
-        # METHOD 0: Hardware VAD (most efficient)
+        # ENGINE: Silero Deep Learning VAD (best accuracy)
         # ─────────────────────────────────────────────────────
-        if self.use_hardware_vad and self.hw_vad:
+        if self.vad_engine == 'silero' and self.silero_engine is not None:
+            try:
+                return self.silero_engine.process_frame(audio)
+            except Exception as e:
+                self.get_logger().error(f'Silero VAD error: {e}', throttle_duration_sec=5.0)
+                return self._energy_based_detection(audio)
+
+        # ─────────────────────────────────────────────────────
+        # ENGINE: Hardware VAD (ReSpeaker DSP)
+        # ─────────────────────────────────────────────────────
+        if self.vad_engine == 'hardware' and self.hw_vad:
             return self.hw_vad.read_vad()
 
-        if self.vad is not None:
-            # ─────────────────────────────────────────────────────
-            # METHOD 1: WebRTC VAD (more accurate)
-            # ─────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────
+        # ENGINE: WebRTC VAD (legacy)
+        # ─────────────────────────────────────────────────────
+        if self.vad_engine == 'webrtc' and self.vad is not None:
             try:
                 # WebRTC VAD requires exactly 10, 20, or 30ms of audio (160, 320, or 480 samples at 16kHz)
                 # Split the input frame into 20ms (320 samples) sub-frames to handle arbitrary chunk sizes.
@@ -422,11 +589,11 @@ class VADNode(Node):
                     return self._energy_based_detection(audio)
             except Exception:
                 return self._energy_based_detection(audio)
-        else:
-            # ─────────────────────────────────────────────────────
-            # METHOD 2: RMS Energy (simple fallback)
-            # ─────────────────────────────────────────────────────
-            return self._energy_based_detection(audio)
+
+        # ─────────────────────────────────────────────────────
+        # ENGINE: RMS Energy (simple fallback)
+        # ─────────────────────────────────────────────────────
+        return self._energy_based_detection(audio)
     
     def _energy_based_detection(self, audio: np.ndarray) -> bool:
         """Simple detection based on audio energy (RMS)."""
@@ -447,7 +614,23 @@ class VADNode(Node):
             else:
                 self.energy_threshold = self.base_energy_threshold
 
-            # ── WebRTC VAD aggressiveness adjustment (new) ──
+            # ── Silero VAD: adjust activation threshold based on environment ──
+            if self.silero_engine is not None:
+                if state == 'quiet':
+                    self.silero_engine.threshold = max(0.15, float(
+                        self.get_parameter('silero_activation_threshold').value) - 0.15)
+                elif state == 'noisy':
+                    self.silero_engine.threshold = min(0.85, float(
+                        self.get_parameter('silero_activation_threshold').value) + 0.15)
+                else:
+                    self.silero_engine.threshold = float(
+                        self.get_parameter('silero_activation_threshold').value)
+                self.get_logger().info(
+                    f'🎚️ [VAD] Silero threshold adjusted for {state.upper()} environment: '
+                    f'{self.silero_engine.threshold:.2f}'
+                )
+
+            # ── WebRTC VAD aggressiveness adjustment (legacy) ──
             # Only applies when WebRTC VAD is active (not hardware VAD, not energy-only fallback)
             if self.vad is not None:
                 if state == 'quiet':
