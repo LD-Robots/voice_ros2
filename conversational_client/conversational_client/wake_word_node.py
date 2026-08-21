@@ -487,7 +487,7 @@ class WakeWordNode(Node):
                 base = kw_cfg.get('base_threshold', self.base_global_threshold)
                 kw_cfg['threshold'] = max(0.1, min(0.99, base + offset))
                 
-            self.get_logger().info(
+            self.get_logger().debug(
                 f'🎚️ [WakeWord] Dynamic threshold adjusted for {state.upper()} environment (offset: {offset:+.2f}). Global: {self.threshold:.2f}'
             )
             

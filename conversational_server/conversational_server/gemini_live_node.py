@@ -807,6 +807,11 @@ class GeminiLiveNode(Node):
             self._publish_status("reconnecting")
         else:
             self._publish_status("offline")
+            self._had_unintentional_disconnect = True
+            try:
+                self.tts_command_pub.publish(String(data="reconnect_en"))
+            except Exception:
+                pass
         self.get_logger().warn(f"Gemini Live disconnected: code={status_code}, msg={msg}")
 
     def _on_error(self, ws, error):
@@ -840,6 +845,13 @@ class GeminiLiveNode(Node):
         # Setup acknowledgement
         if "setupComplete" in event:
             self.get_logger().debug("Gemini Live session setup confirmed")
+            if getattr(self, '_had_unintentional_disconnect', False):
+                self._had_unintentional_disconnect = False
+                try:
+                    self.tts_command_pub.publish(String(data="reconnected_en"))
+                except Exception:
+                    pass
+
             if self._replay_on_next_setup:
                 self._replay_on_next_setup = False
                 self._replay_accumulated_audio()

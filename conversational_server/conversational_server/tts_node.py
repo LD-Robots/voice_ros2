@@ -105,16 +105,18 @@ class TTSNode(Node):
             'confirm_ro': ('Confirmi? Da sau nu.', 'ro'),
             'pause_en': ('Conversation paused.', 'en'),
             'pause_ro': ('Conversație pusă pe pauză.', 'ro'),
+            'reconnect_en': ('One moment, reconnecting to server...', 'en'),
+            'reconnected_en': ('Reconnected, I am listening.', 'en'),
         }
-        # Only safety-critical prompts may speak in ANY backend (e.g. the risky-command
-        # confirmation, which the gate needs even in Gemini mode). Greetings / acks /
-        # fillers / goodbyes are legacy-only and are suppressed automatically in Gemini
-        # mode by the `current_backend != 'legacy'` guard in command_callback().
+        # Only safety-critical prompts and connection status notifications may speak in ANY backend
         self.system_commands = {
             'confirm_en',
             'confirm_ro',
             'pause_en',
             'pause_ro',
+            'error_en',
+            'reconnect_en',
+            'reconnected_en',
         }
         self.audio_cache = {}  # key -> (audio_data, sample_rate)
         

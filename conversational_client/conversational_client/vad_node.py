@@ -360,7 +360,7 @@ class VADNode(Node):
         # Reminder every 3 seconds
         self.reminder_timer = self.create_timer(3.0, self._on_reminder)
         # Log immediately the first time
-        self.get_logger().info('🎤 READY TO LISTEN - speak now!')
+        self.get_logger().debug('🎤 READY TO LISTEN - speak now!')
     
     def _stop_reminder_timer(self):
         """Stop the reminder timer."""
@@ -372,7 +372,7 @@ class VADNode(Node):
         """Callback for the periodic reminder."""
         # Only if the gate is open and the robot is not speaking
         if self.is_gate_open and not self.is_robot_speaking and not self.is_speaking:
-            self.get_logger().info('🎤 READY TO LISTEN - speak now!')
+            self.get_logger().debug('🎤 READY TO LISTEN - speak now!')
         else:
             # Stop the timer if conditions are no longer met
             self._stop_reminder_timer()
@@ -625,7 +625,7 @@ class VADNode(Node):
                 else:
                     self.silero_engine.threshold = float(
                         self.get_parameter('silero_activation_threshold').value)
-                self.get_logger().info(
+                self.get_logger().debug(
                     f'🎚️ [VAD] Silero threshold adjusted for {state.upper()} environment: '
                     f'{self.silero_engine.threshold:.2f}'
                 )
@@ -643,7 +643,7 @@ class VADNode(Node):
                 if new_aggressiveness != self.aggressiveness:
                     self.vad.set_mode(new_aggressiveness)
                     self.aggressiveness = new_aggressiveness
-                    self.get_logger().info(
+                    self.get_logger().debug(
                         f'🎚️ [VAD] Aggressiveness adjusted for {state.upper()} environment: {new_aggressiveness}'
                     )
 

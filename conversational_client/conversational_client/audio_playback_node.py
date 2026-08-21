@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+import os
+import contextlib
 import rclpy
 from rclpy.node import Node
 from conversational_interfaces.msg import Audio
@@ -9,6 +11,19 @@ import threading
 from collections import deque
 import time
 import json
+
+@contextlib.contextmanager
+def ignore_stderr():
+    """Suppress C-level stderr output (ALSA/JACK noise)."""
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    old_stderr = os.dup(2)
+    os.dup2(devnull, 2)
+    try:
+        yield
+    finally:
+        os.dup2(old_stderr, 2)
+        os.close(devnull)
+        os.close(old_stderr)
 
 class AudioPlaybackNode(Node):
     def __init__(self):
@@ -56,20 +71,21 @@ class AudioPlaybackNode(Node):
         self.env_sub = self.create_subscription(String, 'acoustic_environment', self.env_callback, 10)
         
         # PyAudio Setup
-        self.audio_p = pyaudio.PyAudio()
-        self.stream: pyaudio.Stream | None = None
-        try:
-            self.stream = self.audio_p.open(
-                format=pyaudio.paInt16,
-                channels=self.channels,
-                rate=self.sample_rate,
-                output=True,
-                frames_per_buffer=self._playback_chunk_size
-            )
-            self.get_logger().info(f'🔊 Playback ready: {self.sample_rate}Hz')
-        except Exception as e:
-            self.get_logger().error(f'❌ Failed to open speaker: {e}')
-            self.stream = None
+        with ignore_stderr():
+            self.audio_p = pyaudio.PyAudio()
+            self.stream: pyaudio.Stream | None = None
+            try:
+                self.stream = self.audio_p.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=self.sample_rate,
+                    output=True,
+                    frames_per_buffer=self._playback_chunk_size
+                )
+                self.get_logger().info(f'🔊 Playback ready: {self.sample_rate}Hz')
+            except Exception as e:
+                self.get_logger().error(f'❌ Failed to open speaker: {e}')
+                self.stream = None
         
         self.running = True
         self.playback_thread = threading.Thread(target=self._playback_loop, daemon=True)
@@ -137,13 +153,14 @@ class AudioPlaybackNode(Node):
                     self.stream.stop_stream()
                     self.stream.close()
                 try:
-                    self.stream = self.audio_p.open(
-                        format=pyaudio.paInt16,
-                        channels=self.channels,
-                        rate=chunk_rate,
-                        output=True,
-                        frames_per_buffer=self._playback_chunk_size
-                    )
+                    with ignore_stderr():
+                        self.stream = self.audio_p.open(
+                            format=pyaudio.paInt16,
+                            channels=self.channels,
+                            rate=chunk_rate,
+                            output=True,
+                            frames_per_buffer=self._playback_chunk_size
+                        )
                     self.sample_rate = chunk_rate
                     self.get_logger().info(f'🔊 Playback stream switched to {chunk_rate}Hz')
                 except Exception as e:
@@ -212,7 +229,7 @@ class AudioPlaybackNode(Node):
             if abs(self.target_gain - old_target) >= 0.05 or state != self._last_env_state:
                 self._last_env_state = state
                 pct = int(self.target_gain * 100)
-                self.get_logger().info(
+                self.get_logger().debug(
                     f'🔊 Dynamic Playback Volume: {pct}% (Env: {state.upper()}, Noise: {noise_dbfs:.1f} dBFS)'
                 )
                 vol_msg = {
