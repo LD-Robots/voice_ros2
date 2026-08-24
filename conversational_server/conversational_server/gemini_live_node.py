@@ -975,6 +975,13 @@ class GeminiLiveNode(Node):
         if server_content.get("interrupted"):
             self.get_logger().info("Gemini Live: user interrupted assistant")
             self._user_speaking = False
+            # Reset audio-started flag BEFORE the subsequent turnComplete arrives.
+            # With our fix, turnComplete sets _model_thinking=True only when
+            # _current_turn_audio_started=True. If we leave it True here, the
+            # user's audio after barge-in gets zeroed and Gemini hears silence,
+            # forcing the user to repeat themselves.
+            self._current_turn_audio_started = False
+            self._model_thinking = False
             self._cancel_pending_response_create()
             self._mark_response_inactive()
             stop_msg = Bool()
@@ -1024,7 +1031,12 @@ class GeminiLiveNode(Node):
         # Turn complete
         if server_content.get("turnComplete"):
             self.get_logger().debug("Gemini Live: turn complete")
-            self._model_thinking = True
+            # Only set _model_thinking=True when Gemini actually produced audio
+            # this turn. If it was a silent turn (no audio), keep it False so
+            # the user's audio is NOT zeroed-out and Gemini can hear them.
+            if self._current_turn_audio_started:
+                self._model_thinking = True
+            # else: silent turn — leave _model_thinking=False so audio flows freely
             self._user_speaking = False
             self._publish_captured_user_audio_segment()
             self._start_user_audio_capture()

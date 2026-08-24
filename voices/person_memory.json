@@ -1,11 +1,27 @@
 {
   "people": {
+    "delia": {
+      "voice_label": "delia",
+      "preferred_name": "Delia",
+      "preferred_language": "",
+      "facts": [],
+      "last_seen": "2026-07-27T09:03:11.202572+00:00"
+    },
     "speaker_002": {
       "voice_label": "speaker_002",
       "preferred_name": "Delia",
       "preferred_language": "",
       "facts": [],
       "last_seen": "2026-08-21T07:52:59.195742+00:00"
+    },
+    "valee": {
+      "voice_label": "valee",
+      "preferred_name": "Valee",
+      "preferred_language": "en",
+      "facts": [
+        "to know more about the technology what s"
+      ],
+      "last_seen": "2026-08-12T09:08:29.256165+00:00"
     }
   }
 }
