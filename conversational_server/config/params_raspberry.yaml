@@ -72,6 +72,8 @@
     language_switch_hits_required: 2
     allow_known_speaker_switch_without_address: true
     sticky_speaker_timeout_s: 180.0
+    force_response_on_silent_turn: true
+    silent_turn_delay_s: 1.5
 
 # ========== CLIENT NODES ==========
 
@@ -222,10 +224,10 @@
     # DeepFilterNet Settings
     deep_filter_enabled: false          # Disabled: Pi has no GPU, too computationally expensive
     deep_filter_post_filter: true
-    deep_filter_atten_lim_db: 25.0
+    deep_filter_atten_lim_db: 15.0
     deep_filter_dynamic_adaptation: true
     webrtc_ns_level: 1
     webrtc_ns_enabled: true
     # Residual gate: zeroes out low-amplitude AEC residuals during/after robot playback.
     residual_gate_enabled: true
-    residual_gate_rms_threshold: 1400
+    residual_gate_rms_threshold: 700

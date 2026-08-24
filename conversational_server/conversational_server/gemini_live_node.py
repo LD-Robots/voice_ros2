@@ -110,7 +110,7 @@ class GeminiLiveNode(Node):
         # When native-audio auto-VAD transcribes a user turn but emits no spoken reply,
         # re-send the transcript as a client turn to force generation. Set false to disable.
         self.declare_parameter("force_response_on_silent_turn", True)
-        self.declare_parameter("silent_turn_delay_s", 7.0)
+        self.declare_parameter("silent_turn_delay_s", 1.5)
         self.declare_parameter("local_response_gating", False)
         self.declare_parameter("short_transcript_dedupe_window_s", 4.0)
         self.declare_parameter("playback_input_filter_enabled", True)
@@ -325,6 +325,7 @@ class GeminiLiveNode(Node):
         self._ignore_model_response = False
         self._audio_chunks_sent = 0
         self._current_turn_audio_started = False
+        self._current_turn_audio_bytes = 0
         self._last_greeting_at = 0.0
         self._model_thinking = False
 
@@ -1026,14 +1027,20 @@ class GeminiLiveNode(Node):
                 # Function call (Google Search or other tools)
                 function_call = part.get("functionCall")
                 if function_call:
-                    self.get_logger().info(f"Gemini function call: {function_call.get('name')}")
+                    self.get_logger().info(f"🛠️ [GEMINI TOOL CALL] Gemini invoked tool: '{function_call.get('name')}'")
 
         # Turn complete
         if server_content.get("turnComplete"):
-            self.get_logger().debug("Gemini Live: turn complete")
-            # Only set _model_thinking=True when Gemini actually produced audio
-            # this turn. If it was a silent turn (no audio), keep it False so
-            # the user's audio is NOT zeroed-out and Gemini can hear them.
+            if not self._current_turn_audio_started:
+                self.get_logger().warn(
+                    f"⚠️ [SILENT TURN DETECTED] Gemini sent turnComplete with 0 audio bytes! "
+                    f"User transcript: '{self._current_user_transcript.strip()}'"
+                )
+            else:
+                self.get_logger().info(
+                    f"✅ [TURN COMPLETE] Gemini turn finished: received {self._current_turn_audio_bytes} audio bytes total."
+                )
+            self._current_turn_audio_bytes = 0
             if self._current_turn_audio_started:
                 self._model_thinking = True
             # else: silent turn — leave _model_thinking=False so audio flows freely
@@ -1041,7 +1048,6 @@ class GeminiLiveNode(Node):
             self._publish_captured_user_audio_segment()
             self._start_user_audio_capture()
             self._is_new_user_turn = True
-            self.get_logger().info("Gemini Live: turn complete, turn initialized")
 
             # Calculate average DOA for the segment
             avg_doa = -1
@@ -1109,13 +1115,14 @@ class GeminiLiveNode(Node):
             self._current_turn_audio_started = True
             self._model_thinking = False
             self._mark_response_active(self._active_turn_id)
-            self.get_logger().debug("Gemini Live started audio output")
+            self.get_logger().info(f"🔊 [AUDIO OUTPUT STARTED] Gemini started streaming audio ({len(pcm_bytes)} bytes in first chunk)")
             # Audio arrived — cancel silent_turn timer if it was running
             if self._silent_turn_timer is not None:
                 self._silent_turn_timer.cancel()
                 self._silent_turn_timer = None
                 self.get_logger().debug("Silent-turn timer cancelled: Gemini produced audio in time")
 
+        self._current_turn_audio_bytes += len(pcm_bytes)
         self._last_assistant_audio_at = time.monotonic()
 
         out = Audio()
@@ -1147,7 +1154,8 @@ class GeminiLiveNode(Node):
 
         self._mark_response_inactive(turn_id)
         self._current_turn_audio_started = False
-        self._user_speaking = False
+        self._current_turn_audio_bytes = 0
+        self._ignore_model_response = False
         self._user_audio_frames_sent = 0
         self._model_thinking = False
         self._last_response_request_item_id = ""

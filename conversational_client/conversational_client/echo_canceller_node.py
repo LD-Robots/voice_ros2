@@ -164,7 +164,7 @@ class EchoCancellerNode(Node):
         self._drift_count = 0
         self.total_ref_samples = 0
         self.residual_gate_hold_samples = 0
-        self.residual_gate_hold_limit = int(0.25 * self.sample_rate) # 250ms hold time
+        self.residual_gate_hold_limit = int(0.45 * self.sample_rate) # 450ms hold time to prevent clipping voice tails during barge-in
         self.last_known_delay = 0          # #2-B: last good delay saved between robot speech bursts
         self._df_warmup_count = 0          # #3-B: DF warmup frame counter, reset on each AEC re-activation
         self._was_aec_active = False       # #3-B: tracks idle→active transition to trigger DF warmup reset
@@ -532,15 +532,15 @@ class EchoCancellerNode(Node):
             if state == 'quiet':
                 self.residual_gate_rms_threshold = int(self.base_residual_gate_rms_threshold * 0.5)
                 new_ns_level = 1
-                new_df_atten = 15.0
+                new_df_atten = 10.0
             elif state == 'noisy':
-                self.residual_gate_rms_threshold = int(self.base_residual_gate_rms_threshold * 2.3)
+                self.residual_gate_rms_threshold = int(self.base_residual_gate_rms_threshold * 2.0)
                 new_ns_level = 3
-                new_df_atten = 30.0
+                new_df_atten = 20.0
             else:
                 self.residual_gate_rms_threshold = self.base_residual_gate_rms_threshold
                 new_ns_level = self.base_webrtc_ns_level
-                new_df_atten = 22.0
+                new_df_atten = 15.0
 
             if self.df_dynamic_adaptation and abs(self.df_atten_lim_db - new_df_atten) > 1.0:
                 self.df_atten_lim_db = new_df_atten
