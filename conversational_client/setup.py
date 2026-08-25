@@ -47,6 +47,7 @@ setup(
             'echo_canceller_node = conversational_client.echo_canceller_node:main',
             'acoustic_monitor_node = conversational_client.acoustic_monitor_node:main',
             'xmos_hardware_node = conversational_client.xmos_hardware_node:main',
+            'audio_feedback_node = conversational_client.audio_feedback_node:main',
         ],
     },
 )

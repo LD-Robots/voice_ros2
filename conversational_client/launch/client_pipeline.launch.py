@@ -205,6 +205,14 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # Audio Feedback (Earcons: Activation Chime, etc.)
+        Node(
+            package='conversational_client',
+            executable='audio_feedback_node',
+            name='audio_feedback_node',
+            output='screen',
+        ),
+
         # Speaker Identification (who is speaking)
         Node(
             package='conversational_client',
