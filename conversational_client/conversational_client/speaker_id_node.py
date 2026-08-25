@@ -33,6 +33,7 @@ from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
 from .person_profile_utils import (
+    atomic_write_json,
     build_unique_speaker_label,
     default_preferred_name_for_voice_label,
     migrate_legacy_auto_voice_labels,
@@ -586,11 +587,7 @@ class SpeakerIdNode(Node):
         if not changed:
             return
 
-        memory_dir = os.path.dirname(self.memory_file)
-        if memory_dir:
-            os.makedirs(memory_dir, exist_ok=True)
-        with open(self.memory_file, 'w', encoding='utf-8') as handle:
-            json.dump(normalized_memory, handle, indent=2, ensure_ascii=False)
+        atomic_write_json(self.memory_file, normalized_memory)
 
         if mapping:
             self.get_logger().info(

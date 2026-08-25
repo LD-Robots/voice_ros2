@@ -242,14 +242,31 @@ def load_speaker_profile_sidecars(enrollment_dir: str) -> dict:
     return profiles
 
 
+def atomic_write_json(file_path: str, data: dict, indent: int = 2):
+    """Atomically write JSON data to file with hardware-level fsync protection.
+    
+    1. Writes data to a temporary file (.tmp).
+    2. Flushes Python internal buffers to OS cache (handle.flush()).
+    3. Forces physical storage commit via OS system call (os.fsync()).
+    4. Atomically replaces target file via POSIX os.replace.
+    """
+    directory = os.path.dirname(file_path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    tmp_path = f'{file_path}.tmp'
+    with open(tmp_path, 'w', encoding='utf-8') as handle:
+        json.dump(data, handle, indent=indent, ensure_ascii=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, file_path)
+
+
 def write_speaker_profile_sidecar(enrollment_dir: str, voice_label: str, record: dict | None):
     if not enrollment_dir:
         return
-    os.makedirs(enrollment_dir, exist_ok=True)
     path = speaker_profile_sidecar_path(enrollment_dir, voice_label)
     normalized = normalize_person_record(voice_label, record)
-    with open(path, 'w', encoding='utf-8') as handle:
-        json.dump(normalized, handle, indent=2, ensure_ascii=False)
+    atomic_write_json(path, normalized)
 
 
 def _merge_person_record_sources(voice_label: str, *records) -> dict:

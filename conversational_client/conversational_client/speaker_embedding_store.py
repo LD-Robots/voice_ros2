@@ -116,4 +116,6 @@ def save_speaker_embeddings(enrollment_dir, model_id, embeddings, clip_counts=No
     tmp = f'{path}.tmp'
     with open(tmp, 'w', encoding='utf-8') as handle:
         json.dump(payload, handle, indent=2, ensure_ascii=False)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(tmp, path)

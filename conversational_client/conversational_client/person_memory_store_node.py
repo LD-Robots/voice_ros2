@@ -21,6 +21,7 @@ from std_msgs.msg import String
 from .conversation_utils import normalize_text
 from .conversation_utils import StickySpeakerTracker
 from .person_profile_utils import (
+    atomic_write_json,
     default_preferred_name_for_voice_label,
     extract_auto_enrollment_name,
     extract_fact,
@@ -416,20 +417,12 @@ class PersonMemoryStoreNode(Node):
                 f'Migrated {len(mapping)} legacy auto-enrolled speaker labels to neutral IDs'
             )
         if changed:
-            memory_dir = os.path.dirname(self.memory_file)
-            if memory_dir:
-                os.makedirs(memory_dir, exist_ok=True)
-            with open(self.memory_file, 'w', encoding='utf-8') as handle:
-                json.dump(normalized_memory, handle, indent=2, ensure_ascii=False)
+            atomic_write_json(self.memory_file, normalized_memory)
         self._sync_profile_sidecars(normalized_memory)
         return normalized_memory
 
     def _save_memory(self):
-        memory_dir = os.path.dirname(self.memory_file)
-        if memory_dir:
-            os.makedirs(memory_dir, exist_ok=True)
-        with open(self.memory_file, 'w', encoding='utf-8') as handle:
-            json.dump(self.memory, handle, indent=2, ensure_ascii=False)
+        atomic_write_json(self.memory_file, self.memory)
         self._sync_profile_sidecars(self.memory)
 
     def _sync_profile_sidecars(self, memory: dict):
