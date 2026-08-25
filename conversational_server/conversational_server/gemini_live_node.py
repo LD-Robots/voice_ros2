@@ -159,7 +159,7 @@ class GeminiLiveNode(Node):
         self.declare_parameter("name_capture_tool_enabled", True)
         # Gemini-controlled fillers: Gemini decides via play_thinking_sound tool call.
         # filler_volume and fillers_dir are still used to load the audio clips.
-        self.declare_parameter("gemini_fillers_enabled", True)
+        self.declare_parameter("gemini_fillers_enabled", False)
         self.declare_parameter("filler_volume", 0.80)
         # Empty means "resolve from the workspace" below; never point at a
         # developer's home directory.
@@ -881,18 +881,21 @@ class GeminiLiveNode(Node):
 
             responses = []
             pause_request = None  # applied AFTER the toolResponse is sent
+            deferred_bg_tasks = []
+
             for fc in function_calls:
                 call_id = fc.get('id', '')
                 name = fc.get('name', '')
                 args = fc.get('args', {})
                 self.get_logger().info(f'  - tool: {name}, args: {args}')
                 if name == 'remember_person':
-                    result = self._handle_remember_person(args)
+                    # Instant tool response to unblock Gemini immediately; process memory in background
                     responses.append({
                         'id': call_id,
                         'name': name,
-                        'response': {'result': result}
+                        'response': {'status': 'ok'}
                     })
+                    deferred_bg_tasks.append(lambda a=args: self._handle_remember_person(a))
                 elif name == 'get_speaker_info':
                     pref_name = self._voice_correlated_preferred_name() or 'Unknown'
                     pref_lang = (
@@ -917,12 +920,6 @@ class GeminiLiveNode(Node):
                         }
                     })
                 elif name == 'set_conversation_pause':
-                    # Robust pause/resume: the model decides from the audio's
-                    # meaning, so it works even when the transcript is garbled
-                    # into a non-Latin script and dropped by the text filters.
-                    # Defer the state change until after the toolResponse is
-                    # sent — _apply_pause_state may reconnect (closing the
-                    # socket), and we must not lose the response.
                     pause_request = bool(args.get('paused', True))
                     responses.append({
                         'id': call_id,
@@ -930,14 +927,14 @@ class GeminiLiveNode(Node):
                         'response': {'result': 'paused' if pause_request else 'resumed'}
                     })
                 elif name == 'report_user_emotion':
-                    emotion_res = self._handle_report_user_emotion(args)
+                    # Instant tool response to unblock Gemini immediately; publish ROS emotion in background
                     responses.append({
                         'id': call_id,
                         'name': name,
-                        'response': {'status': 'ok', 'emotion_recorded': emotion_res}
+                        'response': {'status': 'ok'}
                     })
+                    deferred_bg_tasks.append(lambda a=args: self._handle_report_user_emotion(a))
                 elif name == 'play_thinking_sound':
-                    # Gemini decided it needs thinking time — play a local filler clip
                     lang = str(args.get('language', 'ro')).lower()
                     if lang not in ('ro', 'en'):
                         lang = 'ro'
@@ -953,12 +950,22 @@ class GeminiLiveNode(Node):
                         'name': name,
                         'response': {'result': 'ok'}
                     })
+
+            # Send toolResponse immediately to unblock cloud audio generation in <1ms
             if responses:
                 self._send_raw({
                     'toolResponse': {
                         'functionResponses': responses
                     }
                 })
+
+            # Run deferred background tasks after socket frame is dispatched
+            for task in deferred_bg_tasks:
+                try:
+                    task()
+                except Exception as e:
+                    self.get_logger().error(f"Error executing deferred background tool task: {e}")
+
             if pause_request is not None:
                 if pause_request:
                     self._pause_pending = True

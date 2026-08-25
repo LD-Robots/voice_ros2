@@ -43,7 +43,7 @@
     voice: "Charon" #"Charon" - masculine voice (calm, mature), "Puck" - masculine voice (friendly, energetic), "Aoede" - feminine voice (dynamic, vibrant)
     input_sample_rate: 16000
     api_sample_rate: 16000
-    gemini_fillers_enabled: true   # Gemini calls play_thinking_sound() when it needs time to think
+    gemini_fillers_enabled: false  # Gemini calls play_thinking_sound() when it needs time to think (disabled)
     filler_volume: 0.80
     fillers_dir: "voices/fillers"
     greeting_repeat_window_s: 600.0
