@@ -98,13 +98,6 @@
     silero_activation_threshold: 0.5    # Speech confidence (0.0-1.0). Lower = more sensitive, higher = stricter
     silero_min_speech_duration_ms: 50   # Ignore sounds shorter than this (filters coughs, clicks)
     silero_min_silence_duration_ms: 550 # Hangover: wait this long after silence before declaring speech ended
-    # WebRTC VAD parameters (only used when vad_engine=webrtc, kept as fallback)
-    min_silence_frames: 14
-    use_hardware_vad: false
-    energy_threshold: 150
-    aggressiveness: 3           # Baseline (moderate env)
-    quiet_vad_aggressiveness: 1 # Permissive: catches whispers in silence
-    noisy_vad_aggressiveness: 3 # Strict: filters noise spikes in noisy env
 
 /**/audio_segment_node:
   ros__parameters:

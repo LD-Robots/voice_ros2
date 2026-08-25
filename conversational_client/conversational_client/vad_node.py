@@ -196,11 +196,6 @@ class VADNode(Node):
         self.declare_parameter('silero_min_speech_duration_ms', 50)
         self.declare_parameter('silero_min_silence_duration_ms', 550)
 
-        # WebRTC VAD parameters (legacy)
-        self.declare_parameter('aggressiveness', 2)  # 0-3, 3 = more aggressive
-        self.declare_parameter('quiet_vad_aggressiveness', 1)   # More permissive in silence — catches whispers
-        self.declare_parameter('noisy_vad_aggressiveness', 3)   # More strict in noise — rejects non-speech
-
         # General parameters
         self.declare_parameter('energy_threshold', 500)  # RMS energy threshold
         self.declare_parameter('wake_word_enabled', True)
@@ -213,10 +208,6 @@ class VADNode(Node):
         
         self.sample_rate = self.get_parameter('sample_rate').value
         self.vad_engine = str(self.get_parameter('vad_engine').value).strip().lower()
-        self.aggressiveness = self.get_parameter('aggressiveness').value
-        self.base_aggressiveness = self.aggressiveness  # Preserved as the neutral/moderate baseline
-        self.quiet_vad_aggressiveness = max(0, min(3, int(self.get_parameter('quiet_vad_aggressiveness').value)))
-        self.noisy_vad_aggressiveness = max(0, min(3, int(self.get_parameter('noisy_vad_aggressiveness').value)))
         self.energy_threshold = self.get_parameter('energy_threshold').value
         self.base_energy_threshold = self.energy_threshold
         self.wake_word_enabled = self.get_parameter('wake_word_enabled').value
@@ -246,7 +237,6 @@ class VADNode(Node):
         # ─────────────────────────────────────────────────────────
         self.silero_engine = None
         self.hw_vad = None
-        self.vad = None  # WebRTC VAD instance
 
         if self.vad_engine == 'silero':
             if TORCH_AVAILABLE:
@@ -266,32 +256,17 @@ class VADNode(Node):
                     )
                 except Exception as e:
                     self.get_logger().error(f'❌ Failed to load Silero VAD: {e}')
-                    self.get_logger().warn('⚠️ Falling back to WebRTC VAD')
-                    self.vad_engine = 'webrtc'
+                    self.vad_engine = 'energy'
             else:
-                self.get_logger().warn('⚠️ PyTorch not installed — cannot use Silero VAD. Falling back to WebRTC.')
-                self.vad_engine = 'webrtc'
+                self.get_logger().warn('⚠️ PyTorch not installed — falling back to energy-based detection.')
+                self.vad_engine = 'energy'
 
         if self.vad_engine == 'hardware':
             self.hw_vad = ReSpeakerVAD()
             if self.hw_vad.is_connected():
                 self.get_logger().info('⚡ Hardware VAD: ReSpeaker detected and enabled!')
             else:
-                self.get_logger().warn('⚠️ Hardware VAD: ReSpeaker NOT FOUND. Falling back to WebRTC.')
-                self.vad_engine = 'webrtc'
-
-        if self.vad_engine == 'webrtc':
-            if WEBRTCVAD_AVAILABLE:
-                try:
-                    self.vad = webrtcvad.Vad(self.aggressiveness)
-                    self.get_logger().info(
-                        f'🎯 VAD Node started (WebRTC, aggressiveness={self.aggressiveness})'
-                    )
-                except Exception as e:
-                    self.get_logger().error(f'❌ Failed to init WebRTC VAD: {e}')
-                    self.vad_engine = 'energy'
-            else:
-                self.get_logger().warn('⚠️ WebRTC VAD not available — falling back to energy-based detection')
+                self.get_logger().warn('⚠️ Hardware VAD: ReSpeaker NOT FOUND. Falling back to energy-based detection.')
                 self.vad_engine = 'energy'
 
         if self.vad_engine == 'energy':
@@ -630,25 +605,8 @@ class VADNode(Node):
                     f'{self.silero_engine.threshold:.2f}'
                 )
 
-            # ── WebRTC VAD aggressiveness adjustment (legacy) ──
-            # Only applies when WebRTC VAD is active (not hardware VAD, not energy-only fallback)
-            if self.vad is not None:
-                if state == 'quiet':
-                    new_aggressiveness = self.quiet_vad_aggressiveness
-                elif state == 'noisy':
-                    new_aggressiveness = self.noisy_vad_aggressiveness
-                else:
-                    new_aggressiveness = self.base_aggressiveness
-
-                if new_aggressiveness != self.aggressiveness:
-                    self.vad.set_mode(new_aggressiveness)
-                    self.aggressiveness = new_aggressiveness
-                    self.get_logger().debug(
-                        f'🎚️ [VAD] Aggressiveness adjusted for {state.upper()} environment: {new_aggressiveness}'
-                    )
-
             self.get_logger().debug(
-                f'VAD env update: state={state}, energy_threshold={self.energy_threshold:.1f}, aggressiveness={self.aggressiveness}'
+                f'VAD env update: state={state}, energy_threshold={self.energy_threshold:.1f}'
             )
         except Exception as e:
             self.get_logger().error(f'Error parsing acoustic environment in VAD: {e}')
