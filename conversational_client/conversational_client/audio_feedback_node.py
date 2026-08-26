@@ -7,6 +7,11 @@ Earcon 1: Activation Signal (Session Active via Wake Word)
 - Soft ascending 2-note chime (C5 -> E5, 523Hz -> 659Hz)
 - Volume: ~25% (-12dB) below standard TTS playback
 - Triggered ONLY on session activation (False -> True transition on /session_active or /wake_detected)
+
+Earcon 2: Deactivation Signal (Session Ended)
+- Soft descending 2-note chime (E5 -> C5, 659Hz -> 523Hz)
+- Volume: ~25% (-12dB) below standard TTS playback
+- Triggered ONLY on session end (True -> False transition on /session_active)
 """
 
 import numpy as np
@@ -20,7 +25,7 @@ def generate_activation_chime(sample_rate: int = 16000, volume_scale: float = 0.
     """Generate a soft, elegant 2-note ascending chime (C5 -> E5) with exponential decay envelope."""
     note_duration_s = 0.08  # 80ms per note (160ms total)
     samples_per_note = int(sample_rate * note_duration_s)
-    
+
     t1 = np.linspace(0, note_duration_s, samples_per_note, False)
     t2 = np.linspace(0, note_duration_s, samples_per_note, False)
 
@@ -33,7 +38,29 @@ def generate_activation_chime(sample_rate: int = 16000, volume_scale: float = 0.
     note2 = np.sin(2 * np.pi * 659.25 * t2) * env2
 
     audio = np.concatenate([note1, note2])
-    # Normalize and scale volume (30% level)
+    # Normalize and scale volume (25% level)
+    audio_int16 = (audio * volume_scale * 32767.0).astype(np.int16)
+    return audio_int16
+
+
+def generate_deactivation_chime(sample_rate: int = 16000, volume_scale: float = 0.25) -> np.ndarray:
+    """Generate a soft, elegant 2-note descending chime (E5 -> C5) with exponential decay envelope."""
+    note_duration_s = 0.08  # 80ms per note (160ms total)
+    samples_per_note = int(sample_rate * note_duration_s)
+
+    t1 = np.linspace(0, note_duration_s, samples_per_note, False)
+    t2 = np.linspace(0, note_duration_s, samples_per_note, False)
+
+    # Note 1: E5 (659.25 Hz) with fast exponential decay
+    env1 = np.exp(-t1 * 25.0)
+    note1 = np.sin(2 * np.pi * 659.25 * t1) * env1
+
+    # Note 2: C5 (523.25 Hz) with smooth decay
+    env2 = np.exp(-t2 * 18.0)
+    note2 = np.sin(2 * np.pi * 523.25 * t2) * env2
+
+    audio = np.concatenate([note1, note2])
+    # Normalize and scale volume (25% level)
     audio_int16 = (audio * volume_scale * 32767.0).astype(np.int16)
     return audio_int16
 
@@ -54,12 +81,19 @@ class AudioFeedbackNode(Node):
 
         self._session_active = False
 
-        # Pre-synthesize activation chime audio payload
-        chime_pcm = generate_activation_chime(self.sample_rate, self.activation_volume)
+        # Pre-synthesize activation chime audio payload (ascending: C5 -> E5)
+        activation_pcm = generate_activation_chime(self.sample_rate, self.activation_volume)
         self.activation_audio_msg = Audio()
-        self.activation_audio_msg.data = chime_pcm.tolist()
+        self.activation_audio_msg.data = activation_pcm.tolist()
         self.activation_audio_msg.sample_rate = self.sample_rate
         self.activation_audio_msg.channels = 1
+
+        # Pre-synthesize deactivation chime audio payload (descending: E5 -> C5)
+        deactivation_pcm = generate_deactivation_chime(self.sample_rate, self.activation_volume)
+        self.deactivation_audio_msg = Audio()
+        self.deactivation_audio_msg.data = deactivation_pcm.tolist()
+        self.deactivation_audio_msg.sample_rate = self.sample_rate
+        self.deactivation_audio_msg.channels = 1
 
         # Subscribers
         self.session_sub = self.create_subscription(
@@ -76,9 +110,12 @@ class AudioFeedbackNode(Node):
 
     def _session_callback(self, msg: Bool):
         is_active = bool(msg.data)
-        # Trigger activation chime on False -> True transition (Session start via Wake Word)
         if is_active and not self._session_active:
+            # False -> True: session started
             self._play_activation_chime()
+        elif not is_active and self._session_active:
+            # True -> False: session ended
+            self._play_deactivation_chime()
         self._session_active = is_active
 
     def _wake_callback(self, msg: Bool):
@@ -89,7 +126,13 @@ class AudioFeedbackNode(Node):
         if not self.enabled:
             return
         self.audio_pub.publish(self.activation_audio_msg)
-        self.get_logger().info('🎵 Played activation chime (Session Started via Wake Word)')
+        self.get_logger().info('🎵 Played activation chime (Session Started)')
+
+    def _play_deactivation_chime(self):
+        if not self.enabled:
+            return
+        self.audio_pub.publish(self.deactivation_audio_msg)
+        self.get_logger().info('🎵 Played deactivation chime (Session Ended)')
 
 
 def main(args=None):
